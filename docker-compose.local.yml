@@ -1,0 +1,151 @@
+services:
+  mongodb:
+    image: mongo:4.4
+    container_name: tradingagents-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: tradingagents123
+      MONGO_INITDB_DATABASE: tradingagentscn
+      TZ: "Asia/Shanghai"
+    volumes:
+      - mongodb_data:/data/db
+      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    networks:
+      - tradingagents-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/test --quiet --username admin --password tradingagents123 --authenticationDatabase admin
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    container_name: tradingagents-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    environment:
+      TZ: "Asia/Shanghai"
+    command: redis-server --appendonly yes --requirepass tradingagents123
+    volumes:
+      - redis_data:/data
+    networks:
+      - tradingagents-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "tradingagents123", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    image: python:3.10-slim-bookworm
+    container_name: tradingagents-backend
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - pip_cache:/root/.cache/pip
+    env_file:
+      - .env.local
+    environment:
+      PYTHONUNBUFFERED: 1
+      PYTHONDONTWRITEBYTECODE: 1
+      TZ: "Asia/Shanghai"
+      DOCKER_CONTAINER: "true"
+      RUNNING_IN_DOCKER: "1"
+      PIP_INDEX_URL: "https://pypi.tuna.tsinghua.edu.cn/simple"
+      TRUSTED_HOSTS: "pypi.tuna.tsinghua.edu.cn"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tradingagents-network
+    command: >
+      bash -c "
+        apt-get update -qq &&
+        apt-get install -y --no-install-recommends curl fonts-noto-cjk > /dev/null 2>&1 &&
+        pip install --upgrade pip -q &&
+        pip install --prefer-binary -e . -q &&
+        pip install --prefer-binary pdfkit -q &&
+        python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --reload-dir /app/tradingagents
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+  frontend:
+    image: node:22
+    container_name: tradingagents-frontend
+    working_dir: /app/frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app/frontend
+      - ./assets:/app/frontend/public/assets
+      - ./docs:/app/docs
+      - frontend_node_modules:/app/frontend/node_modules
+    environment:
+      TZ: "Asia/Shanghai"
+      VITE_API_BASE_URL: "http://localhost:8000/api"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - tradingagents-network
+    command: >
+      bash -c "
+        corepack enable &&
+        corepack prepare yarn@1.22.22 --activate &&
+        yarn install --network-timeout 300000 &&
+        yarn dev --host 0.0.0.0 --port 5173
+      "
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5173/', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1));"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+volumes:
+  mongodb_data:
+    driver: local
+    name: tradingagents_mongodb_data
+  redis_data:
+    driver: local
+    name: tradingagents_redis_data
+  pip_cache:
+    driver: local
+    name: tradingagents_pip_cache
+  frontend_node_modules:
+    driver: local
+    name: tradingagents_frontend_node_modules
+
+networks:
+  tradingagents-network:
+    driver: bridge
+    name: tradingagents-network

@@ -1,0 +1,67 @@
+FROM python:3.10-slim-bookworm
+
+ARG TARGETARCH
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TZ=Asia/Shanghai
+
+WORKDIR /app
+
+RUN mkdir -p /app/logs /app/data /app/config && \
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::http::Timeout "60";' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::https::Timeout "60";' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::AllowReleaseInfoChange::Suite "true";' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'Acquire::AllowReleaseInfoChange::Version "true";' >> /etc/apt/apt.conf.d/80-retries && \
+    echo 'deb http://mirrors.aliyun.com/debian/ bookworm main non-free contrib' > /etc/apt/sources.list && \
+    echo 'deb http://mirrors.aliyun.com/debian/ bookworm-updates main non-free contrib' >> /etc/apt/sources.list && \
+    echo 'deb http://mirrors.aliyun.com/debian-security/ bookworm-security main non-free contrib' >> /etc/apt/sources.list && \
+    rm -f /etc/apt/sources.list.d/* && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        fontconfig \
+        fonts-noto-cjk \
+        wget \
+        xvfb && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        PANDOC_ARCH="arm64"; \
+        WKHTMLTOPDF_ARCH="arm64"; \
+    else \
+        PANDOC_ARCH="amd64"; \
+        WKHTMLTOPDF_ARCH="amd64"; \
+    fi && \
+    wget -q --timeout=120 --tries=3 https://github.com/jgm/pandoc/releases/download/3.8.2.1/pandoc-3.8.2.1-1-${PANDOC_ARCH}.deb || echo "Pandoc download failed, skipping" && \
+    if [ -f pandoc-3.8.2.1-1-${PANDOC_ARCH}.deb ]; then dpkg -i pandoc-3.8.2.1-1-${PANDOC_ARCH}.deb && rm pandoc-3.8.2.1-1-${PANDOC_ARCH}.deb; fi && \
+    wget -q --timeout=120 --tries=3 https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_${WKHTMLTOPDF_ARCH}.deb || echo "Wkhtmltopdf download failed, skipping" && \
+    if [ -f wkhtmltox_0.12.6.1-3.bookworm_${WKHTMLTOPDF_ARCH}.deb ]; then apt-get install -y --no-install-recommends ./wkhtmltox_0.12.6.1-3.bookworm_${WKHTMLTOPDF_ARCH}.deb && rm wkhtmltox_0.12.6.1-3.bookworm_${WKHTMLTOPDF_ARCH}.deb; fi && \
+    fc-cache -fv && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md ./
+
+RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install --prefer-binary . -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    pip install --prefer-binary pdfkit -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+COPY app ./app
+COPY tradingagents ./tradingagents
+COPY config ./config
+COPY scripts ./scripts
+COPY docs ./docs
+COPY VERSION ./VERSION
+
+RUN pip install --no-deps --prefer-binary . -i https://pypi.tuna.tsinghua.edu.cn/simple && \
+    find /app -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; true
+
+COPY .env.docker ./.env
+
+EXPOSE 8000
+
+ENV DOCKER_CONTAINER=true \
+    RUNNING_IN_DOCKER=1
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
