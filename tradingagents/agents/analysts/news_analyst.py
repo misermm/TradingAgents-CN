@@ -198,7 +198,7 @@ def create_news_analyst(llm, toolkit):
                 model_info = f"{llm.__class__.__name__}:{llm.model_name}"
             else:
                 model_info = llm.__class__.__name__
-        except:
+        except Exception:
             model_info = "Unknown"
         
         logger.info(f"[新闻分析师] 准备调用LLM进行新闻分析，模型: {model_info}")
@@ -217,8 +217,10 @@ def create_news_analyst(llm, toolkit):
 
                 pre_fetched_news = unified_news_tool(stock_code=ticker, max_news=10, model_info=model_info)
 
-                logger.info(f"[新闻分析师] 📋 预处理返回结果长度: {len(pre_fetched_news) if pre_fetched_news else 0} 字符")
-                logger.info(f"[新闻分析师] 📄 预处理返回结果预览 (前500字符): {pre_fetched_news[:500] if pre_fetched_news else 'None'}")
+                news_len = len(pre_fetched_news) if pre_fetched_news else 0
+                news_preview = pre_fetched_news[:500] if pre_fetched_news else 'None'
+                logger.info(f"[新闻分析师] 📋 预处理返回结果长度: {news_len} 字符")
+                logger.info(f"[新闻分析师] 📄 预处理返回结果预览 (前500字符): {news_preview}")
 
                 if pre_fetched_news and len(pre_fetched_news.strip()) > 100:
                     logger.info(f"[新闻分析师] ✅ 预处理成功获取新闻: {len(pre_fetched_news)} 字符")

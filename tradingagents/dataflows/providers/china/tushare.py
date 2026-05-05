@@ -1559,8 +1559,8 @@ class TushareProvider(BaseStockDataProvider):
             if month_day == "1231":
                 return "annual"  # 年报
             else:
-                return "quarterly"  # 季报
-        except:
+                return "quarterly"
+        except Exception:
             return "quarterly"
 
     def _safe_float(self, value) -> Optional[float]:

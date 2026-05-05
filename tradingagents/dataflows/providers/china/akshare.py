@@ -206,6 +206,8 @@ class AKShareProvider(BaseStockDataProvider):
 
             # 修复AKShare的bug：设置requests的默认headers，并添加请求延迟
             # AKShare的stock_news_em()函数没有设置必要的headers，导致API返回空响应
+            # ⚠️ 注意：此补丁会修改全局 requests.get，影响整个进程
+            # 仅对东方财富网的请求添加特殊处理，其他URL保持原样
             if not hasattr(requests, '_akshare_headers_patched'):
                 original_get = requests.get
                 last_request_time = {'time': 0}  # 使用字典以便在闭包中修改
@@ -255,46 +257,54 @@ class AKShareProvider(BaseStockDataProvider):
                                 logger.warning(f"⚠️ curl_cffi 请求失败，回退到标准 requests: {e}")
 
                     # 标准 requests 请求（非东方财富网，或 curl_cffi 不可用/失败）
-                    # 设置浏览器请求头
-                    if 'headers' not in kwargs or kwargs['headers'] is None:
-                        kwargs['headers'] = {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-                            'Accept-Encoding': 'gzip, deflate, br',
-                            'Referer': 'https://www.eastmoney.com/',
-                            'Connection': 'keep-alive',
-                        }
-                    elif isinstance(kwargs['headers'], dict):
-                        # 如果已有headers，确保包含必要的字段
-                        if 'User-Agent' not in kwargs['headers']:
-                            kwargs['headers']['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-                        if 'Referer' not in kwargs['headers']:
-                            kwargs['headers']['Referer'] = 'https://www.eastmoney.com/'
-                        if 'Accept' not in kwargs['headers']:
-                            kwargs['headers']['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-                        if 'Accept-Language' not in kwargs['headers']:
-                            kwargs['headers']['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8'
+                    # 仅对东方财富网的请求添加特殊 headers，其他URL保持原样
+                    is_eastmoney = 'eastmoney.com' in url
+                    
+                    if is_eastmoney:
+                        # 东方财富网请求：设置浏览器请求头
+                        if 'headers' not in kwargs or kwargs['headers'] is None:
+                            kwargs['headers'] = {
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                                'Accept-Encoding': 'gzip, deflate, br',
+                                'Referer': 'https://www.eastmoney.com/',
+                                'Connection': 'keep-alive',
+                            }
+                        elif isinstance(kwargs['headers'], dict):
+                            # 如果已有headers，确保包含必要的字段
+                            if 'User-Agent' not in kwargs['headers']:
+                                kwargs['headers']['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                            if 'Referer' not in kwargs['headers']:
+                                kwargs['headers']['Referer'] = 'https://www.eastmoney.com/'
+                            if 'Accept' not in kwargs['headers']:
+                                kwargs['headers']['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+                            if 'Accept-Language' not in kwargs['headers']:
+                                kwargs['headers']['Accept-Language'] = 'zh-CN,zh;q=0.9,en;q=0.8'
 
-                    # 添加重试机制（最多3次）
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            return original_get(url, **kwargs)
-                        except Exception as e:
-                            # 检查是否是SSL错误
-                            error_str = str(e)
-                            is_ssl_error = ('SSL' in error_str or 'ssl' in error_str or
-                                          'UNEXPECTED_EOF_WHILE_READING' in error_str)
+                    # 添加重试机制（最多3次，仅对东方财富网请求）
+                    if is_eastmoney:
+                        max_retries = 3
+                        for attempt in range(max_retries):
+                            try:
+                                return original_get(url, **kwargs)
+                            except Exception as e:
+                                # 检查是否是SSL错误
+                                error_str = str(e)
+                                is_ssl_error = ('SSL' in error_str or 'ssl' in error_str or
+                                              'UNEXPECTED_EOF_WHILE_READING' in error_str)
 
-                            if is_ssl_error and attempt < max_retries - 1:
-                                # SSL错误，等待后重试
-                                wait_time = 0.5 * (attempt + 1)  # 递增等待时间
-                                time.sleep(wait_time)
-                                continue
-                            else:
-                                # 非SSL错误或已达到最大重试次数，直接抛出
-                                raise
+                                if is_ssl_error and attempt < max_retries - 1:
+                                    # SSL错误，等待后重试
+                                    wait_time = 0.5 * (attempt + 1)  # 递增等待时间
+                                    time.sleep(wait_time)
+                                    continue
+                                else:
+                                    # 非SSL错误或已达到最大重试次数，直接抛出
+                                    raise
+                    else:
+                        # 非东方财富网请求，直接调用原始方法，不重试
+                        return original_get(url, **kwargs)
 
                 # 应用patch
                 requests.get = patched_get
@@ -1171,7 +1181,7 @@ class AKShareProvider(BaseStockDataProvider):
             if pd.isna(value) or value is None:
                 return ""
             return str(value)
-        except:
+        except Exception:
             return ""
 
     async def get_historical_data(

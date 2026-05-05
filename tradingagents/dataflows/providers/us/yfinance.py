@@ -345,11 +345,14 @@ def get_technical_indicator(
             matching_rows = df[df['Date'] == date_str]
 
             if not matching_rows.empty:
-                value = matching_rows.iloc[0][indicator]
-                if pd.isna(value):
-                    result_lines.append(f"{date_str}: N/A")
+                if indicator in matching_rows.columns:
+                    value = matching_rows.iloc[0][indicator]
+                    if pd.isna(value):
+                        result_lines.append(f"{date_str}: N/A")
+                    else:
+                        result_lines.append(f"{date_str}: {value:.4f}")
                 else:
-                    result_lines.append(f"{date_str}: {value:.4f}")
+                    result_lines.append(f"{date_str}: N/A (indicator not found)")
             else:
                 result_lines.append(f"{date_str}: N/A: Not a trading day (weekend or holiday)")
 

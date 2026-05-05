@@ -117,8 +117,13 @@ class OpenAIClient(BaseLLMClient):
                 api_key = self.kwargs.get("api_key") or os.environ.get(api_key_env)
                 if api_key:
                     llm_kwargs["api_key"] = api_key
+                else:
+                    # 有环境变量要求但未找到 api_key，设置占位值避免使用错误的 OPENAI_API_KEY
+                    logger.warning(f"⚠️ 未找到 {api_key_env} 环境变量，{self.provider} 可能无法正常工作")
+                    llm_kwargs["api_key"] = f"{self.provider}-no-key"
             else:
-                llm_kwargs["api_key"] = self.provider if self.provider in ("ollama", "lmstudio") else "ollama"
+                # 无环境变量要求的 provider（如 ollama/lmstudio），设置占位值
+                llm_kwargs["api_key"] = self.provider if self.provider in ("ollama", "lmstudio") else "no-key"
         elif self.base_url:
             llm_kwargs["base_url"] = self.base_url
             api_key = self.kwargs.get("api_key") or os.environ.get("OPENAI_API_KEY")

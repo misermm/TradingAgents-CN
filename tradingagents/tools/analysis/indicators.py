@@ -153,12 +153,14 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Se
         (high - prev_close).abs(),
         (low - prev_close).abs(),
     ], axis=1).max(axis=1)
-    return tr.rolling(window=int(n), min_periods=int(n)).mean()
+    min_periods = min(int(n), max(3, len(close) // 2))  # 至少3个数据点或一半数据量
+    return tr.rolling(window=int(n), min_periods=min_periods).mean()
 
 
 def kdj(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 9, m1: int = 3, m2: int = 3) -> pd.DataFrame:
-    lowest_low = low.rolling(window=int(n), min_periods=int(n)).min()
-    highest_high = high.rolling(window=int(n), min_periods=int(n)).max()
+    min_periods = min(int(n), max(3, len(close) // 2))  # 至少3个数据点或一半数据量
+    lowest_low = low.rolling(window=int(n), min_periods=min_periods).min()
+    highest_high = high.rolling(window=int(n), min_periods=min_periods).max()
     rsv = (close - lowest_low) / (highest_high - lowest_low) * 100
     # 处理除零与起始NaN
     rsv = rsv.replace([np.inf, -np.inf], np.nan)

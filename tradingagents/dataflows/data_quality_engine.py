@@ -9,6 +9,7 @@ Phase 1.4: 数据溯源标记 - FieldProvenance
 """
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
@@ -177,6 +178,7 @@ class DataQualityEngine:
         5. 构建溯源标记
         """
         now = datetime.now(timezone.utc)
+        data = dict(data) if data else {}
         provenance: Dict[str, FieldProvenance] = {}
         complemented_fields: Dict[str, str] = {}
         cross_validated_fields: Dict[str, Dict[str, Any]] = {}
@@ -321,8 +323,6 @@ class DataQualityEngine:
                         result["roe"] = float(profit["roeAvg"])
                     if profit.get("roaAvg"):
                         result["roa"] = float(profit["roaAvg"])
-                    elif profit.get("roeAvg"):
-                        result["roa"] = float(profit["roeAvg"]) * 0.5
 
                 growth = financial.get("growth_data", {})
                 if isinstance(growth, dict):
@@ -411,10 +411,13 @@ class DataQualityEngine:
 
 
 _engine = None
+_engine_lock = threading.Lock()
 
 
 def get_data_quality_engine() -> DataQualityEngine:
     global _engine
     if _engine is None:
-        _engine = DataQualityEngine()
+        with _engine_lock:
+            if _engine is None:
+                _engine = DataQualityEngine()
     return _engine

@@ -157,7 +157,7 @@ def get_china_stock_data_unified(
 
 def get_china_stock_info_unified(
     ticker: Annotated[str, "中国股票代码，如：000001、600036等"]
-) -> str:
+) -> str:  # 返回格式化的字符串信息；内部调用返回dict但此函数统一转为str
     try:
         from .data_source_manager import get_china_stock_info_unified as _get_info
 

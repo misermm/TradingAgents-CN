@@ -291,28 +291,25 @@ def create_market_analyst(llm, toolkit):
             logger.info(f"📊 [市场分析师] 非Google模型 ({llm.__class__.__name__})，使用标准处理逻辑")
             logger.info(f"📊 [市场分析师] 检查LLM返回结果...")
             logger.info(f"📊 [市场分析师] - 是否有tool_calls: {hasattr(result, 'tool_calls')}")
+            tool_calls = getattr(result, 'tool_calls', [])
             if hasattr(result, 'tool_calls'):
-                logger.info(f"📊 [市场分析师] - tool_calls数量: {len(result.tool_calls)}")
-                if result.tool_calls:
-                    for i, tc in enumerate(result.tool_calls):
+                logger.info(f"📊 [市场分析师] - tool_calls数量: {len(tool_calls)}")
+                if tool_calls:
+                    for i, tc in enumerate(tool_calls):
                         logger.info(f"📊 [市场分析师] - tool_call[{i}]: {tc.get('name', 'unknown')}")
 
-            # 处理市场分析报告
-            if len(result.tool_calls) == 0:
-                # 没有工具调用，直接使用LLM的回复
+            if len(tool_calls) == 0:
                 report = result.content
                 logger.info(f"📊 [市场分析师] ✅ 直接回复（无工具调用），长度: {len(report)}")
                 logger.debug(f"📊 [DEBUG] 直接回复内容预览: {report[:200]}...")
             else:
-                # 有工具调用，执行工具并生成完整分析报告
-                logger.info(f"📊 [市场分析师] 🔧 检测到工具调用: {[call.get('name', 'unknown') for call in result.tool_calls]}")
+                logger.info(f"📊 [市场分析师] 🔧 检测到工具调用: {[call.get('name', 'unknown') for call in tool_calls]}")
 
                 try:
-                    # 执行工具调用
                     from langchain_core.messages import ToolMessage, HumanMessage
 
                     tool_messages = []
-                    for tool_call in result.tool_calls:
+                    for tool_call in tool_calls:
                         tool_name = tool_call.get('name')
                         tool_args = tool_call.get('args', {})
                         tool_id = tool_call.get('id')
@@ -492,7 +489,7 @@ def create_market_analyst(llm, toolkit):
                     traceback.print_exc()
 
                     # 降级处理：返回工具调用信息
-                    report = f"市场分析师调用了工具但分析生成失败: {[call.get('name', 'unknown') for call in result.tool_calls]}"
+                    report = f"市场分析师调用了工具但分析生成失败: {[call.get('name', 'unknown') for call in tool_calls]}"
 
                     # 🔧 更新工具调用计数器
                     return {

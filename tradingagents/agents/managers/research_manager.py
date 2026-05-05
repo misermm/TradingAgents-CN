@@ -115,7 +115,7 @@ def create_research_manager(llm, memory):
             "bear_history": investment_debate_state.get("bear_history", ""),
             "bull_history": investment_debate_state.get("bull_history", ""),
             "current_response": response.content,
-            "count": investment_debate_state["count"],
+            "count": investment_debate_state.get("count", 0),
         }
 
         return {

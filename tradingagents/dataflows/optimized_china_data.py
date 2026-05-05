@@ -843,7 +843,7 @@ class OptimizedChinaDataProvider:
 
         try:
             price_value = float(current_price.replace('¥', '').replace(',', ''))
-        except:
+        except Exception:
             price_value = 10.0
 
         real_metrics = self._get_real_financial_metrics(symbol, price_value)
@@ -877,7 +877,7 @@ class OptimizedChinaDataProvider:
                         pe_val = float(str(result['pe']).replace('倍', '').replace(',', ''))
                         if pe_val > 0:
                             metrics['roe'] = f"{min(100 / pe_val, 50):.1f}%"
-                    except:
+                    except Exception:
                         pass
                 metrics['fundamental_score'] = 3
                 metrics['risk_level'] = '中'
@@ -2051,7 +2051,7 @@ class OptimizedChinaDataProvider:
             if roe_value and str(roe_value) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['roe'] = f"{float(roe_value):.1f}%"
-                except:
+                except Exception:
                     metrics['roe'] = "N/A"
             else:
                 metrics['roe'] = "N/A"
@@ -2060,7 +2060,7 @@ class OptimizedChinaDataProvider:
             if net_profit_ratio and str(net_profit_ratio) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['net_margin'] = f"{float(net_profit_ratio):.1f}%"
-                except:
+                except Exception:
                     metrics['net_margin'] = "N/A"
             else:
                 metrics['net_margin'] = "N/A"
@@ -2069,7 +2069,7 @@ class OptimizedChinaDataProvider:
             if gross_profit_rate and str(gross_profit_rate) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['gross_margin'] = f"{float(gross_profit_rate):.1f}%"
-                except:
+                except Exception:
                     metrics['gross_margin'] = "N/A"
             else:
                 metrics['gross_margin'] = "N/A"
@@ -2078,7 +2078,7 @@ class OptimizedChinaDataProvider:
             if eps and str(eps) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['eps'] = float(eps)
-                except:
+                except Exception:
                     metrics['eps'] = "N/A"
             else:
                 metrics['eps'] = "N/A"
@@ -2088,7 +2088,7 @@ class OptimizedChinaDataProvider:
             if revenue_growth and str(revenue_growth) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['revenue_growth'] = f"{float(revenue_growth):.1f}%"
-                except:
+                except Exception:
                     metrics['revenue_growth'] = "N/A"
             else:
                 metrics['revenue_growth'] = "N/A"
@@ -2098,7 +2098,7 @@ class OptimizedChinaDataProvider:
             if current_ratio and str(current_ratio) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['current_ratio'] = float(current_ratio)
-                except:
+                except Exception:
                     metrics['current_ratio'] = "N/A"
             else:
                 metrics['current_ratio'] = "N/A"
@@ -2107,7 +2107,7 @@ class OptimizedChinaDataProvider:
             if quick_ratio and str(quick_ratio) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['quick_ratio'] = float(quick_ratio)
-                except:
+                except Exception:
                     metrics['quick_ratio'] = "N/A"
             else:
                 metrics['quick_ratio'] = "N/A"
@@ -2116,7 +2116,7 @@ class OptimizedChinaDataProvider:
             if debt_ratio and str(debt_ratio) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['debt_ratio'] = f"{float(debt_ratio):.1f}%"
-                except:
+                except Exception:
                     metrics['debt_ratio'] = "N/A"
             else:
                 metrics['debt_ratio'] = "N/A"
@@ -2126,7 +2126,7 @@ class OptimizedChinaDataProvider:
             if cf_item and str(cf_item) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['operating_cash_flow'] = f"{float(cf_item):.2f}万元"
-                except:
+                except Exception:
                     metrics['operating_cash_flow'] = "N/A"
             else:
                 metrics['operating_cash_flow'] = "N/A"
@@ -2144,7 +2144,7 @@ class OptimizedChinaDataProvider:
                         bps = float(total_equity)
                         if bps > 0:
                             metrics['pb'] = f"{(price_value / bps):.2f}倍"
-                    except:
+                    except Exception:
                         metrics['pb'] = "N/A"
                 else:
                     metrics['pb'] = "N/A"
@@ -2156,7 +2156,7 @@ class OptimizedChinaDataProvider:
                             metrics['pe'] = f"{(price_value / eps_val):.1f}倍"
                         else:
                             metrics['pe'] = "N/A（亏损）"
-                    except:
+                    except Exception:
                         metrics['pe'] = "N/A"
                 else:
                     metrics['pe'] = "N/A"
@@ -2204,7 +2204,7 @@ class OptimizedChinaDataProvider:
                     score += 1.0
                 elif roe > 5:
                     score += 0.5
-            except:
+            except Exception:
                 pass
 
         # 净利率评分
@@ -2216,7 +2216,7 @@ class OptimizedChinaDataProvider:
                     score += 1.0
                 elif net_margin > 10:
                     score += 0.5
-            except:
+            except Exception:
                 pass
 
         return min(score, 10.0)
@@ -2236,7 +2236,7 @@ class OptimizedChinaDataProvider:
                     score += 1.0
                 elif pe > 50:
                     score -= 1.0
-            except:
+            except Exception:
                 pass
 
         # PB评分
@@ -2250,7 +2250,7 @@ class OptimizedChinaDataProvider:
                     score += 0.5
                 elif pb > 5:
                     score -= 0.5
-            except:
+            except Exception:
                 pass
 
         return min(max(score, 1.0), 10.0)
@@ -2281,7 +2281,7 @@ class OptimizedChinaDataProvider:
                     return "中等"
                 else:
                     return "较低"
-            except:
+            except Exception:
                 pass
 
         # 根据行业判断

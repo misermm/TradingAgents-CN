@@ -100,7 +100,13 @@ class SignalProcessor:
             return self._get_default_decision()
         
         # 验证human消息内容
-        human_content = messages[1][1] if len(messages) > 1 else ""
+        human_content = ""
+        if len(messages) > 1:
+            msg = messages[1]
+            if isinstance(msg, (list, tuple)) and len(msg) > 1:
+                human_content = msg[1]
+            elif hasattr(msg, 'content'):
+                human_content = msg.content
         if not human_content or len(human_content.strip()) == 0:
             logger.error(f"❌ [SignalProcessor] human消息内容为空")
             return self._get_default_decision()

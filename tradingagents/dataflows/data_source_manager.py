@@ -7,6 +7,7 @@
 import os
 import time
 import json
+import threading
 from typing import Dict, List, Optional, Any
 from enum import Enum
 import warnings
@@ -1643,6 +1644,14 @@ class DataSourceManager:
         Returns:
             str: 格式化的数据报告（包含技术指标）
         """
+        def _sf(val, fmt=".2f"):
+            if val is None or (isinstance(val, float) and val != val):
+                return "N/A"
+            try:
+                return f"{val:{fmt}}"
+            except (TypeError, ValueError):
+                return str(val)
+
         try:
             original_data_count = len(data)
             logger.info(f"📊 [技术指标] 开始计算技术指标，原始数据: {original_data_count}条")
@@ -1733,31 +1742,31 @@ class DataSourceManager:
             result += f"数据期间: {start_date} 至 {end_date}\n"
             result += f"数据条数: {original_data_count}条 (展示最近{display_rows}个交易日)\n\n"
 
-            result += f"💰 最新价格: ¥{latest_price:.2f}\n"
-            result += f"📈 涨跌额: {change:+.2f} ({change_pct:+.2f}%)\n\n"
+            result += f"💰 最新价格: ¥{_sf(latest_price)}\n"
+            result += f"📈 涨跌额: {_sf(change, '+.2f')} ({_sf(change_pct, '+.2f')}%)\n\n"
 
             # 添加技术指标
             result += f"📊 移动平均线 (MA):\n"
-            result += f"   MA5:  ¥{latest_data['ma5']:.2f}"
-            if latest_price > latest_data['ma5']:
+            result += f"   MA5:  ¥{_sf(latest_data.get('ma5', 0))}"
+            if latest_price > latest_data.get('ma5', 0):
                 result += " (价格在MA5上方 ↑)\n"
             else:
                 result += " (价格在MA5下方 ↓)\n"
 
-            result += f"   MA10: ¥{latest_data['ma10']:.2f}"
-            if latest_price > latest_data['ma10']:
+            result += f"   MA10: ¥{_sf(latest_data.get('ma10', 0))}"
+            if latest_price > latest_data.get('ma10', 0):
                 result += " (价格在MA10上方 ↑)\n"
             else:
                 result += " (价格在MA10下方 ↓)\n"
 
-            result += f"   MA20: ¥{latest_data['ma20']:.2f}"
-            if latest_price > latest_data['ma20']:
+            result += f"   MA20: ¥{_sf(latest_data.get('ma20', 0))}"
+            if latest_price > latest_data.get('ma20', 0):
                 result += " (价格在MA20上方 ↑)\n"
             else:
                 result += " (价格在MA20下方 ↓)\n"
 
-            result += f"   MA60: ¥{latest_data['ma60']:.2f}"
-            if latest_price > latest_data['ma60']:
+            result += f"   MA60: ¥{_sf(latest_data.get('ma60', 0))}"
+            if latest_price > latest_data.get('ma60', 0):
                 result += " (价格在MA60上方 ↑)\n\n"
             else:
                 result += " (价格在MA60下方 ↓)\n\n"
@@ -1789,30 +1798,30 @@ class DataSourceManager:
                 result += "\n"
 
             # RSI指标 - 同花顺风格 (6, 12, 24)
-            rsi6 = latest_data['rsi6']
-            rsi12 = latest_data['rsi12']
-            rsi24 = latest_data['rsi24']
+            rsi6 = latest_data.get('rsi6', 0)
+            rsi12 = latest_data.get('rsi12', 0)
+            rsi24 = latest_data.get('rsi24', 0)
             result += f"📉 RSI指标 (同花顺风格):\n"
-            result += f"   RSI6:  {rsi6:.2f}"
-            if rsi6 >= 80:
+            result += f"   RSI6:  {_sf(rsi6)}"
+            if rsi6 and rsi6 >= 80:
                 result += " (超买 ⚠️)\n"
-            elif rsi6 <= 20:
+            elif rsi6 and rsi6 <= 20:
                 result += " (超卖 ⚠️)\n"
             else:
                 result += "\n"
 
-            result += f"   RSI12: {rsi12:.2f}"
-            if rsi12 >= 80:
+            result += f"   RSI12: {_sf(rsi12)}"
+            if rsi12 and rsi12 >= 80:
                 result += " (超买 ⚠️)\n"
-            elif rsi12 <= 20:
+            elif rsi12 and rsi12 <= 20:
                 result += " (超卖 ⚠️)\n"
             else:
                 result += "\n"
 
-            result += f"   RSI24: {rsi24:.2f}"
-            if rsi24 >= 80:
+            result += f"   RSI24: {_sf(rsi24)}"
+            if rsi24 and rsi24 >= 80:
                 result += " (超买 ⚠️)\n"
-            elif rsi24 <= 20:
+            elif rsi24 and rsi24 <= 20:
                 result += " (超卖 ⚠️)\n"
             else:
                 result += "\n"
@@ -1827,9 +1836,9 @@ class DataSourceManager:
 
             # 布林带
             result += f"📊 布林带 (BOLL):\n"
-            result += f"   上轨: ¥{latest_data['boll_upper']:.2f}\n"
-            result += f"   中轨: ¥{latest_data['boll_mid']:.2f}\n"
-            result += f"   下轨: ¥{latest_data['boll_lower']:.2f}\n"
+            result += f"   上轨: ¥{_sf(latest_data.get('boll_upper', 0))}\n"
+            result += f"   中轨: ¥{_sf(latest_data.get('boll_mid', 0))}\n"
+            result += f"   下轨: ¥{_sf(latest_data.get('boll_lower', 0))}\n"
 
             # 判断价格在布林带的位置
             boll_position = (latest_price - latest_data['boll_lower']) / (latest_data['boll_upper'] - latest_data['boll_lower']) * 100
@@ -3025,13 +3034,13 @@ class DataSourceManager:
             bs.logout()
 
             if data_list:
-                # BaoStock返回格式: [code, code_name, ipoDate, outDate, type, status]
                 info = {'symbol': symbol, 'source': 'baostock'}
-                info['name'] = data_list[0][1]  # code_name
-                info['area'] = '未知'  # BaoStock没有地区信息
-                info['industry'] = '未知'  # BaoStock没有行业信息
-                info['market'] = '未知'  # 可以根据股票代码推断
-                info['list_date'] = data_list[0][2]  # ipoDate
+                row = data_list[0] if len(data_list) > 0 else []
+                info['name'] = row[1] if len(row) > 1 else f'股票{symbol}'
+                info['area'] = '未知'
+                info['industry'] = '未知'
+                info['market'] = '未知'
+                info['list_date'] = row[2] if len(row) > 2 else '未知'
 
                 return info
             else:
@@ -3748,12 +3757,14 @@ class DataSourceManager:
 
 # 全局数据源管理器实例
 _data_source_manager = None
+_manager_lock = threading.Lock()
 
 def get_data_source_manager() -> DataSourceManager:
-    """获取全局数据源管理器实例"""
     global _data_source_manager
     if _data_source_manager is None:
-        _data_source_manager = DataSourceManager()
+        with _manager_lock:
+            if _data_source_manager is None:
+                _data_source_manager = DataSourceManager()
     return _data_source_manager
 
 
@@ -4083,10 +4094,12 @@ class USDataSourceManager:
 
 # 全局美股数据源管理器实例
 _us_data_source_manager = None
+_us_manager_lock = threading.Lock()
 
 def get_us_data_source_manager() -> USDataSourceManager:
-    """获取全局美股数据源管理器实例"""
     global _us_data_source_manager
     if _us_data_source_manager is None:
-        _us_data_source_manager = USDataSourceManager()
+        with _us_manager_lock:
+            if _us_data_source_manager is None:
+                _us_data_source_manager = USDataSourceManager()
     return _us_data_source_manager

@@ -127,8 +127,7 @@ class OpenAICompatibleBase(ChatOpenAI):
                 "api_key": api_key,
                 "base_url": base_url
             })
-        except:
-            # 旧版本LangChain
+        except Exception:
             openai_kwargs.update({
                 "openai_api_key": api_key,
                 "openai_api_base": base_url

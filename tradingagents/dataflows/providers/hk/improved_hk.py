@@ -535,7 +535,12 @@ def get_hk_stock_data_akshare(symbol: str, start_date: str = None, end_date: str
 
         # 计算涨跌额和涨跌幅
         df['change'] = df['close'] - df['pre_close']
-        df['pct_change'] = (df['change'] / df['pre_close'] * 100).round(2)
+        # 防止除零：pre_close 为 0 或 NaN 时，pct_change 设为 NaN
+        df['pct_change'] = df.apply(
+            lambda row: round((row['change'] / row['pre_close'] * 100), 2)
+            if pd.notna(row['pre_close']) and row['pre_close'] != 0 else None,
+            axis=1
+        )
 
         # 🔥 使用统一的技术指标计算函数
         from tradingagents.tools.analysis.indicators import add_all_indicators
@@ -570,7 +575,7 @@ def get_hk_stock_data_akshare(symbol: str, start_date: str = None, end_date: str
                     return default
                 try:
                     return f"{value:{format_str}}{suffix}"
-                except:
+                except (ValueError, TypeError):
                     return default
 
             financial_section = f"""
@@ -602,39 +607,49 @@ def get_hk_stock_data_akshare(symbol: str, start_date: str = None, end_date: str
 - 流动比率: {format_value(financial_indicators.get('current_ratio'))}
 """
 
+        # 安全格式化函数：处理 NaN 和 None 值
+        def safe_fmt(val, fmt=".2f", prefix="", suffix="", default="N/A"):
+            """安全格式化数值，处理 NaN/None 情况"""
+            if val is None or (isinstance(val, float) and pd.isna(val)):
+                return default
+            try:
+                return f"{prefix}{val:{fmt}}{suffix}"
+            except (ValueError, TypeError):
+                return default
+
         result = f"""## 港股历史数据 ({symbol})
 **数据源**: AKShare (新浪财经)
 **日期范围**: {start_date} ~ {end_date}
 **数据条数**: {len(df)} 条
 
 ### 最新价格信息
-- 最新价: HK${latest['close']:.2f}
-- 昨收: HK${latest['pre_close']:.2f}
-- 涨跌额: HK${latest['change']:.2f}
-- 涨跌幅: {latest['pct_change']:.2f}%
-- 最高: HK${latest['high']:.2f}
-- 最低: HK${latest['low']:.2f}
-- 成交量: {latest['volume']:,.0f}
+- 最新价: {safe_fmt(latest['close'], prefix='HK$')}
+- 昨收: {safe_fmt(latest['pre_close'], prefix='HK$')}
+- 涨跌额: {safe_fmt(latest['change'], prefix='HK$')}
+- 涨跌幅: {safe_fmt(latest['pct_change'], suffix='%')}
+- 最高: {safe_fmt(latest['high'], prefix='HK$')}
+- 最低: {safe_fmt(latest['low'], prefix='HK$')}
+- 成交量: {safe_fmt(latest['volume'], fmt=',.0f')}
 
 ### 技术指标（最新值）
 **移动平均线**:
-- MA5: HK${latest['ma5']:.2f}
-- MA10: HK${latest['ma10']:.2f}
-- MA20: HK${latest['ma20']:.2f}
-- MA60: HK${latest['ma60']:.2f}
+- MA5: {safe_fmt(latest['ma5'], prefix='HK$')}
+- MA10: {safe_fmt(latest['ma10'], prefix='HK$')}
+- MA20: {safe_fmt(latest['ma20'], prefix='HK$')}
+- MA60: {safe_fmt(latest['ma60'], prefix='HK$')}
 
 **MACD指标**:
-- DIF: {latest['macd_dif']:.2f}
-- DEA: {latest['macd_dea']:.2f}
-- MACD: {latest['macd']:.2f}
+- DIF: {safe_fmt(latest['macd_dif'])}
+- DEA: {safe_fmt(latest['macd_dea'])}
+- MACD: {safe_fmt(latest['macd'])}
 
 **RSI指标**:
-- RSI(14): {latest['rsi']:.2f}
+- RSI(14): {safe_fmt(latest['rsi'])}
 
 **布林带**:
-- 上轨: HK${latest['boll_upper']:.2f}
-- 中轨: HK${latest['boll_mid']:.2f}
-- 下轨: HK${latest['boll_lower']:.2f}
+- 上轨: {safe_fmt(latest['boll_upper'], prefix='HK$')}
+- 中轨: {safe_fmt(latest['boll_mid'], prefix='HK$')}
+- 下轨: {safe_fmt(latest['boll_lower'], prefix='HK$')}
 {financial_section}
 ### 最近10个交易日价格
 {df[['date', 'open', 'high', 'low', 'close', 'pre_close', 'change', 'pct_change', 'volume']].tail(10).to_string(index=False)}
@@ -749,7 +764,7 @@ def get_hk_stock_info_akshare(symbol: str) -> Dict[str, Any]:
                             if value is None or value == '' or (isinstance(value, float) and value != value):  # NaN check
                                 return None
                             return float(value)
-                        except:
+                        except (ValueError, TypeError):
                             return None
 
                     def safe_int(value):
@@ -757,7 +772,7 @@ def get_hk_stock_info_akshare(symbol: str) -> Dict[str, Any]:
                             if value is None or value == '' or (isinstance(value, float) and value != value):  # NaN check
                                 return None
                             return int(value)
-                        except:
+                        except (ValueError, TypeError):
                             return None
 
                     return {

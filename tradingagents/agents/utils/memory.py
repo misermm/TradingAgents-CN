@@ -422,9 +422,12 @@ class FinancialSituationMemory:
                 # 检查响应状态
                 if response.status_code == 200:
                     # 成功获取embedding
-                    embedding = response.output['embeddings'][0]['embedding']
-                    logger.debug(f"✅ DashScope embedding成功，维度: {len(embedding)}")
-                    return embedding
+                    embedding_data = response.output.get('embeddings', [])
+                    if embedding_data and len(embedding_data) > 0:
+                        embedding = embedding_data[0].get('embedding', [])
+                        if embedding:
+                            logger.debug(f"DashScope embedding成功，维度: {len(embedding)}")
+                            return embedding
                 else:
                     # API返回错误状态码
                     error_msg = f"{response.code} - {response.message}"

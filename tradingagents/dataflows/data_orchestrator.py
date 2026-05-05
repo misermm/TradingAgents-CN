@@ -116,7 +116,7 @@ class DataOrchestrator:
                 logger.info(f"🔄 尝试从 {source} 获取 {symbol} 数据")
                 result = fetch_func(source, symbol, **kwargs)
 
-                if result and "❌" not in result:
+                if result and not any(m in result[:100] for m in ("❌", "错误：", "Error:", "失败：", "FAILED")):
                     logger.info(f"✅ {source} 数据获取成功: {symbol}")
                     if health_tracker:
                         health_tracker.record_success(source)

@@ -115,7 +115,7 @@ def create_master_consensus(llm=None):
             quant_func = QUANTITATIVE_ANALYZERS.get(master_id)
             if quant_func:
                 try:
-                    raw_data = prefetched_data if prefetched_data else reports_data[master_id]["report"]
+                    raw_data = prefetched_data if prefetched_data else reports_data.get(master_id, {}).get("report", "")
                     result = quant_func(raw_data)
                     quant_signals[master_id] = {
                         "signal": result.get("signal", "neutral"),

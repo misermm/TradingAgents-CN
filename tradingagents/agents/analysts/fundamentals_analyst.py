@@ -446,7 +446,7 @@ def create_fundamentals_analyst(llm, toolkit):
 
             if current_tool_calls > 0:
                 # 🔧 检查是否已经调用过工具（消息历史中有 ToolMessage）
-                messages = state.get("messages", [])
+                # 注意：messages 已在函数开头从 state 获取，直接复用
                 has_tool_result = any(isinstance(msg, ToolMessage) for msg in messages)
 
                 if has_tool_result:
@@ -555,9 +555,9 @@ def create_fundamentals_analyst(llm, toolkit):
                 else:
                     logger.info(f"⚠️ [内容检查] LLM未返回内容或内容为空")
 
-                # 方案3：统计工具调用次数
-                tool_call_count = sum(1 for msg in messages if isinstance(msg, ToolMessage))
-                logger.info(f"🔍 [统计] 历史工具调用次数: {tool_call_count}")
+                # 方案3：统计工具调用次数（使用函数开头已计算的计数器，避免覆盖）
+                tool_message_count_in_history = sum(1 for msg in messages if isinstance(msg, ToolMessage))
+                logger.info(f"🔍 [统计] 历史工具调用次数: {tool_call_count} (state计数器), ToolMessage数: {tool_message_count_in_history}")
 
                 logger.info(f"🔍 [重复调用检查] 汇总 - 工具结果数: {tool_call_count}, 已有工具结果: {has_tool_result}, 已有分析内容: {has_analysis_content}")
                 logger.info(f"📊 [基本面分析师] ===== 强制工具调用检查结束 =====")

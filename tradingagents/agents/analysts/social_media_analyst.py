@@ -220,15 +220,16 @@ def create_social_media_analyst(llm, toolkit):
             # 非Google模型的处理逻辑
             logger.debug(f"📊 [DEBUG] 非Google模型 ({llm.__class__.__name__})，使用标准处理逻辑")
             
+            tool_calls = getattr(result, 'tool_calls', [])
             report = ""
-            if len(result.tool_calls) == 0:
+            if len(tool_calls) == 0:
                 report = result.content
             else:
                 logger.info(f"💭 [社媒分析师] 检测到工具调用，执行工具并生成报告")
                 try:
                     from langchain_core.messages import ToolMessage, HumanMessage
                     tool_messages = []
-                    for tool_call in result.tool_calls:
+                    for tool_call in tool_calls:
                         tool_name = tool_call.get('name')
                         tool_args = tool_call.get('args', {})
                         tool_id = tool_call.get('id')

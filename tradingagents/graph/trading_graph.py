@@ -48,11 +48,16 @@ def _merge_master_state(final_state: dict, node_update: dict) -> dict:
             if isinstance(existing, dict) and isinstance(update_val, dict):
                 merged = dict(existing)
                 for k, v in update_val.items():
+                    # 仅在现有值为空且新值非空时跳过，否则始终用新值覆盖
                     if k in merged and merged[k] and not v:
                         continue
                     merged[k] = v
                 node_update = dict(node_update)
                 node_update[field] = merged
+            elif isinstance(update_val, dict) and not isinstance(existing, dict):
+                # existing 不是字典但 update_val 是字典，直接使用 update_val
+                node_update = dict(node_update)
+                node_update[field] = update_val
     return node_update
 from .propagation import Propagator
 from .reflection import Reflector
@@ -127,9 +132,15 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
     elif normalized_provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
+        # 优先使用传入的 API Key，否则从环境变量读取
+        anthropic_api_key = api_key or os.getenv('ANTHROPIC_API_KEY')
+        if not anthropic_api_key:
+            raise ValueError("使用Anthropic需要设置ANTHROPIC_API_KEY环境变量或在数据库中配置API Key")
+
         return ChatAnthropic(
             model=model,
             base_url=backend_url,
+            api_key=anthropic_api_key,
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
@@ -333,9 +344,15 @@ class TradingAgentsGraph:
             logger.info(f"🔧 [Anthropic-快速模型] max_tokens={quick_max_tokens}, temperature={quick_temperature}, timeout={quick_timeout}s")
             logger.info(f"🔧 [Anthropic-深度模型] max_tokens={deep_max_tokens}, temperature={deep_temperature}, timeout={deep_timeout}s")
 
+            # 优先使用数据库配置的 API Key，否则从环境变量读取
+            anthropic_api_key = self.config.get("quick_api_key") or self.config.get("deep_api_key") or os.getenv('ANTHROPIC_API_KEY')
+            if not anthropic_api_key:
+                raise ValueError("使用Anthropic需要设置ANTHROPIC_API_KEY环境变量或在数据库中配置API Key")
+
             self.deep_thinking_llm = ChatAnthropic(
                 model=self.config["deep_think_llm"],
                 base_url=self.config["backend_url"],
+                api_key=anthropic_api_key,
                 temperature=deep_temperature,
                 max_tokens=deep_max_tokens,
                 timeout=deep_timeout
@@ -343,6 +360,7 @@ class TradingAgentsGraph:
             self.quick_thinking_llm = ChatAnthropic(
                 model=self.config["quick_think_llm"],
                 base_url=self.config["backend_url"],
+                api_key=anthropic_api_key,
                 temperature=quick_temperature,
                 max_tokens=quick_max_tokens,
                 timeout=quick_timeout
@@ -907,6 +925,17 @@ class TradingAgentsGraph:
         # 构建性能数据
         performance_data = self._build_performance_data(node_timings, total_elapsed)
 
+        # 安全检查：确保 final_state 不为 None
+        if final_state is None:
+            logger.error(f"❌ [CRITICAL] final_state 为 None，图执行可能未产生任何输出")
+            final_state = {
+                "company_of_interest": company_name,
+                "trade_date": trade_date,
+                "final_trade_decision": "分析失败：图执行未产生有效结果",
+                "master_reports": {},
+                "performance_metrics": performance_data,
+            }
+
         # 将性能数据添加到状态中
         final_state['performance_metrics'] = performance_data
 
@@ -934,7 +963,8 @@ class TradingAgentsGraph:
             model_info = "Unknown"
 
         # 处理决策并添加模型信息
-        decision = self.process_signal(final_state["final_trade_decision"], company_name)
+        trade_decision = final_state.get("final_trade_decision", "分析未完成：未生成交易决策")
+        decision = self.process_signal(trade_decision, company_name)
         decision['model_info'] = model_info
 
         # Return decision and processed signal

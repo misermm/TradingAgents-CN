@@ -24,12 +24,8 @@ from .hk_data_service import (
 from .us_data_service import get_us_stock_data
 
 from tradingagents.utils.logging_init import setup_dataflow_logging
-from tradingagents.utils.logging_manager import get_logger
-logger = get_logger('agents')
 logger = setup_dataflow_logging()
 
-
-# ==================== 数据源配置读取 ====================
 
 # ==================== 数据源配置读取 ====================
 try:
@@ -47,9 +43,7 @@ except ImportError as e:
     STOCKSTATS_AVAILABLE = False
 from dateutil.relativedelta import relativedelta
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 import json
-import os
 import pandas as pd
 from tqdm import tqdm
 from openai import OpenAI
@@ -453,7 +447,7 @@ def get_reddit_global_news(
         else:
             news_str += f"### {post['title']}\n\n{post['content']}\n\n"
 
-    return f"## Global News Reddit, from {before} to {curr_date}:\n{news_str}"
+    return f"## Global News Reddit, from {before} to {start_date.strftime('%Y-%m-%d')}:\n{news_str}"
 
 
 def get_reddit_company_news(
@@ -512,7 +506,7 @@ def get_reddit_company_news(
         else:
             news_str += f"### {post['title']}\n\n{post['content']}\n\n"
 
-    return f"##{ticker} News Reddit, from {before} to {curr_date}:\n\n{news_str}"
+    return f"## {ticker} News Reddit, from {before} to {start_date.strftime('%Y-%m-%d')}:\n\n{news_str}"
 
 
 def get_stock_stats_indicators_window(
@@ -801,6 +795,18 @@ def get_YFin_data(
     return filtered_data
 
 
+def _extract_openai_response_text(response):
+    try:
+        for output_item in response.output:
+            if hasattr(output_item, 'content'):
+                for content_item in output_item.content:
+                    if hasattr(content_item, 'text') and content_item.text:
+                        return content_item.text
+    except (IndexError, AttributeError, TypeError) as e:
+        logger.error(f"OpenAI响应解析失败: {e}")
+    return ""
+
+
 def get_stock_news_openai(ticker, curr_date):
     config = get_config()
     client = OpenAI(base_url=config["backend_url"])
@@ -833,7 +839,7 @@ def get_stock_news_openai(ticker, curr_date):
         store=True,
     )
 
-    return response.output[1].content[0].text
+    return _extract_openai_response_text(response)
 
 
 def get_global_news_openai(curr_date):
@@ -868,7 +874,7 @@ def get_global_news_openai(curr_date):
         store=True,
     )
 
-    return response.output[1].content[0].text
+    return _extract_openai_response_text(response)
 
 
 def get_fundamentals_finnhub(ticker, curr_date):
@@ -1154,8 +1160,15 @@ def _get_fundamentals_yfinance(ticker, curr_date, cache):
         ticker_obj = yf.Ticker(ticker.upper())
         info = ticker_obj.info
 
-        if info and len(info) > 5:  # 确保有实际数据
-            # 格式化 yfinance 数据
+        if info and len(info) > 5:
+            def _fmt_num(val):
+                if val is None:
+                    return "N/A"
+                try:
+                    return f"{val:,}"
+                except (TypeError, ValueError):
+                    return str(val)
+
             result = f"""# {ticker} 基本面数据 (来源: Yahoo Finance)
 
 ## 公司信息
@@ -1165,16 +1178,16 @@ def _get_fundamentals_yfinance(ticker, curr_date, cache):
 - 网站: {info.get('website', 'N/A')}
 
 ## 估值指标
-- 市值: ${info.get('marketCap', 'N/A'):,}
+- 市值: ${_fmt_num(info.get('marketCap'))}
 - PE比率: {info.get('trailingPE', 'N/A')}
 - 前瞻PE: {info.get('forwardPE', 'N/A')}
 - PB比率: {info.get('priceToBook', 'N/A')}
 - PS比率: {info.get('priceToSalesTrailing12Months', 'N/A')}
 
 ## 财务指标
-- 总收入: ${info.get('totalRevenue', 'N/A'):,}
-- 毛利润: ${info.get('grossProfits', 'N/A'):,}
-- EBITDA: ${info.get('ebitda', 'N/A'):,}
+- 总收入: ${_fmt_num(info.get('totalRevenue'))}
+- 毛利润: ${_fmt_num(info.get('grossProfits'))}
+- EBITDA: ${_fmt_num(info.get('ebitda'))}
 - 每股收益(EPS): ${info.get('trailingEps', 'N/A')}
 - 股息率: {info.get('dividendYield', 'N/A')}
 
@@ -1255,7 +1268,7 @@ def _get_fundamentals_openai_impl(ticker, curr_date, config, cache):
             store=True,
         )
 
-        result = response.output[1].content[0].text
+        result = _extract_openai_response_text(response)
 
         # 保存到缓存
         if result and len(result) > 100:  # 只有当结果有实际内容时才缓存
