@@ -158,8 +158,8 @@ def fetch_daily_basic_mv_map(trade_date: str) -> Dict[str, Dict[str, float]]:
                             metrics[field] = float(value)
                     if metrics:
                         data_map[str(ts_code)] = metrics
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作失败（已忽略）: {e}")
     return data_map
 
 

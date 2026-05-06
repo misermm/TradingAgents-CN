@@ -54,7 +54,7 @@ class SignalProcessor:
         # 检测股票类型和货币
         from tradingagents.utils.stock_utils import StockUtils
 
-        market_info = StockUtils.get_market_info(stock_symbol)
+        market_info = StockUtils.get_market_info(stock_symbol) if stock_symbol else StockUtils.get_market_info("UNKNOWN")
         is_china = market_info['is_china']
         is_hk = market_info['is_hk']
         currency = market_info['currency_name']
@@ -212,12 +212,11 @@ class SignalProcessor:
                 return result
             else:
                 # 如果无法解析JSON，使用简单的文本提取
-                return self._extract_simple_decision(response)
+                return self._extract_simple_decision(response, is_china=is_china)
 
         except Exception as e:
             logger.error(f"信号处理错误: {e}", exc_info=True, extra={'stock_symbol': stock_symbol})
-            # 回退到简单提取
-            return self._extract_simple_decision(full_signal)
+            return self._extract_simple_decision(full_signal, is_china=is_china)
 
     def _smart_price_estimation(self, text: str, action: str, is_china: bool) -> float:
         """从文本中提取真实目标价，不编造假数据"""
@@ -278,7 +277,7 @@ class SignalProcessor:
 
         return None
 
-    def _extract_simple_decision(self, text: str) -> dict:
+    def _extract_simple_decision(self, text: str, is_china: bool = False) -> dict:
         """简单的决策提取方法作为备用"""
         import re
 
@@ -312,8 +311,7 @@ class SignalProcessor:
                     continue
 
         if target_price is None:
-            is_china = True
-            target_price = self._smart_price_estimation(text, action, is_china)
+            target_price = self._smart_price_estimation(text, action, is_china=is_china)
 
         return {
             'action': action,

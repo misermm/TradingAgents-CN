@@ -45,7 +45,8 @@ class AnalysisWorker:
         self.cleanup_interval = float(getattr(settings, 'QUEUE_CLEANUP_INTERVAL_SECONDS', 60))
 
         # 注册信号处理器
-        signal.signal(signal.SIGINT, self._signal_handler)
+        if sys.platform != 'win32':
+            signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _signal_handler(self, signum, frame):
@@ -65,7 +66,8 @@ class AnalysisWorker:
             # 读取系统设置（ENV 优先 → DB）
             try:
                 effective_settings = await config_provider.get_effective_system_settings()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"配置应用失败: {e}")
                 effective_settings = {}
 
             # 获取队列服务
@@ -82,8 +84,8 @@ class AnalysisWorker:
                 self.heartbeat_interval = int(effective_settings.get("worker_heartbeat_interval_seconds", self.heartbeat_interval))
                 self.poll_interval = float(effective_settings.get("queue_poll_interval_seconds", self.poll_interval))
                 self.cleanup_interval = float(effective_settings.get("queue_cleanup_interval_seconds", self.cleanup_interval))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             # 启动心跳任务
             heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 

@@ -94,7 +94,9 @@ async def get_quote(
     if market in ['HK', 'US']:
         from app.services.foreign_stock_service import ForeignStockService
 
-        db = get_mongo_db()  # 不需要 await，直接返回数据库对象
+        db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
         service = ForeignStockService(db=db)
 
         try:
@@ -109,6 +111,8 @@ async def get_quote(
 
     # A股：使用现有逻辑
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     code6 = normalized_code
 
     # 行情
@@ -238,7 +242,9 @@ async def get_fundamentals(
     if market in ['HK', 'US']:
         from app.services.foreign_stock_service import ForeignStockService
 
-        db = get_mongo_db()  # 不需要 await，直接返回数据库对象
+        db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
         service = ForeignStockService(db=db)
 
         try:
@@ -253,6 +259,8 @@ async def get_fundamentals(
 
     # A股：使用现有逻辑
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     code6 = normalized_code
 
     # 1. 获取基础信息（支持数据源筛选）
@@ -385,8 +393,8 @@ async def get_fundamentals(
     # 5. 从财务数据中提取 ROE、负债率和计算 PS
     if financial_data:
         # ROE（净资产收益率）
-        if financial_data.get("financial_indicators"):
-            indicators = financial_data["financial_indicators"]
+        indicators = financial_data.get("financial_indicators")
+        if indicators and isinstance(indicators, dict):
             data["roe"] = indicators.get("roe")
             data["debt_ratio"] = indicators.get("debt_to_assets")
 
@@ -454,7 +462,9 @@ async def get_kline(
     if market in ['HK', 'US']:
         from app.services.foreign_stock_service import ForeignStockService
 
-        db = get_mongo_db()  # 不需要 await，直接返回数据库对象
+        db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
         service = ForeignStockService(db=db)
 
         try:
@@ -512,15 +522,23 @@ async def get_kline(
         if df is not None and not df.empty:
             # 转换 DataFrame 为列表格式
             items = []
+            def _sf(val, default=0.0):
+                if val is None or (isinstance(val, float) and val != val):
+                    return default
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return default
+
             for _, row in df.tail(limit).iterrows():
                 items.append({
-                    "time": row.get("trade_date", row.get("date", "")),  # 前端期望 time 字段
-                    "open": float(row.get("open", 0)),
-                    "high": float(row.get("high", 0)),
-                    "low": float(row.get("low", 0)),
-                    "close": float(row.get("close", 0)),
-                    "volume": float(row.get("volume", row.get("vol", 0))),
-                    "amount": float(row.get("amount", 0)) if "amount" in row else None,
+                    "time": row.get("trade_date", row.get("date", "")),
+                    "open": _sf(row.get("open")),
+                    "high": _sf(row.get("high")),
+                    "low": _sf(row.get("low")),
+                    "close": _sf(row.get("close")),
+                    "volume": _sf(row.get("volume", row.get("vol"))),
+                    "amount": _sf(row.get("amount")) if "amount" in row else None,
                 })
             source = "mongodb"
             logger.info(f"✅ 从 MongoDB 获取到 {len(items)} 条 K 线数据")
@@ -577,36 +595,34 @@ async def get_kline(
                 logger.info(f"🔥 尝试从 market_quotes 获取当天实时数据: {code_padded} (交易时间: {is_trading_time}, 已有当天数据: {has_today_data})")
 
                 db = get_mongo_db()
-                market_quotes_coll = db["market_quotes"]
-
-                # 查询当天的实时行情
-                realtime_quote = await market_quotes_coll.find_one({"code": code_padded})
-
-                if realtime_quote:
-                    # 🔥 构造当天的K线数据（使用统一的日期格式 YYYY-MM-DD）
-                    today_kline = {
-                        "time": today_str_formatted,  # 🔥 使用 YYYY-MM-DD 格式，与历史数据保持一致
-                        "open": float(realtime_quote.get("open", 0)),
-                        "high": float(realtime_quote.get("high", 0)),
-                        "low": float(realtime_quote.get("low", 0)),
-                        "close": float(realtime_quote.get("close", 0)),
-                        "volume": float(realtime_quote.get("volume", 0)),
-                        "amount": float(realtime_quote.get("amount", 0)),
-                    }
-
-                    # 如果历史数据中已有当天数据，替换；否则追加
-                    if has_today_data:
-                        # 替换最后一条数据（假设最后一条是当天的）
-                        items[-1] = today_kline
-                        logger.info(f"✅ 替换当天K线数据: {code_padded}")
-                    else:
-                        # 追加到末尾
-                        items.append(today_kline)
-                        logger.info(f"✅ 追加当天K线数据: {code_padded}")
-
-                    source = f"{source}+market_quotes"
+                if db is None:
+                    logger.warning("MongoDB连接不可用，跳过实时数据获取")
                 else:
-                    logger.warning(f"⚠️ market_quotes 中未找到当天数据: {code_padded}")
+                    market_quotes_coll = db["market_quotes"]
+
+                    realtime_quote = await market_quotes_coll.find_one({"code": code_padded})
+
+                    if realtime_quote:
+                        today_kline = {
+                            "time": today_str_formatted,
+                            "open": float(realtime_quote.get("open", 0)),
+                            "high": float(realtime_quote.get("high", 0)),
+                            "low": float(realtime_quote.get("low", 0)),
+                            "close": float(realtime_quote.get("close", 0)),
+                            "volume": float(realtime_quote.get("volume", 0)),
+                            "amount": float(realtime_quote.get("amount", 0)),
+                        }
+
+                        if has_today_data:
+                            items[-1] = today_kline
+                            logger.info(f"✅ 替换当天K线数据: {code_padded}")
+                        else:
+                            items.append(today_kline)
+                            logger.info(f"✅ 追加当天K线数据: {code_padded}")
+
+                        source = f"{source}+market_quotes"
+                    else:
+                        logger.warning(f"⚠️ market_quotes 中未找到当天数据: {code_padded}")
         except Exception as e:
             logger.warning(f"⚠️ 获取当天实时数据失败（忽略）: {e}")
 

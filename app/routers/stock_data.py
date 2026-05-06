@@ -221,6 +221,8 @@ async def search_stocks(
         from app.core.unified_config import UnifiedConfigManager
 
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
         collection = db.stock_basic_info
 
         # 🔥 获取数据源优先级配置
@@ -301,6 +303,8 @@ async def get_market_summary(
         from app.core.database import get_mongo_db
 
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
         collection = db.stock_basic_info
 
         # 统计各市场股票数量

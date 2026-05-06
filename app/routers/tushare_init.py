@@ -62,6 +62,8 @@ async def get_database_status(
     """
     try:
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
         
         # 检查各集合状态
         basic_count = await db.stock_basic_info.count_documents({})

@@ -54,9 +54,10 @@ class BaoStockSyncService:
     async def initialize(self):
         """异步初始化服务"""
         try:
-            # 🔥 初始化数据库连接（必须在异步上下文中）
             from app.core.database import get_mongo_db
             self.db = get_mongo_db()
+            if self.db is None:
+                raise RuntimeError("MongoDB数据库连接不可用")
 
             # 初始化历史数据服务
             if self.historical_service is None:

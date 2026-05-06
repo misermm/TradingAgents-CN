@@ -34,6 +34,8 @@ async def _sync_latest_to_market_quotes(symbol: str) -> None:
         symbol: 股票代码（6位）
     """
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     symbol6 = str(symbol).zfill(6)
 
     # 从 stock_daily_quotes 获取最新数据
@@ -214,6 +216,8 @@ async def sync_single_stock(
                     message += "（已自动切换到 AKShare 数据源）"
 
                 db = get_mongo_db()
+                if db is None:
+                    raise HTTPException(status_code=503, detail="数据库连接不可用")
                 latest_quote = await db.market_quotes.find_one(
                     {"code": str(request.symbol).zfill(6)},
                     {"_id": 0, "code": 1, "trade_date": 1, "updated_at": 1, "close": 1}
@@ -351,6 +355,8 @@ async def sync_single_stock(
                     )
 
                     db = get_mongo_db()
+                    if db is None:
+                        raise HTTPException(status_code=503, detail="数据库连接不可用")
                     symbol6 = str(request.symbol).zfill(6)
 
                     # Step 1: 获取股票基础信息
@@ -424,13 +430,13 @@ async def sync_single_stock(
                             if "total_mv" in daily_metrics:
                                 try:
                                     total_mv_yi = float(daily_metrics["total_mv"]) / 10000.0
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"操作失败（已忽略）: {e}")
                             if "circ_mv" in daily_metrics:
                                 try:
                                     circ_mv_yi = float(daily_metrics["circ_mv"]) / 10000.0
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"操作失败（已忽略）: {e}")
 
                             # 构建文档
                             doc = {
@@ -491,6 +497,8 @@ async def sync_single_stock(
                 elif request.data_source == "akshare":
                     # 🔥 AKShare 数据源的基础数据同步
                     db = get_mongo_db()
+                    if db is None:
+                        raise HTTPException(status_code=503, detail="数据库连接不可用")
                     symbol6 = str(request.symbol).zfill(6)
 
                     # 获取 AKShare 同步服务
@@ -688,6 +696,8 @@ async def sync_batch_stocks(
                                 if basic_info:
                                     # 保存到 MongoDB
                                     db = get_mongo_db()
+                                    if db is None:
+                                        raise HTTPException(status_code=503, detail="数据库连接不可用")
                                     symbol6 = str(symbol).zfill(6)
 
                                     # 添加必要字段
@@ -772,6 +782,8 @@ async def get_sync_status(
         from app.core.database import get_mongo_db
         
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
         
         # 查询历史数据最后同步时间
         hist_doc = await db.historical_data.find_one(

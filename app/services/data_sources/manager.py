@@ -50,15 +50,15 @@ class DataSourceManager:
             if callable(close_method):
                 try:
                     close_method()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作失败（已忽略）: {e}")
 
         try:
             from app.core.database import close_mongo_db_sync
 
             close_mongo_db_sync()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
 
     def _load_priority_from_database(self):
         """从数据库加载数据源优先级配置（从 datasource_groupings 集合读取 A股市场的优先级）"""

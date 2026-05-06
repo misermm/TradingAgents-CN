@@ -45,6 +45,9 @@ class StockDataService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             symbol6 = str(symbol).zfill(6)
 
             # 🔥 构建查询条件
@@ -98,6 +101,9 @@ class StockDataService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             symbol6 = str(symbol).zfill(6)
 
             # 从现有集合查询 (优先使用symbol字段，兼容code字段)
@@ -139,6 +145,9 @@ class StockDataService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
 
             # 🔥 获取数据源优先级配置
             if not source:
@@ -202,6 +211,9 @@ class StockDataService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             symbol6 = str(symbol).zfill(6)
 
             # 添加更新时间
@@ -247,6 +259,9 @@ class StockDataService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             symbol6 = str(symbol).zfill(6)
 
             # 添加更新时间

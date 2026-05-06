@@ -116,6 +116,8 @@ async def search_stocks(
         )
     
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     service = UnifiedStockService(db)
     
     try:
@@ -173,6 +175,8 @@ async def get_stock_info(
         )
     
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     service = UnifiedStockService(db)
     
     try:
@@ -234,6 +238,8 @@ async def get_stock_quote(
         )
     
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     service = UnifiedStockService(db)
     
     try:
@@ -305,6 +311,8 @@ async def get_stock_daily_quotes(
         )
     
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     service = UnifiedStockService(db)
     
     try:

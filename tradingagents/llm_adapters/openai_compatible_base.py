@@ -204,11 +204,12 @@ class ChatDeepSeekOpenAI(OpenAICompatibleBase):
         max_tokens: Optional[int] = None,
         **kwargs
     ):
+        base_url = kwargs.pop("base_url", "https://api.deepseek.com")
         super().__init__(
             provider_name="deepseek",
             model=model,
             api_key_env_var="DEEPSEEK_API_KEY",
-            base_url="https://api.deepseek.com",
+            base_url=base_url,
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -281,11 +282,12 @@ class ChatDashScopeOpenAIUnified(OpenAICompatibleBase):
         max_tokens: Optional[int] = None,
         **kwargs
     ):
+        base_url = kwargs.pop("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         super().__init__(
             provider_name="dashscope",
             model=model,
             api_key_env_var="DASHSCOPE_API_KEY",
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            base_url=base_url,
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -344,11 +346,12 @@ class ChatQianfanOpenAI(OpenAICompatibleBase):
                 "QIANFAN_API_KEY格式错误，应为: bce-v3/ALTAK-xxx/xxx"
             )
         
+        base_url = kwargs.pop("base_url", "https://qianfan.baidubce.com/v2")
         super().__init__(
             provider_name="qianfan",
             model=model,
             api_key_env_var="QIANFAN_API_KEY",
-            base_url="https://qianfan.baidubce.com/v2",
+            base_url=base_url,
             api_key=qianfan_api_key,
             temperature=temperature,
             max_tokens=max_tokens,

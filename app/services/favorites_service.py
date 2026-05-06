@@ -21,6 +21,8 @@ class FavoritesService:
         """获取数据库连接"""
         if self.db is None:
             self.db = get_mongo_db()
+        if self.db is None:
+            raise RuntimeError("MongoDB数据库连接不可用")
         return self.db
 
     def _is_valid_object_id(self, user_id: str) -> bool:
@@ -143,11 +145,10 @@ class FavoritesService:
                                 q2 = quotes_online.get(code, {}) if quotes_online else {}
                                 it["current_price"] = q2.get("close")
                                 it["change_percent"] = q2.get("pct_chg")
-                    except Exception:
-                        pass
-            except Exception:
-                # 查询失败时保持占位 None，避免影响基础功能
-                pass
+                    except Exception as e:
+                        logger.debug(f"在线行情获取失败: {e}")
+            except Exception as e:
+                logger.debug(f"行情查询失败: {e}")
 
         return items
 

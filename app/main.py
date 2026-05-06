@@ -78,8 +78,8 @@ def get_version() -> str:
         version_file = Path(__file__).parent.parent / "VERSION"
         if version_file.exists():
             return version_file.read_text(encoding='utf-8').strip()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作失败（已忽略）: {e}")
     return "1.0.0"  # 默认版本号
 
 
@@ -249,8 +249,8 @@ async def lifespan(app: FastAPI):
         try:
             from app.middleware.operation_log_middleware import set_operation_log_enabled
             set_operation_log_enabled(bool(eff.get("enable_monitoring", True)))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
     except Exception as e:
         logging.getLogger("webapi").warning(f"Failed to apply dynamic settings: {e}")
 
@@ -278,11 +278,13 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Startup backfill failed (ignored): {e}")
 
     # 启动每日定时任务：可配置
-    scheduler: AsyncIOScheduler | None = None
+    scheduler = None
     try:
         from croniter import croniter
+    except ImportError:
+        croniter = None
     except Exception:
-        croniter = None  # 可选依赖
+        croniter = None
     try:
         scheduler = AsyncIOScheduler(timezone=settings.TIMEZONE)
 
@@ -304,9 +306,13 @@ async def lifespan(app: FastAPI):
 
         # 立即在启动后尝试一次（不阻塞）
         async def run_sync_with_sources():
-            await multi_source_service.run_full_sync(force=False, preferred_sources=preferred_sources)
+            try:
+                await multi_source_service.run_full_sync(force=False, preferred_sources=preferred_sources)
+            except Exception as e:
+                logger.error(f"❌ 启动时同步任务失败: {e}")
 
-        asyncio.create_task(run_sync_with_sources())
+        _startup_sync_task = asyncio.create_task(run_sync_with_sources())
+        _startup_sync_task.add_done_callback(lambda t: t.exception() if not t.cancelled() and t.exception() else None)
 
         # 配置调度：优先使用 CRON，其次使用 HH:MM
         if settings.SYNC_STOCK_BASICS_ENABLED:

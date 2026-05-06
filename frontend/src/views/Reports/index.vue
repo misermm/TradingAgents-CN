@@ -54,6 +54,16 @@
               <el-icon><Download /></el-icon>
               批量导出
             </el-button>
+            <el-button
+              type="danger"
+              plain
+              @click="batchDeleteReports"
+              :disabled="selectedReports.length === 0"
+            >
+              <el-icon><Delete /></el-icon>
+              批量删除
+              <span v-if="selectedReports.length > 0">({{ selectedReports.length }})</span>
+            </el-button>
             <el-button @click="refreshReports">
               <el-icon><Refresh /></el-icon>
               刷新
@@ -192,6 +202,7 @@ import {
   Search,
   Download,
   Refresh,
+  Delete,
   ArrowDown
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
@@ -424,6 +435,59 @@ const deleteReport = async (report: ReportListItem) => {
 
 const exportSelected = () => {
   ElMessage.info('批量导出功能开发中...')
+}
+
+const batchDeleteReports = async () => {
+  if (selectedReports.value.length === 0) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除选中的 ${selectedReports.value.length} 个报告吗？此操作不可恢复。`,
+      '确认批量删除',
+      {
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+
+    const reportIds = selectedReports.value.map(r => r.id)
+
+    const response = await fetch('/api/reports/batch-delete', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authStore.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ report_ids: reportIds })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`)
+    }
+
+    const result = await response.json()
+
+    if (result.success) {
+      const { deleted_count, failed_ids } = result.data
+      if (failed_ids && failed_ids.length > 0) {
+        ElMessage.warning(`成功删除 ${deleted_count} 个报告，${failed_ids.length} 个未找到`)
+      } else {
+        ElMessage.success(`成功删除 ${deleted_count} 个报告`)
+      }
+      selectedReports.value = []
+      refreshReports()
+    } else {
+      throw new Error(result.message || '批量删除失败')
+    }
+  } catch (error) {
+    const err = error as Error
+    if (err.message !== 'cancel') {
+      console.error('批量删除报告失败:', err)
+      ElMessage.error('批量删除报告失败')
+    }
+  }
 }
 
 const refreshReports = () => {

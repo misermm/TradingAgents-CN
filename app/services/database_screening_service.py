@@ -116,9 +116,10 @@ class DatabaseScreeningService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                return [], 0
             collection = db[self.collection_name]
 
-            # 🔥 获取数据源优先级配置
             if not source:
                 from app.core.unified_config import UnifiedConfigManager
                 config = UnifiedConfigManager()
@@ -260,9 +261,9 @@ class DatabaseScreeningService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                return items
             financial_collection = db['stock_financial_data']
-
-            # 🔥 获取数据源优先级配置
             from app.core.unified_config import UnifiedConfigManager
             config = UnifiedConfigManager()
             data_source_configs = await config.get_data_source_configs_async()
@@ -403,9 +404,10 @@ class DatabaseScreeningService:
                 return {}
             
             db = get_mongo_db()
+            if db is None:
+                return {}
             collection = db[self.collection_name]
             
-            # 使用聚合管道获取统计信息
             pipeline = [
                 {"$match": {db_field: {"$exists": True, "$ne": None}}},
                 {"$group": {
@@ -480,9 +482,9 @@ class DatabaseScreeningService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                return items
             quotes_collection = db['market_quotes']
-
-            # 批量查询实时行情数据
             quotes_cursor = quotes_collection.find({"code": {"$in": codes}})
             quotes_map = {}
             async for quote in quotes_cursor:
@@ -570,9 +572,10 @@ class DatabaseScreeningService:
                 return []
             
             db = get_mongo_db()
+            if db is None:
+                return []
             collection = db[self.collection_name]
             
-            # 获取字段的不重复值
             values = await collection.distinct(db_field)
             
             # 过滤None值并排序

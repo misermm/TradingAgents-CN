@@ -37,7 +37,7 @@ class HKDataService:
     """港股数据服务（按需获取+缓存模式）"""
 
     def __init__(self):
-        self.db = get_mongo_db()
+        self.db = None
         self.settings = settings
 
         # 数据提供器映射
@@ -52,6 +52,9 @@ class HKDataService:
 
     async def initialize(self):
         """初始化数据服务"""
+        self.db = get_mongo_db()
+        if self.db is None:
+            raise RuntimeError("MongoDB数据库连接不可用")
         logger.info("✅ 港股数据服务初始化完成")
     
     async def get_stock_info(
@@ -135,7 +138,7 @@ class HKDataService:
         """保存股票信息到缓存"""
         try:
             await self.db.stock_basic_info_hk.update_one(
-                {"code": stock_info["code"], "source": stock_info["source"]},
+                {"code": stock_info.get("code"), "source": stock_info.get("source")},
                 {"$set": stock_info},
                 upsert=True
             )

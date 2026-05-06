@@ -57,6 +57,8 @@ class FinancialDataSyncService:
         """初始化服务"""
         try:
             self.db = get_mongo_db()
+            if self.db is None:
+                raise RuntimeError("MongoDB数据库连接不可用")
             self.financial_service = await get_financial_data_service()
             
             # 初始化数据源提供者
@@ -259,7 +261,7 @@ class FinancialDataSyncService:
                 {"code": 1}
             )
 
-            symbols = [doc["code"] async for doc in cursor]
+            symbols = [doc.get("code") async for doc in cursor if doc.get("code")]
             logger.info(f"📋 从 stock_basic_info 获取到 {len(symbols)} 只股票代码")
 
             return symbols

@@ -17,6 +17,9 @@ class TagsService:
     async def _get_db(self):
         if self.db is None:
             self.db = get_mongo_db()
+            if self.db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
         return self.db
 
     async def ensure_indexes(self) -> None:

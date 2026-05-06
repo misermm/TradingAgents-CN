@@ -1262,7 +1262,7 @@ class TradingAgentsGraph:
             for node_name, elapsed in sorted(nodes, key=lambda x: x[1], reverse=True):
                 percentage = (elapsed / total_elapsed * 100) if total_elapsed > 0 else 0
                 logger.info(f"  • {node_name:40s} {elapsed:8.2f}秒  ({percentage:5.1f}%)")
-            logger.info(f"  {'小计':40s} {total_category_time:8.2f}秒  ({total_category_time/total_elapsed*100:5.1f}%)")
+            logger.info(f"  {'小计':40s} {total_category_time:8.2f}秒  ({total_category_time/total_elapsed*100:5.1f}%)" if total_elapsed > 0 else f"  {'小计':40s} {total_category_time:8.2f}秒  (0.0%)")
 
         print_category("分析师团队", analyst_nodes)
         print_category("工具调用", tool_nodes)

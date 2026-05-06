@@ -9,7 +9,7 @@ import gzip
 import asyncio
 import subprocess
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import logging
 
@@ -45,9 +45,12 @@ async def create_backup_native(name: str, backup_dir: str, collections: Optional
         raise Exception("mongodump 命令不可用，请安装 MongoDB Database Tools 或使用 create_backup() 方法")
 
     db = get_mongo_db()
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return {}
 
     backup_id = str(ObjectId())
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_dirname = f"backup_{name}_{timestamp}"
     backup_path = os.path.join(backup_dir, backup_dirname)
 
@@ -115,7 +118,7 @@ async def create_backup_native(name: str, backup_dir: str, collections: Optional
         "file_path": backup_path,
         "size": file_size,
         "collections": collections,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
         "created_by": user_id,
         "backup_type": "mongodump",  # 标记备份类型
     }
@@ -141,9 +144,12 @@ async def create_backup(name: str, backup_dir: str, collections: Optional[List[s
     对于大数据量（>100MB），建议使用 create_backup_native() 方法
     """
     db = get_mongo_db()
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return {}
 
     backup_id = str(ObjectId())
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_filename = f"backup_{name}_{timestamp}.json.gz"
     backup_path = os.path.join(backup_dir, backup_filename)
 
@@ -153,7 +159,7 @@ async def create_backup(name: str, backup_dir: str, collections: Optional[List[s
     backup_data: Dict[str, Any] = {
         "backup_id": backup_id,
         "name": name,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": user_id,
         "collections": collections,
         "data": {},
@@ -183,7 +189,7 @@ async def create_backup(name: str, backup_dir: str, collections: Optional[List[s
         "file_path": backup_path,
         "size": file_size,
         "collections": collections,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
         "created_by": user_id,
     }
 
@@ -202,6 +208,9 @@ async def create_backup(name: str, backup_dir: str, collections: Optional[List[s
 
 async def list_backups() -> List[Dict[str, Any]]:
     db = get_mongo_db()
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return []
     backups: List[Dict[str, Any]] = []
     async for backup in db.database_backups.find().sort("created_at", -1):
         backups.append({
@@ -218,6 +227,9 @@ async def list_backups() -> List[Dict[str, Any]]:
 
 async def delete_backup(backup_id: str) -> None:
     db = get_mongo_db()
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return None
     backup = await db.database_backups.find_one({"_id": ObjectId(backup_id)})
     if not backup:
         raise Exception("备份不存在")
@@ -271,6 +283,9 @@ async def import_data(content: bytes, collection: str, *, format: str = "json", 
     2. 多集合模式：导入包含多个集合的导出文件（自动检测）
     """
     db = get_mongo_db()
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return {}
 
     if format.lower() == "json":
         # 🔥 使用 asyncio.to_thread 将阻塞的 JSON 解析放到线程池执行
@@ -450,7 +465,10 @@ async def export_data(collections: Optional[List[str]] = None, *, export_dir: st
 
     # 🔥 使用异步数据库连接
     db = get_mongo_db()
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return ""
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
     if not collections:
         # 🔥 异步调用 list_collection_names()
@@ -483,7 +501,7 @@ async def export_data(collections: Optional[List[str]] = None, *, export_dir: st
         file_path = os.path.join(export_dir, filename)
         export_data_dict = {
             "export_info": {
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "collections": collections,
                 "format": format,
             },

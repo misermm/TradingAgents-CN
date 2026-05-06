@@ -57,6 +57,8 @@ class TushareInitService:
     async def initialize(self):
         """初始化服务"""
         self.db = get_mongo_db()
+        if self.db is None:
+            raise RuntimeError("MongoDB数据库连接不可用")
         self.sync_service = await get_tushare_sync_service()
         logger.info("✅ Tushare初始化服务准备完成")
     
@@ -387,13 +389,16 @@ class TushareInitService:
         
         logger.info(f"  数据完整性验证:")
         logger.info(f"    股票基础信息: {basic_count}条")
-        logger.info(f"    扩展字段覆盖: {extended_count}条 ({extended_count/basic_count*100:.1f}%)")
+        if basic_count > 0:
+            logger.info(f"    扩展字段覆盖: {extended_count}条 ({extended_count/basic_count*100:.1f}%)")
+        else:
+            logger.info(f"    扩展字段覆盖: {extended_count}条 (N/A)")
         logger.info(f"    行情数据: {quotes_count}条")
         
         if basic_count == 0:
             raise Exception("数据初始化失败：无基础数据")
         
-        if extended_count / basic_count < 0.9:  # 90%以上应该有扩展字段
+        if basic_count > 0 and extended_count / basic_count < 0.9:  # 90%以上应该有扩展字段
             logger.warning("⚠️ 扩展字段覆盖率较低，可能存在数据质量问题")
         
         self.stats.completed_steps += 1

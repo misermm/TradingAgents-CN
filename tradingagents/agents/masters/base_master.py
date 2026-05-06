@@ -443,7 +443,12 @@ def _generate_report_from_prefetched(
 
 
 def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framework: str, output_format: str, tools_list: Optional[List[Any]] = None):
-    config = MASTER_ANALYST_CONFIG[master_id]
+    config = MASTER_ANALYST_CONFIG.get(master_id)
+    if not config:
+        logger.error(f"[MasterAnalyst] 未知的大师ID: {master_id}")
+        def _fallback_node(state):
+            return {}
+        return _fallback_node
     name_cn = config["name_cn"]
     name_en = config["name_en"]
     max_tool_calls = config["max_tool_calls"]

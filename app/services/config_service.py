@@ -40,6 +40,9 @@ class ConfigService:
             else:
                 # 否则使用全局函数
                 self.db = get_mongo_db()
+                if self.db is None:
+                    logger.warning("MongoDB连接不可用")
+                    return None
         return self.db
 
     @staticmethod
@@ -1129,7 +1132,7 @@ class ConfigService:
                             "response_time": response_time,
                             "details": None
                         }
-                    except:
+                    except Exception:
                         return {
                         "success": False,
                         "message": f"API测试失败: HTTP {response.status_code}",
@@ -3360,8 +3363,8 @@ class ConfigService:
             try:
                 # 先尝试作为 ObjectId 查询
                 provider_data = await providers_collection.find_one({"_id": ObjectId(provider_id)})
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
 
             # 如果没有找到，再尝试作为字符串查询
             if not provider_data:
@@ -3595,7 +3598,7 @@ class ConfigService:
                         "success": False,
                         "message": f"{display_name} API请求错误: {error_msg}"
                     }
-                except:
+                except Exception:
                     return {
                         "success": False,
                         "message": f"{display_name} API请求格式错误"
@@ -3623,7 +3626,7 @@ class ConfigService:
                             "success": False,
                             "message": f"{display_name} 服务暂时不可用: {error_msg}"
                         }
-                except:
+                except Exception:
                     return {
                         "success": False,
                         "message": f"{display_name} 服务暂时不可用 (HTTP 503)"
@@ -3990,7 +3993,7 @@ class ConfigService:
                         "success": False,
                         "message": f"{display_name} API测试失败: {error_msg}"
                     }
-                except:
+                except Exception:
                     return {
                         "success": False,
                         "message": f"{display_name} API测试失败: HTTP {response.status_code}"
@@ -4015,8 +4018,8 @@ class ConfigService:
             provider_data = None
             try:
                 provider_data = await providers_collection.find_one({"_id": ObjectId(provider_id)})
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
 
             if not provider_data:
                 provider_data = await providers_collection.find_one({"_id": provider_id})
@@ -4187,7 +4190,7 @@ class ConfigService:
                         "success": False,
                         "message": f"{display_name} API请求失败: {error_msg}"
                     }
-                except:
+                except Exception:
                     print(f"❌ HTTP 错误: {response.status_code}")
                     return {
                         "success": False,
@@ -4717,7 +4720,7 @@ class ConfigService:
                         "success": False,
                         "message": f"{display_name} API测试失败: {error_msg}"
                     }
-                except:
+                except Exception:
                     logger.error(f"❌ [{display_name}] API测试失败")
                     logger.error(f"   请求URL: {url}")
                     logger.error(f"   状态码: {response.status_code}")

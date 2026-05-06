@@ -16,10 +16,10 @@ def create_bull_researcher(llm, memory):
         bull_history = investment_debate_state.get("bull_history", "")
 
         current_response = investment_debate_state.get("current_response", "")
-        market_research_report = state["market_report"]
-        sentiment_report = state["sentiment_report"]
-        news_report = state["news_report"]
-        fundamentals_report = state["fundamentals_report"]
+        market_research_report = state.get("market_report", "")
+        sentiment_report = state.get("sentiment_report", "")
+        news_report = state.get("news_report", "")
+        fundamentals_report = state.get("fundamentals_report", "")
         master_consensus = state.get("master_consensus_report", "")
 
         # 使用统一的股票类型检测
@@ -46,7 +46,7 @@ def create_bull_researcher(llm, memory):
         logger.debug(f"🐂 [DEBUG] - 情绪报告长度: {len(sentiment_report)}")
         logger.debug(f"🐂 [DEBUG] - 新闻报告长度: {len(news_report)}")
         logger.debug(f"🐂 [DEBUG] - 基本面报告长度: {len(fundamentals_report)}")
-        logger.debug(f"🐂 [DEBUG] - 基本面报告前200字符: {fundamentals_report[:200]}...")
+        logger.debug(f"🐂 [DEBUG] - 基本面报告前200字符: {str(fundamentals_report)[:200]}...")
         logger.debug(f"🐂 [DEBUG] - 股票代码: {ticker}, 公司名称: {company_name}, 类型: {market_info['market_name']}, 货币: {currency}")
         logger.debug(f"🐂 [DEBUG] - 市场详情: 中国A股={is_china}, 港股={is_hk}, 美股={is_us}")
 
@@ -71,7 +71,7 @@ def create_bull_researcher(llm, memory):
 
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec["recommendation"] + "\n\n"
+            past_memory_str += rec.get("recommendation", str(rec)) + "\n\n"
 
         prompt = f"""你是一位看涨分析师，负责为股票 {company_name}（股票代码：{ticker}）的投资建立强有力的论证。
 
@@ -106,8 +106,8 @@ def create_bull_researcher(llm, memory):
 
         argument = f"Bull Analyst: {response.content}"
 
-        new_count = investment_debate_state["count"] + 1
-        logger.info(f"🐂 [多头研究员] 发言完成，计数: {investment_debate_state['count']} -> {new_count}")
+        new_count = investment_debate_state.get("count", 0) + 1
+        logger.info(f"🐂 [多头研究员] 发言完成，计数: {investment_debate_state.get('count', 0)} -> {new_count}")
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,

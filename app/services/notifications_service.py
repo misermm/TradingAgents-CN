@@ -26,6 +26,9 @@ class NotificationsService:
     async def _ensure_indexes(self):
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             await db[self.collection].create_index([("user_id", 1), ("created_at", -1)])
             await db[self.collection].create_index([("user_id", 1), ("status", 1)])
         except Exception as e:
@@ -34,6 +37,9 @@ class NotificationsService:
     async def create_and_publish(self, payload: NotificationCreate) -> str:
         await self._ensure_indexes()
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return ""
         doc = {
             "user_id": payload.user_id,
             "type": payload.type,
@@ -90,10 +96,16 @@ class NotificationsService:
 
     async def unread_count(self, user_id: str) -> int:
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return 0
         return await db[self.collection].count_documents({"user_id": user_id, "status": "unread"})
 
     async def list(self, user_id: str, *, status: Optional[str] = None, ntype: Optional[str] = None, page: int = 1, page_size: int = 20) -> NotificationList:
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return None
         q: Dict[str, Any] = {"user_id": user_id}
         if status in ("read", "unread"):
             q["status"] = status
@@ -117,6 +129,9 @@ class NotificationsService:
 
     async def mark_read(self, user_id: str, notif_id: str) -> bool:
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return False
         try:
             oid = ObjectId(notif_id)
         except Exception:
@@ -126,6 +141,9 @@ class NotificationsService:
 
     async def mark_all_read(self, user_id: str) -> int:
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return 0
         res = await db[self.collection].update_many({"user_id": user_id, "status": "unread"}, {"$set": {"status": "read"}})
         return res.modified_count
 

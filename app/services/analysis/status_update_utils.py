@@ -24,18 +24,21 @@ async def perform_update_task_status(
     Mirrors the original logic in AnalysisService._update_task_status.
     """
     db = get_mongo_db()
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return None
     redis_service = get_redis_service()
 
     update_data: Dict[str, Any] = {
         "status": status,
         "progress": progress,
-        "updated_at": datetime.utcnow(),
+        "updated_at": datetime.now(timezone.utc),
     }
 
     if status == AnalysisStatus.PROCESSING and "started_at" not in update_data:
-        update_data["started_at"] = datetime.utcnow()
+        update_data["started_at"] = datetime.now(timezone.utc)
     elif status in [AnalysisStatus.COMPLETED, AnalysisStatus.FAILED]:
-        update_data["completed_at"] = datetime.utcnow()
+        update_data["completed_at"] = datetime.now(timezone.utc)
         if result:
             update_data["result"] = result.dict()
 
@@ -48,7 +51,7 @@ async def perform_update_task_status(
             "task_id": task_id,
             "status": status,
             "progress": progress,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         },
         ttl=3600,
     )
@@ -65,6 +68,9 @@ async def perform_update_task_status_with_tracker(
     Mirrors the original logic in AnalysisService._update_task_status_with_tracker.
     """
     db = get_mongo_db()
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return None
     redis_service = get_redis_service()
 
     progress_data = progress_tracker.to_dict()
@@ -74,13 +80,13 @@ async def perform_update_task_status_with_tracker(
         "progress": progress_data["progress"],
         "current_step": progress_data["current_step"],
         "message": progress_data["message"],
-        "updated_at": datetime.utcnow(),
+        "updated_at": datetime.now(timezone.utc),
     }
 
     if status == AnalysisStatus.PROCESSING and "started_at" not in update_data:
-        update_data["started_at"] = datetime.utcnow()
+        update_data["started_at"] = datetime.now(timezone.utc)
     elif status in [AnalysisStatus.COMPLETED, AnalysisStatus.FAILED]:
-        update_data["completed_at"] = datetime.utcnow()
+        update_data["completed_at"] = datetime.now(timezone.utc)
         if result:
             update_data["result"] = result.dict()
 
@@ -98,7 +104,7 @@ async def perform_update_task_status_with_tracker(
             "elapsed_time": progress_data["elapsed_time"],
             "remaining_time": progress_data["remaining_time"],
             "steps": progress_data["steps"],
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         },
         ttl=3600,
     )

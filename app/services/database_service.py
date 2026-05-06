@@ -53,8 +53,9 @@ class DatabaseService:
         """获取数据库统计信息"""
         try:
             db = get_mongo_db()
+            if db is None:
+                return {"error": "数据库连接不可用", "status": "unavailable"}
 
-            # 获取所有集合
             collection_names = await db.list_collection_names()
 
             collections_info = []

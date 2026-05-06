@@ -69,6 +69,8 @@ class BaoStockInitService:
             # 🔥 初始化数据库连接
             from app.core.database import get_mongo_db
             self.db = get_mongo_db()
+            if self.db is None:
+                logger.warning("MongoDB连接不可用，BaoStock初始化服务可能无法正常工作")
 
             # 🔥 初始化同步服务
             await self.sync_service.initialize()
@@ -81,6 +83,12 @@ class BaoStockInitService:
     async def check_database_status(self) -> Dict[str, Any]:
         """检查数据库状态"""
         try:
+            if self.db is None:
+                return {
+                    "status": "error",
+                    "error": "数据库连接不可用"
+                }
+            
             # 检查基础信息
             basic_info_count = await self.db.stock_basic_info.count_documents({"data_source": "baostock"})
             basic_info_latest = None
@@ -141,7 +149,7 @@ class BaoStockInitService:
             logger.info(f"1️⃣ {stats.current_step}...")
             
             db_status = await self.check_database_status()
-            if db_status["status"] != "empty" and not force:
+            if db_status.get("status") != "empty" and not force:
                 logger.info("ℹ️ 数据库已有数据，跳过初始化（使用--force强制重新初始化）")
                 stats.completed_steps = 6
                 stats.end_time = datetime.now()

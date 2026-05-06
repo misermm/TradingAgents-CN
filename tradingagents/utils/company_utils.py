@@ -74,7 +74,7 @@ def _resolve_company_name(ticker: str, market_info: dict = None) -> str:
             return name
         return f"A股{ticker}"
 
-    if market_type == "hk_stocks" or (not market_type and re.match(r'^\d{4,5}$', ticker)):
+    if market_type == "hk_stocks" or (not market_type and (re.match(r'^\d{4,5}$', ticker) or re.match(r'^\d{4,5}\.HK$', ticker, re.IGNORECASE))):
         name = _fetch_hk_company_name(ticker)
         if name:
             return name

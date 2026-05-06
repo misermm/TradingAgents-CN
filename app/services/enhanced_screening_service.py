@@ -92,26 +92,29 @@ class EnhancedScreeningService:
             if source == "mongodb" and items:
                 try:
                     db = get_mongo_db()
-                    coll = db["market_quotes"]
-                    codes = [str(it.get("code")).zfill(6) for it in items if it.get("code")]
-                    if codes:
-                        cursor = coll.find(
-                            {"code": {"$in": codes}},
-                            projection={"_id": 0, "code": 1, "close": 1, "pct_chg": 1, "amount": 1},
-                        )
-                        quotes_list = await cursor.to_list(length=len(codes))
-                        quotes_map = {str(d.get("code")).zfill(6): d for d in quotes_list}
-                        for it in items:
-                            key = str(it.get("code")).zfill(6)
-                            q = quotes_map.get(key)
-                            if not q:
-                                continue
-                            if q.get("close") is not None:
-                                it["close"] = q.get("close")
-                            if q.get("pct_chg") is not None:
-                                it["pct_chg"] = q.get("pct_chg")
-                            if q.get("amount") is not None:
-                                it["amount"] = q.get("amount")
+                    if db is None:
+                        logger.warning("MongoDB连接不可用，跳过行情富集")
+                    else:
+                        coll = db["market_quotes"]
+                        codes = [str(it.get("code")).zfill(6) for it in items if it.get("code")]
+                        if codes:
+                            cursor = coll.find(
+                                {"code": {"$in": codes}},
+                                projection={"_id": 0, "code": 1, "close": 1, "pct_chg": 1, "amount": 1},
+                            )
+                            quotes_list = await cursor.to_list(length=len(codes))
+                            quotes_map = {str(d.get("code")).zfill(6): d for d in quotes_list}
+                            for it in items:
+                                key = str(it.get("code")).zfill(6)
+                                q = quotes_map.get(key)
+                                if not q:
+                                    continue
+                                if q.get("close") is not None:
+                                    it["close"] = q.get("close")
+                                if q.get("pct_chg") is not None:
+                                    it["pct_chg"] = q.get("pct_chg")
+                                if q.get("amount") is not None:
+                                    it["amount"] = q.get("amount")
                 except Exception as enrich_err:
                     logger.warning(f"实时行情富集失败（已忽略）: {enrich_err}")
 

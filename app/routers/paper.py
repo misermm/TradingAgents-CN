@@ -65,6 +65,8 @@ def _detect_market_and_code(code: str) -> Tuple[str, str]:
 async def _get_or_create_account(user_id: str) -> Dict[str, Any]:
     """获取或创建账户（多货币）"""
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     acc = await db["paper_accounts"].find_one({"user_id": user_id})
     if not acc:
         now = datetime.utcnow().isoformat()
@@ -118,6 +120,8 @@ async def _get_or_create_account(user_id: str) -> Dict[str, Any]:
 async def _get_market_rules(market: str) -> Optional[Dict[str, Any]]:
     """获取市场规则配置"""
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     rules_doc = await db["paper_market_rules"].find_one({"market": market})
     if rules_doc:
         return rules_doc.get("rules", {})
@@ -160,6 +164,8 @@ def _calculate_commission(market: str, side: str, amount: float, rules: Dict[str
 async def _get_available_quantity(user_id: str, code: str, market: str) -> int:
     """获取可用数量（考虑T+1限制）"""
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     pos = await db["paper_positions"].find_one({"user_id": user_id, "code": code})
 
     if not pos:
@@ -203,6 +209,8 @@ async def _get_last_price(code: str, market: str) -> Optional[float]:
         最新价格，如果获取失败返回 None
     """
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
 
     # A股：从数据库获取
     if market == "CN":
@@ -242,6 +250,8 @@ async def _get_last_price(code: str, market: str) -> Optional[float]:
         try:
             from app.services.foreign_stock_service import ForeignStockService
             db = get_mongo_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="数据库连接不可用")
             service = ForeignStockService(db=db)
 
             quote = await service.get_quote(market, code, force_refresh=False)
@@ -271,6 +281,8 @@ def _zfill_code(code: str) -> str:
 async def get_account(current_user: dict = Depends(get_current_user)):
     """获取或创建纸上账户，返回资金与持仓估值汇总（支持多市场）"""
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     acc = await _get_or_create_account(current_user["id"])
 
     # 聚合持仓估值（按货币分类）
@@ -345,6 +357,8 @@ async def get_account(current_user: dict = Depends(get_current_user)):
 async def place_order(payload: PlaceOrderRequest, current_user: dict = Depends(get_current_user)):
     """提交市价单，按最新价即时成交（支持多市场）"""
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
 
     # 1. 识别市场类型
     if payload.market:
@@ -534,6 +548,8 @@ async def place_order(payload: PlaceOrderRequest, current_user: dict = Depends(g
 async def list_positions(current_user: dict = Depends(get_current_user)):
     """获取持仓列表（支持多市场）"""
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     items = await db["paper_positions"].find({"user_id": current_user["id"]}).to_list(None)
     enriched: List[Dict[str, Any]] = []
     for p in items:
@@ -563,6 +579,8 @@ async def list_positions(current_user: dict = Depends(get_current_user)):
 @router.get("/orders", response_model=dict)
 async def list_orders(limit: int = Query(50, ge=1, le=200), current_user: dict = Depends(get_current_user)):
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     cursor = db["paper_orders"].find({"user_id": current_user["id"]}).sort("created_at", -1).limit(limit)
     items = await cursor.to_list(None)
     # 去除 _id
@@ -576,6 +594,8 @@ async def reset_account(confirm: bool = Query(False), current_user: dict = Depen
     if not confirm:
         raise HTTPException(status_code=400, detail="请设置 confirm=true 以确认重置")
     db = get_mongo_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="数据库连接不可用")
     await db["paper_accounts"].delete_many({"user_id": current_user["id"]})
     await db["paper_positions"].delete_many({"user_id": current_user["id"]})
     await db["paper_orders"].delete_many({"user_id": current_user["id"]})

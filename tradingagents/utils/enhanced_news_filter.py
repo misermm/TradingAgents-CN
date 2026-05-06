@@ -8,7 +8,10 @@ import re
 import logging
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 # 导入基础过滤器
 from .news_filter import NewsRelevanceFilter, create_news_filter, get_company_name
@@ -129,6 +132,8 @@ class EnhancedNewsFilter(NewsRelevanceFilter):
             
             # 计算与公司相关文本的相似度
             similarities = []
+            if np is None:
+                return 0
             for company_emb in self.company_embedding:
                 similarity = np.dot(text_embedding[0], company_emb) / (
                     np.linalg.norm(text_embedding[0]) * np.linalg.norm(company_emb)

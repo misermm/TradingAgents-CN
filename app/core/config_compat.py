@@ -75,8 +75,8 @@ class ConfigManagerCompat:
                 config = loop.run_until_complete(config_service.get_system_config())
                 if config and config.system_settings:
                     return config.system_settings
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
         
         # 返回默认设置
         return self._get_default_settings()
@@ -136,8 +136,8 @@ class ConfigManagerCompat:
                         }
                         for llm in config.llm_configs
                     ]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
         
         return []
     

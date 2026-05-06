@@ -328,19 +328,20 @@ class NewsDataSyncService:
     def _standardize_realtime_news(self, news_item, symbol: str) -> Optional[Dict[str, Any]]:
         """标准化实时新闻数据"""
         try:
+            content = news_item.content or ""
             return {
                 "symbol": symbol,
-                "title": news_item.title,
-                "content": news_item.content,
-                "summary": news_item.content[:200] + "..." if len(news_item.content) > 200 else news_item.content,
+                "title": news_item.title or "",
+                "content": content,
+                "summary": content[:200] + "..." if len(content) > 200 else content,
                 "url": news_item.url,
                 "source": news_item.source,
                 "author": "",
                 "publish_time": news_item.publish_time,
-                "category": self._classify_news_category(news_item.title),
-                "sentiment": self._analyze_sentiment(news_item.title + " " + news_item.content),
-                "importance": self._assess_importance(news_item.title),
-                "keywords": self._extract_keywords(news_item.title + " " + news_item.content),
+                "category": self._classify_news_category(news_item.title or ""),
+                "sentiment": self._analyze_sentiment((news_item.title or "") + " " + content),
+                "importance": self._assess_importance(news_item.title or ""),
+                "keywords": self._extract_keywords((news_item.title or "") + " " + content),
                 "data_source": "realtime"
             }
         except Exception as e:

@@ -20,8 +20,8 @@ def get_tz_name() -> str:
             tz = cached.get("app_timezone") or cached.get("APP_TIMEZONE")
             if isinstance(tz, str) and tz.strip():
                 return tz.strip()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作失败（已忽略）: {e}")
     return settings.TIMEZONE or "Asia/Shanghai"
 
 

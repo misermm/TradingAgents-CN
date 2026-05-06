@@ -232,8 +232,8 @@ class UnifiedConfigManager:
                 val = doc["system_settings"].get(key)
                 if val and isinstance(val, str) and val.strip():
                     return val
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
         return fallback
 
     def get_default_model(self) -> str:
@@ -242,7 +242,7 @@ class UnifiedConfigManager:
         if db_val:
             return db_val
         settings = self.get_system_settings()
-        return settings.get("quick_analysis_model", settings.get("default_model", "qwen3.5-9b-claude-4.6-highiq-instruct"))
+        return settings.get("quick_analysis_model", settings.get("default_model", "deepseek-chat"))
 
     def set_default_model(self, model_name: str) -> bool:
         """设置默认模型（向后兼容）"""
@@ -256,7 +256,7 @@ class UnifiedConfigManager:
         if db_val:
             return db_val
         settings = self.get_system_settings()
-        return settings.get("quick_analysis_model") or settings.get("quick_think_llm", "qwen3.5-9b-claude-4.6-highiq-instruct")
+        return settings.get("quick_analysis_model") or settings.get("quick_think_llm", "deepseek-chat")
 
     def get_deep_analysis_model(self) -> str:
         """获取深度分析模型 - 优先从MongoDB数据库读取"""
@@ -264,7 +264,7 @@ class UnifiedConfigManager:
         if db_val:
             return db_val
         settings = self.get_system_settings()
-        return settings.get("deep_analysis_model") or settings.get("deep_think_llm", "qwen3.5-9b-claude-4.6-highiq-instruct")
+        return settings.get("deep_analysis_model") or settings.get("deep_think_llm", "deepseek-chat")
 
     def set_analysis_models(self, quick_model: str, deep_model: str) -> bool:
         """设置分析模型"""
@@ -349,6 +349,9 @@ class UnifiedConfigManager:
             # 🔥 优先从数据库读取配置（使用异步连接）
             from app.core.database import get_mongo_db
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return []
             config_collection = db.system_configs
 
             # 获取最新的激活配置

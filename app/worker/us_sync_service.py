@@ -37,7 +37,7 @@ class USSyncService:
     """美股数据同步服务（支持多数据源）"""
 
     def __init__(self):
-        self.db = get_mongo_db()
+        self.db = None
         self.settings = settings
 
         # 数据提供器
@@ -53,6 +53,9 @@ class USSyncService:
 
     async def initialize(self):
         """初始化同步服务"""
+        self.db = get_mongo_db()
+        if self.db is None:
+            raise RuntimeError("MongoDB数据库连接不可用")
         logger.info("✅ 美股同步服务初始化完成")
 
     def _get_finnhub_client(self):

@@ -44,6 +44,8 @@ class TushareSyncService:
         self.historical_service = None  # 延迟初始化
         self.news_service = None  # 延迟初始化
         self.db = get_mongo_db()
+        if self.db is None:
+            logger.warning("MongoDB未初始化，TushareSyncService将在initialize()中重试获取数据库连接")
         self.settings = settings
 
         # 同步配置
@@ -57,7 +59,10 @@ class TushareSyncService:
         self.rate_limiter = get_tushare_rate_limiter(tier=tushare_tier, safety_margin=safety_margin)
     
     async def initialize(self):
-        """初始化同步服务"""
+        if self.db is None:
+            self.db = get_mongo_db()
+        if self.db is None:
+            raise RuntimeError("MongoDB数据库连接不可用")
         success = await self.provider.connect()
         if not success:
             raise RuntimeError("❌ Tushare连接失败，无法启动同步服务")
@@ -212,7 +217,7 @@ class TushareSyncService:
                         code = stock_info.dict().get("code", "unknown")
                     else:
                         code = stock_info.get("code", "unknown")
-                except:
+                except Exception:
                     code = "unknown"
 
                 batch_stats["errors"].append({
@@ -800,7 +805,7 @@ class TushareSyncService:
                         last_date_obj = datetime.strptime(latest_date, '%Y-%m-%d')
                         next_date = last_date_obj + timedelta(days=1)
                         return next_date.strftime('%Y-%m-%d')
-                    except:
+                    except Exception:
                         # 如果日期格式不对，直接返回
                         return latest_date
                 else:

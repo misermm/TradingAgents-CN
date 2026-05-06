@@ -102,8 +102,8 @@ def normalize_llm_providers(db, dry_run: bool = False, fix_indexes: bool = False
     if not dry_run and fix_indexes:
         try:
             coll.create_index("name", unique=True, name="uniq_provider_name")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
 
     return {"providers_total": len(docs), "providers_renamed": renamed, "providers_merged": merged}
 
@@ -172,8 +172,8 @@ def normalize_model_catalog(db, dry_run: bool = False, fix_indexes: bool = False
     if not dry_run and fix_indexes:
         try:
             coll.create_index("provider", unique=True, name="uniq_model_catalog_provider")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
 
     return {"model_catalog_groups": len(grouped), "model_catalog_merged": merged_catalogs}
 

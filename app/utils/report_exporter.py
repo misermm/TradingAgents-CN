@@ -399,8 +399,8 @@ pre, code {
             try:
                 if 'output_file' in locals() and os.path.exists(output_file):
                     os.unlink(output_file)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             raise Exception(f"生成 Word 文档失败: {e}")
     
     def _markdown_to_html(self, md_content: str) -> str:

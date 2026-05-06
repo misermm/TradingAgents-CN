@@ -3,7 +3,7 @@ Database status and connection checks, extracted from DatabaseService.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from app.core.database import get_mongo_db, get_redis_client
@@ -13,6 +13,9 @@ from app.core.config import settings
 async def get_mongodb_status() -> Dict[str, Any]:
     try:
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return {}
         await db.command("ping")
         server_info = await db.command("buildInfo")
         server_status = await db.command("serverStatus")
@@ -26,7 +29,7 @@ async def get_mongodb_status() -> Dict[str, Any]:
             "uptime": server_status.get("uptime", 0),
             "connections": server_status.get("connections", {}),
             "memory": server_status.get("mem", {}),
-            "connected_at": datetime.utcnow().isoformat(),
+            "connected_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
         return {
@@ -75,9 +78,12 @@ async def get_database_status() -> Dict[str, Any]:
 async def test_mongodb_connection() -> Dict[str, Any]:
     try:
         db = get_mongo_db()
-        start = datetime.utcnow()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return {}
+        start = datetime.now(timezone.utc)
         await db.command("ping")
-        took_ms = (datetime.utcnow() - start).total_seconds() * 1000
+        took_ms = (datetime.now(timezone.utc) - start).total_seconds() * 1000
         return {"success": True, "response_time_ms": round(took_ms, 2), "message": "MongoDB连接正常"}
     except Exception as e:
         return {"success": False, "error": str(e), "message": "MongoDB连接失败"}
@@ -86,9 +92,9 @@ async def test_mongodb_connection() -> Dict[str, Any]:
 async def test_redis_connection() -> Dict[str, Any]:
     try:
         redis_client = get_redis_client()
-        start = datetime.utcnow()
+        start = datetime.now(timezone.utc)
         await redis_client.ping()
-        took_ms = (datetime.utcnow() - start).total_seconds() * 1000
+        took_ms = (datetime.now(timezone.utc) - start).total_seconds() * 1000
         return {"success": True, "response_time_ms": round(took_ms, 2), "message": "Redis连接正常"}
     except Exception as e:
         return {"success": False, "error": str(e), "message": "Redis连接失败"}

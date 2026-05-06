@@ -179,10 +179,10 @@ async def run_screening(req: ScreeningRequest, user: dict = Depends(get_current_
                    f"took={result.get('took_ms')}ms, optimization={result.get('optimization_used')}")
 
         if result.get('items'):
-            sample = result['items'][:3]
+            sample = result.get('items', [])[:3]
             logger.info(f"[screening] 返回样例(前3条): {sample}")
 
-        return ScreeningResponse(total=result["total"], items=result["items"])
+        return ScreeningResponse(total=result.get("total", 0), items=result.get("items", []))
 
     except Exception as e:
         logger.error(f"[screening] 处理失败: {e}", exc_info=True)
@@ -218,8 +218,8 @@ async def enhanced_screening(req: NewScreeningRequest, user: dict = Depends(get_
                    f"took={result.get('took_ms')}ms, optimization={result.get('optimization_used')}")
 
         return NewScreeningResponse(
-            total=result["total"],
-            items=result["items"],
+            total=result.get("total", 0),
+            items=result.get("items", []),
             took_ms=result.get("took_ms"),
             optimization_used=result.get("optimization_used"),
             source=result.get("source")
@@ -310,7 +310,7 @@ async def get_industries(user: dict = Depends(get_current_user)):
             {
                 "$match": {
                     "source": preferred_source,  # 🔥 只查询优先级最高的数据源
-                    "industry": {"$ne": None, "$ne": ""}  # 过滤空行业
+                    "industry": {"$nin": [None, ""]}  # 过滤空行业
                 }
             },
             {

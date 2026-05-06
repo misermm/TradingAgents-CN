@@ -86,6 +86,9 @@ class QuotesIngestionService:
 
     async def ensure_indexes(self) -> None:
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return None
         coll = db[self.collection_name]
         try:
             await coll.create_index("code", unique=True)
@@ -111,6 +114,9 @@ class QuotesIngestionService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             status_coll = db[self.status_collection_name]
 
             now = datetime.now(self.tz)
@@ -154,6 +160,9 @@ class QuotesIngestionService:
         """
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return {}
             status_coll = db[self.status_collection_name]
 
             doc = await status_coll.find_one({"job": "quotes_ingestion"})
@@ -342,6 +351,9 @@ class QuotesIngestionService:
 
     async def _collection_empty(self) -> bool:
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return False
         coll = db[self.collection_name]
         try:
             count = await coll.estimated_document_count()
@@ -353,6 +365,9 @@ class QuotesIngestionService:
         if not latest_trade_date:
             return False
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return False
         coll = db[self.collection_name]
         try:
             cursor = coll.find({}, {"trade_date": 1}).sort("trade_date", -1).limit(1)
@@ -366,6 +381,9 @@ class QuotesIngestionService:
 
     async def _bulk_upsert(self, quotes_map: Dict[str, Dict], trade_date: str, source: Optional[str] = None) -> None:
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return None
         coll = db[self.collection_name]
         ops = []
         updated_at = datetime.now(self.tz)
@@ -429,6 +447,9 @@ class QuotesIngestionService:
             logger.info("📊 market_quotes 集合为空，开始从历史数据导入")
 
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             manager = DataSourceManager()
 
             # 获取最新交易日

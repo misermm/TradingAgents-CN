@@ -39,7 +39,7 @@ class HKDataService:
     """港股数据服务（按需获取+缓存模式）"""
 
     def __init__(self):
-        self.db = get_mongo_db()
+        self.db = None
         self.settings = settings
 
         # 数据提供器映射
@@ -59,6 +59,9 @@ class HKDataService:
 
     async def initialize(self):
         """初始化同步服务"""
+        self.db = get_mongo_db()
+        if self.db is None:
+            raise RuntimeError("MongoDB数据库连接不可用")
         logger.info("✅ 港股同步服务初始化完成")
 
     def _get_hk_stock_list_from_akshare(self) -> List[str]:

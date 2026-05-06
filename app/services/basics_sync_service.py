@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -114,7 +114,9 @@ class BasicsSyncService:
         """Return last persisted status; falls back to in-memory snapshot."""
         try:
             db = db or get_mongo_db()
-            doc = await db[STATUS_COLLECTION].find_one({"job": JOB_KEY})
+            doc = None
+            if db is not None:
+                doc = await db[STATUS_COLLECTION].find_one({"job": JOB_KEY})
             if doc:
                 doc.pop("_id", None)
                 return doc
@@ -181,12 +183,15 @@ class BasicsSyncService:
             self._running = True
 
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return {}
 
         # 🔥 确保索引存在（提升查询和 upsert 性能）
         await self._ensure_indexes(db)
 
         stats = SyncStats()
-        stats.started_at = datetime.utcnow().isoformat()
+        stats.started_at = datetime.now(timezone.utc).isoformat()
         stats.status = "running"
         await self._persist_status(db, stats.__dict__.copy())
 
@@ -218,7 +223,7 @@ class BasicsSyncService:
 
             # Step 3: Upsert into MongoDB (batched bulk writes)
             ops: List[UpdateOne] = []
-            now_iso = datetime.utcnow().isoformat()
+            now_iso = datetime.now(timezone.utc).isoformat()
             for _, row in stock_df.iterrows():  # type: ignore
                 name = row.get("name") or ""
                 area = row.get("area") or ""
@@ -261,13 +266,13 @@ class BasicsSyncService:
                 if "total_mv" in daily_metrics:
                     try:
                         total_mv_yi = float(daily_metrics["total_mv"]) / 10000.0
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作失败（已忽略）: {e}")
                 if "circ_mv" in daily_metrics:
                     try:
                         circ_mv_yi = float(daily_metrics["circ_mv"]) / 10000.0
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作失败（已忽略）: {e}")
 
                 # 生成 full_symbol（完整标准化代码）
                 full_symbol = self._generate_full_symbol(code)
@@ -339,7 +344,7 @@ class BasicsSyncService:
             stats.updated = updated
             stats.errors = errors
             stats.status = "success" if errors == 0 else "success_with_errors"
-            stats.finished_at = datetime.utcnow().isoformat()
+            stats.finished_at = datetime.now(timezone.utc).isoformat()
             await self._persist_status(db, stats.__dict__.copy())
             logger.info(
                 f"Stock basics sync finished: total={stats.total} inserted={inserted} updated={updated} errors={errors} trade_date={latest_trade_date}"
@@ -349,7 +354,7 @@ class BasicsSyncService:
         except Exception as e:
             stats.status = "failed"
             stats.message = str(e)
-            stats.finished_at = datetime.utcnow().isoformat()
+            stats.finished_at = datetime.now(timezone.utc).isoformat()
             await self._persist_status(db, stats.__dict__.copy())
             logger.exception(f"Stock basics sync failed: {e}")
             return stats.__dict__

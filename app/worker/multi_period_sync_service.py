@@ -248,10 +248,13 @@ class MultiPeriodSyncService:
             # 从数据库获取股票列表
             from app.core.database import get_mongo_db
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用，返回空股票列表")
+                return []
             collection = db.stock_basic_info
 
-            cursor = collection.find({}, {"symbol": 1})
-            symbols = [doc["symbol"] async for doc in cursor]
+            cursor = collection.find({}, {"code": 1})
+            symbols = [doc["code"] async for doc in cursor if doc.get("code")]
 
             logger.info(f"📊 获取股票列表: {len(symbols)}只股票")
             return symbols
@@ -294,6 +297,8 @@ class MultiPeriodSyncService:
             # 按周期统计
             from app.core.database import get_mongo_db
             db = get_mongo_db()
+            if db is None:
+                return {"error": "MongoDB连接不可用"}
             collection = db.stock_daily_quotes
             
             pipeline = [

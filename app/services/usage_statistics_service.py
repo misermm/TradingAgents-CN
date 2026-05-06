@@ -25,6 +25,9 @@ class UsageStatisticsService:
         """添加使用记录"""
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return False
             collection = db[self.collection_name]
 
             record_dict = record.model_dump(exclude={"id"})
@@ -47,6 +50,9 @@ class UsageStatisticsService:
         """获取使用记录"""
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             collection = db[self.collection_name]
             
             # 构建查询条件
@@ -85,6 +91,9 @@ class UsageStatisticsService:
         """获取使用统计"""
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
             collection = db[self.collection_name]
             
             # 计算时间范围
@@ -214,6 +223,9 @@ class UsageStatisticsService:
         """删除旧记录"""
         try:
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用")
+                return 0
             collection = db[self.collection_name]
             
             # 计算截止日期

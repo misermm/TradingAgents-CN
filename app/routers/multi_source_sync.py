@@ -409,6 +409,8 @@ async def get_sync_history(
     try:
         from app.core.database import get_mongo_db
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
 
         # 构建查询条件
         query = {"job": "stock_basics_multi_source"}
@@ -458,6 +460,8 @@ async def clear_sync_cache():
         try:
             from app.core.database import get_mongo_db
             db = get_mongo_db()
+            if db is None:
+                raise HTTPException(status_code=503, detail="数据库连接不可用")
 
             # 删除同步状态记录
             result = await db.sync_status.delete_many({"job": "stock_basics_multi_source"})

@@ -62,6 +62,9 @@ class SchedulerService:
         """获取数据库连接"""
         if self.db is None:
             self.db = get_mongo_db()
+            if self.db is None:
+                logger.warning("MongoDB连接不可用")
+                return None
         return self.db
     
     async def list_jobs(self) -> List[Dict[str, Any]]:

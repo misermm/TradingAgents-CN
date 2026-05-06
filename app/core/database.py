@@ -219,6 +219,11 @@ async def init_database():
     except Exception as e:
         logger.error(f"💥 数据库初始化失败: {e}")
         logger.warning("⚠️ 数据库不可用，应用将以无数据库模式启动")
+        _database_available = False
+        mongo_client = None
+        mongo_db = None
+        redis_client = None
+        redis_pool = None
 
 
 async def init_database_views_and_indexes():
@@ -379,8 +384,7 @@ async def create_database_indexes(db):
 
 
 async def close_database():
-    """关闭数据库连接"""
-    global mongo_client, mongo_db, redis_client, redis_pool
+    global mongo_client, mongo_db, redis_client, redis_pool, _database_available
 
     await db_manager.close_connections()
 
@@ -389,6 +393,7 @@ async def close_database():
     mongo_db = None
     redis_client = None
     redis_pool = None
+    _database_available = False
 
 
 def get_mongo_client() -> AsyncIOMotorClient:
@@ -493,8 +498,8 @@ close_db = close_database
 
 
 def get_database():
-    """获取数据库实例"""
     if db_manager.mongo_client is None:
         logger.warning("⚠️ MongoDB客户端未初始化，返回None")
         return None
-    return db_manager.mongo_client.tradingagents
+    from app.core.config import settings
+    return db_manager.mongo_client[settings.MONGO_DB]

@@ -130,8 +130,11 @@ class ExampleSDKSyncService:
         try:
             # 获取需要同步的股票代码列表
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用，跳过实时行情同步")
+                return
             cursor = db.stock_basic_info.find({}, {"code": 1})
-            stock_codes = [doc["code"] async for doc in cursor]
+            stock_codes = [doc.get("code") async for doc in cursor if doc.get("code")]
             
             if not stock_codes:
                 logger.warning("⚠️ 未找到需要同步行情的股票")
@@ -164,12 +167,15 @@ class ExampleSDKSyncService:
             # 获取需要更新财务数据的股票
             # 这里可以根据业务需求筛选，比如只同步主要股票或定期更新
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用，跳过财务数据同步")
+                return
             cursor = db.stock_basic_info.find(
-                {"total_mv": {"$gte": 100}},  # 只同步市值大于100亿的股票
+                {"total_mv": {"$gte": 100}},
                 {"code": 1}
-            ).limit(50)  # 限制数量，避免API调用过多
+            ).limit(50)
             
-            stock_codes = [doc["code"] async for doc in cursor]
+            stock_codes = [doc.get("code") async for doc in cursor if doc.get("code")]
             
             if not stock_codes:
                 logger.warning("⚠️ 未找到需要同步财务数据的股票")
@@ -241,8 +247,9 @@ class ExampleSDKSyncService:
                 # 这里需要实现财务数据的存储逻辑
                 # 可能需要创建新的集合 stock_financial_data
                 db = get_mongo_db()
-                
-                # 构建更新数据
+                if db is None:
+                    logger.warning("MongoDB连接不可用，跳过财务数据存储")
+                    return
                 update_data = {
                     "code": code,
                     "financial_data": financial_data,
@@ -269,7 +276,9 @@ class ExampleSDKSyncService:
         """记录同步状态"""
         try:
             db = get_mongo_db()
-            
+            if db is None:
+                logger.warning("MongoDB连接不可用，跳过同步状态记录")
+                return
             sync_record = {
                 "job": "example_sdk_sync",
                 "status": status,

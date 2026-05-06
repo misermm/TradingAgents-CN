@@ -573,8 +573,8 @@ class AKShareAdapter(DataSourceAdapter):
                             "url": str(row.get('新闻链接') or row.get('url') or ''),
                             "type": "news",
                         })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             # announcements
             try:
                 if include_announcements:
@@ -588,8 +588,8 @@ class AKShareAdapter(DataSourceAdapter):
                                 "url": str(row.get('公告链接') or row.get('url') or ''),
                                 "type": "announcement",
                             })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return items if items else None
         except Exception as e:
             logger.error(f"AKShare get_news failed: {e}")

@@ -6,7 +6,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import time
 import uuid
@@ -131,6 +131,9 @@ async def get_task_status_new(
             from app.core.database import get_mongo_db
             db = get_mongo_db()
 
+            if db is None:
+                raise HTTPException(status_code=503, detail="数据库连接不可用")
+
             # 首先从analysis_tasks集合中查找（正在进行的任务）
             task_result = await db.analysis_tasks.find_one({"task_id": task_id})
 
@@ -143,10 +146,17 @@ async def get_task_status_new(
 
                 # 计算时间信息
                 start_time = task_result.get("started_at") or task_result.get("created_at")
-                current_time = datetime.utcnow()
+                current_time = datetime.now(timezone.utc)
                 elapsed_time = 0
                 if start_time:
-                    elapsed_time = (current_time - start_time).total_seconds()
+                    if isinstance(start_time, datetime):
+                        elapsed_time = (current_time - start_time).total_seconds()
+                    elif isinstance(start_time, str):
+                        try:
+                            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                            elapsed_time = (current_time - start_dt).total_seconds()
+                        except Exception:
+                            elapsed_time = 0
 
                 status_data = {
                     "task_id": task_id,
@@ -257,13 +267,16 @@ async def get_task_result(
             from app.core.database import get_mongo_db
             db = get_mongo_db()
 
+            if db is None:
+                raise HTTPException(status_code=503, detail="数据库连接不可用")
+
             # 从analysis_reports集合中查找（优先使用 task_id 匹配）
             mongo_result = await db.analysis_reports.find_one({"task_id": task_id})
 
             if not mongo_result:
                 # 兼容旧数据：旧记录可能没有 task_id，但 analysis_id 存在于 analysis_tasks.result
                 tasks_doc_for_id = await db.analysis_tasks.find_one({"task_id": task_id}, {"result.analysis_id": 1})
-                analysis_id = tasks_doc_for_id.get("result", {}).get("analysis_id") if tasks_doc_for_id else None
+                analysis_id = (tasks_doc_for_id.get("result") or {}).get("analysis_id") if tasks_doc_for_id else None
                 if analysis_id:
                     logger.info(f"🔎 [RESULT] 按analysis_id兜底查询 analysis_reports: {analysis_id}")
                     mongo_result = await db.analysis_reports.find_one({"analysis_id": analysis_id})
@@ -342,10 +355,6 @@ async def get_task_result(
             logger.warning(f"❌ [RESULT] 所有数据源都未找到结果: {task_id}")
             raise HTTPException(status_code=404, detail="分析结果不存在")
 
-        if not result_data:
-            raise HTTPException(status_code=404, detail="分析结果不存在")
-
-        # 处理reports字段 - 如果没有reports字段，优先尝试从文件系统加载，其次从state中提取
         if 'reports' not in result_data or not result_data['reports']:
             import os
             from pathlib import Path
@@ -382,8 +391,8 @@ async def get_task_result(
                                 content = f.read_text(encoding='utf-8')
                                 if content and content.strip():
                                     loaded_reports[f.stem] = content.strip()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"操作失败（已忽略）: {e}")
                 if loaded_reports:
                     result_data['reports'] = loaded_reports
                     # 若 summary / recommendation 缺失，尝试从同名报告补全
@@ -1016,13 +1025,13 @@ async def get_user_analysis_history(
             if start_date:
                 try:
                     ok = ok and (dt.date() >= datetime.fromisoformat(start_date).date())
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作失败（已忽略）: {e}")
             if end_date:
                 try:
                     ok = ok and (dt.date() <= datetime.fromisoformat(end_date).date())
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"操作失败（已忽略）: {e}")
             return ok
 
         # 获取查询的股票代码 (兼容旧字段)
@@ -1122,6 +1131,9 @@ async def get_stock_info(
         from app.core.database import get_mongo_db
         db = get_mongo_db()
 
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
+
         code6 = str(symbol).zfill(6)
         stock_info = await db.stock_basic_info.find_one(
             {"$or": [{"symbol": code6}, {"code": code6}]}
@@ -1173,6 +1185,9 @@ async def search_stocks(
         from app.core.database import get_mongo_db
         db = get_mongo_db()
 
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
+
         search_query = {
             "$or": [
                 {"symbol": {"$regex": query, "$options": "i"}},
@@ -1211,6 +1226,9 @@ async def get_popular_stocks(
     try:
         from app.core.database import get_mongo_db
         db = get_mongo_db()
+
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
 
         pipeline = [
             {"$group": {
@@ -1251,9 +1269,10 @@ async def get_popular_stocks(
 @router.post("/{analysis_id}/share", response_model=Dict[str, Any])
 async def share_analysis(
     analysis_id: str,
-    options: dict = {},
+    options: Optional[dict] = None,
     user: dict = Depends(get_current_user)
 ):
+    options = options or {}
     """分享分析结果（存根实现）"""
     return {
         "success": True,
@@ -1348,14 +1367,17 @@ async def mark_task_as_failed(
         from datetime import datetime
         db = get_mongo_db()
 
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
+
         result = await db.analysis_tasks.update_one(
             {"task_id": task_id},
             {
                 "$set": {
                     "status": "failed",
                     "last_error": "用户手动标记为失败",
-                    "completed_at": datetime.utcnow(),
-                    "updated_at": datetime.utcnow()
+                    "completed_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc)
                 }
             }
         )
@@ -1395,6 +1417,9 @@ async def delete_task(
         # 从 MongoDB 中删除任务
         from app.core.database import get_mongo_db
         db = get_mongo_db()
+
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
 
         result = await db.analysis_tasks.delete_one({"task_id": task_id})
 

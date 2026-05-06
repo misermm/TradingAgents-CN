@@ -48,7 +48,7 @@ def create_news_analyst(llm, toolkit):
                     stock_info = get_china_stock_info_unified(ticker)
                     
                     # 解析股票名称
-                    if "股票名称:" in stock_info:
+                    if stock_info and "股票名称:" in stock_info:
                         company_name = stock_info.split("股票名称:")[1].split("\n")[0].strip()
                         logger.debug(f"📊 [DEBUG] 从统一接口获取中国股票名称: {ticker} -> {company_name}")
                         return company_name

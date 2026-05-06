@@ -273,8 +273,8 @@ class TushareAdapter(DataSourceAdapter):
                             "url": row.get('url') or row.get('ann_url') or '',
                             "type": "announcement",
                         })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
         # Attempt news
         try:
             if hasattr(api, 'news'):
@@ -288,8 +288,8 @@ class TushareAdapter(DataSourceAdapter):
                             "url": row.get('url') or '',
                             "type": "news",
                         })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
         return items if items else None
 
     def find_latest_trade_date(self) -> Optional[str]:

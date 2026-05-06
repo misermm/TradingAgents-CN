@@ -14,10 +14,10 @@ def create_bear_researcher(llm, memory):
         bear_history = investment_debate_state.get("bear_history", "")
 
         current_response = investment_debate_state.get("current_response", "")
-        market_research_report = state["market_report"]
-        sentiment_report = state["sentiment_report"]
-        news_report = state["news_report"]
-        fundamentals_report = state["fundamentals_report"]
+        market_research_report = state.get("market_report", "")
+        sentiment_report = state.get("sentiment_report", "")
+        news_report = state.get("news_report", "")
+        fundamentals_report = state.get("fundamentals_report", "")
         master_consensus = state.get("master_consensus_report", "")
 
         # 使用统一的股票类型检测
@@ -60,7 +60,7 @@ def create_bear_researcher(llm, memory):
 
         past_memory_str = ""
         for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec["recommendation"] + "\n\n"
+            past_memory_str += rec.get("recommendation", str(rec)) + "\n\n"
 
         prompt = f"""你是一位看跌分析师，负责论证不投资股票 {company_name}（股票代码：{ticker}）的理由。
 
@@ -97,8 +97,8 @@ def create_bear_researcher(llm, memory):
 
         argument = f"Bear Analyst: {response.content}"
 
-        new_count = investment_debate_state["count"] + 1
-        logger.info(f"🐻 [空头研究员] 发言完成，计数: {investment_debate_state['count']} -> {new_count}")
+        new_count = investment_debate_state.get("count", 0) + 1
+        logger.info(f"🐻 [空头研究员] 发言完成，计数: {investment_debate_state.get('count', 0)} -> {new_count}")
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,

@@ -69,6 +69,9 @@ class MultiSourceBasicsSyncService:
             return self._last_status
 
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return {}
         doc = await db[STATUS_COLLECTION].find_one({"job": JOB_KEY})
         if doc:
             # 移除MongoDB的_id字段以避免序列化问题
@@ -157,6 +160,9 @@ class MultiSourceBasicsSyncService:
             self._running = True
 
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return {}
         stats = SyncStats()
         stats.started_at = datetime.now().isoformat()
         stats.status = "running"

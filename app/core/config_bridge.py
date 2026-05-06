@@ -643,6 +643,9 @@ async def _sync_pricing_config_from_db():
         from app.models.config import LLMConfig
 
         db = get_mongo_db()
+        if db is None:
+            logger.warning("MongoDB连接不可用")
+            return None
 
         # 获取最新的激活配置
         config = await db['system_configs'].find_one(

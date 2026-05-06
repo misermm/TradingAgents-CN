@@ -17,6 +17,13 @@ logger = logging.getLogger("webapi")
 router = APIRouter(prefix="/favorites", tags=["自选股管理"])
 
 
+def _uid(current_user: dict) -> str:
+    uid = current_user.get("id") or current_user.get("sub") or current_user.get("user_id")
+    if not uid:
+        raise HTTPException(status_code=401, detail="无法识别用户身份")
+    return uid
+
+
 class AddFavoriteRequest(BaseModel):
     """添加自选股请求"""
     stock_code: str
@@ -58,7 +65,7 @@ async def get_favorites(
 ):
     """获取用户自选股列表"""
     try:
-        favorites = await favorites_service.get_user_favorites(current_user["id"])
+        favorites = await favorites_service.get_user_favorites(_uid(current_user))
         return ok(favorites)
     except Exception as e:
         raise HTTPException(
@@ -77,10 +84,9 @@ async def add_favorite(
     logger = logging.getLogger("webapi")
 
     try:
-        logger.info(f"📝 添加自选股请求: user_id={current_user['id']}, stock_code={request.stock_code}, stock_name={request.stock_name}")
+        logger.info(f"📝 添加自选股请求: user_id={_uid(current_user)}, stock_code={request.stock_code}, stock_name={request.stock_name}")
 
-        # 检查是否已存在
-        is_fav = await favorites_service.is_favorite(current_user["id"], request.stock_code)
+        is_fav = await favorites_service.is_favorite(_uid(current_user), request.stock_code)
         logger.info(f"🔍 检查是否已存在: {is_fav}")
 
         if is_fav:
@@ -93,7 +99,7 @@ async def add_favorite(
         # 添加到自选股
         logger.info(f"➕ 开始添加自选股...")
         success = await favorites_service.add_favorite(
-            user_id=current_user["id"],
+            user_id=_uid(current_user),
             stock_code=request.stock_code,
             stock_name=request.stock_name,
             market=request.market,
@@ -133,7 +139,7 @@ async def update_favorite(
     """更新自选股信息"""
     try:
         success = await favorites_service.update_favorite(
-            user_id=current_user["id"],
+            user_id=_uid(current_user),
             stock_code=stock_code,
             tags=request.tags,
             notes=request.notes,
@@ -165,7 +171,7 @@ async def remove_favorite(
 ):
     """从自选股中移除股票"""
     try:
-        success = await favorites_service.remove_favorite(current_user["id"], stock_code)
+        success = await favorites_service.remove_favorite(_uid(current_user), stock_code)
 
         if success:
             return ok({"stock_code": stock_code}, "移除成功")
@@ -191,7 +197,7 @@ async def check_favorite(
 ):
     """检查股票是否在自选股中"""
     try:
-        is_favorite = await favorites_service.is_favorite(current_user["id"], stock_code)
+        is_favorite = await favorites_service.is_favorite(_uid(current_user), stock_code)
         return ok({"stock_code": stock_code, "is_favorite": is_favorite})
     except Exception as e:
         raise HTTPException(
@@ -206,7 +212,7 @@ async def get_user_tags(
 ):
     """获取用户使用的所有标签"""
     try:
-        tags = await favorites_service.get_user_tags(current_user["id"])
+        tags = await favorites_service.get_user_tags(_uid(current_user))
         return ok(tags)
     except Exception as e:
         raise HTTPException(
@@ -231,10 +237,9 @@ async def sync_favorites_realtime(
     - **data_source**: 数据源（tushare/akshare）
     """
     try:
-        logger.info(f"📊 开始同步自选股实时行情: user_id={current_user['id']}, data_source={request.data_source}")
+        logger.info(f"📊 开始同步自选股实时行情: user_id={_uid(current_user)}, data_source={request.data_source}")
 
-        # 获取用户自选股列表
-        favorites = await favorites_service.get_user_favorites(current_user["id"])
+        favorites = await favorites_service.get_user_favorites(_uid(current_user))
 
         if not favorites:
             logger.info("⚠️ 用户没有自选股")

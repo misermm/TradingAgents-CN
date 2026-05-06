@@ -27,8 +27,8 @@ if sys.platform == 'win32':
             import ctypes
             ctypes.windll.kernel32.SetConsoleCP(65001)
             ctypes.windll.kernel32.SetConsoleOutputCP(65001)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
 
     except Exception as e:
         # 如果设置失败，打印警告但继续运行

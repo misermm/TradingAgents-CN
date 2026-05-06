@@ -94,8 +94,8 @@ def _build_report_query(report_id: str) -> Dict[str, Any]:
     try:
         from bson import ObjectId
         ors.append({"_id": ObjectId(report_id)})
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"操作失败（已忽略）: {e}")
     return {"$or": ors}
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -109,12 +109,54 @@ class ReportFilter(BaseModel):
     stock_code: Optional[str] = None
     report_type: Optional[str] = None
 
+class BatchDeleteRequest(BaseModel):
+    report_ids: List[str]
+
 class ReportListResponse(BaseModel):
-    """报告列表响应"""
     reports: List[Dict[str, Any]]
     total: int
     page: int
     page_size: int
+
+@router.post("/batch-delete", response_model=Dict[str, Any])
+async def batch_delete_reports(
+    request: BatchDeleteRequest,
+    user: dict = Depends(get_current_user)
+):
+    try:
+        logger.info(f"🗑️ 批量删除报告: 用户={user['id']}, 数量={len(request.report_ids)}")
+
+        db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
+
+        deleted_count = 0
+        failed_ids = []
+
+        for report_id in request.report_ids:
+            query = _build_report_query(report_id)
+            result = await db.analysis_reports.delete_one(query)
+            if result.deleted_count > 0:
+                deleted_count += 1
+            else:
+                failed_ids.append(report_id)
+
+        logger.info(f"✅ 批量删除完成: 成功={deleted_count}, 失败={len(failed_ids)}")
+
+        return {
+            "success": True,
+            "data": {
+                "deleted_count": deleted_count,
+                "failed_ids": failed_ids
+            },
+            "message": f"成功删除 {deleted_count} 个报告" + (f"，{len(failed_ids)} 个未找到" if failed_ids else "")
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 批量删除报告失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list", response_model=Dict[str, Any])
 async def get_reports_list(
@@ -132,6 +174,8 @@ async def get_reports_list(
         logger.info(f"🔍 获取报告列表: 用户={user['id']}, 页码={page}, 每页={page_size}, 市场={market_filter}")
 
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
 
         # 构建查询条件
         query = {}
@@ -245,6 +289,8 @@ async def get_report_detail(
         logger.info(f"🔍 获取报告详情: {report_id}")
 
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
 
         # 支持 ObjectId / analysis_id / task_id
         query = _build_report_query(report_id)
@@ -363,6 +409,8 @@ async def get_report_module_content(
         logger.info(f"🔍 获取报告模块内容: {report_id}/{module}")
 
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
 
         # 查询报告（支持多种ID）
         query = _build_report_query(report_id)
@@ -404,6 +452,8 @@ async def delete_report(
         logger.info(f"🗑️ 删除报告: {report_id}")
 
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
 
         # 查询报告（支持多种ID）
         query = _build_report_query(report_id)
@@ -443,6 +493,8 @@ async def download_report(
         logger.info(f"📥 下载报告: {report_id}, 格式: {format}")
 
         db = get_mongo_db()
+        if db is None:
+            raise HTTPException(status_code=503, detail="数据库连接不可用")
 
         # 查询报告（支持多种ID）
         query = _build_report_query(report_id)

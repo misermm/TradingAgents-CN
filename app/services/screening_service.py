@@ -209,6 +209,9 @@ class ScreeningService:
             from app.core.database import get_mongo_db
 
             db = get_mongo_db()
+            if db is None:
+                logger.warning("MongoDB连接不可用，使用兜底股票列表")
+                return self._get_default_universe()
             collection = db.stock_basic_info
 
             # 查询所有A股股票代码（兼容不同的数据结构）

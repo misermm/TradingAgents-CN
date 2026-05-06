@@ -45,7 +45,12 @@ class ErrorFormatter:
         "glm": "智谱AI",
         "zhipu": "智谱AI",
         "moonshot": "月之暗面（Kimi）",
+        "lmstudio": "LM Studio（本地模型）",
+        "ollama": "Ollama（本地模型）",
+        "siliconflow": "硅基流动",
     }
+
+    LOCAL_MODEL_PROVIDERS = {"lmstudio", "ollama"}
     
     # 数据源名称映射
     DATA_SOURCES = {
@@ -97,7 +102,8 @@ class ErrorFormatter:
         
         if llm_provider or any(keyword in error_lower for keyword in [
             "api key", "api_key", "apikey", "invalid_api_key", "authentication", 
-            "unauthorized", "401", "403", "gemini", "openai", "dashscope", "qianfan", "qwen", "zhipu", "glm"
+            "unauthorized", "401", "403", "gemini", "openai", "dashscope", "qianfan", "qwen", "zhipu", "glm",
+            "lmstudio", "lm studio", "ollama", "host.docker.internal", "1234/v1", "11434/v1"
         ]):
             # LLM API Key 错误
             if any(keyword in error_lower for keyword in [
@@ -109,7 +115,7 @@ class ErrorFormatter:
             # LLM 配额/限流错误
             if any(keyword in error_lower for keyword in [
                 "quota", "rate limit", "too many requests", "429", "resource exhausted",
-                "insufficient_quota", "billing"
+                "insufficient_quota", "billing", "402", "insufficient balance"
             ]):
                 return ErrorCategory.LLM_QUOTA, llm_provider
 
@@ -229,6 +235,21 @@ class ErrorFormatter:
             }
         
         elif category == ErrorCategory.LLM_QUOTA:
+            is_balance = "insufficient balance" in original_error.lower() or "402" in original_error
+            if is_balance:
+                return {
+                    "category": "大模型余额不足",
+                    "title": f"💰 {friendly_name or '大模型'} 账户余额不足",
+                    "message": f"{friendly_name or '大模型'} 的账户余额已用完，无法继续调用。",
+                    "suggestion": (
+                        "请尝试以下解决方案：\n"
+                        f"1. 前往 {friendly_name or '该模型'} 官网充值账户余额\n"
+                        "2. 在「系统设置 → 大模型配置」中切换到其他有余额的大模型\n"
+                        "3. 如果使用的是免费模型，检查是否超出免费额度\n"
+                        "4. 确认 API Key 对应的账户状态是否正常"
+                    ),
+                    "technical_detail": original_error
+                }
             return {
                 "category": "大模型配额不足",
                 "title": f"⚠️ {friendly_name or '大模型'} 配额不足或限流",
@@ -261,6 +282,23 @@ class ErrorFormatter:
             }
 
         elif category == ErrorCategory.LLM_NETWORK:
+            is_local = provider_or_source and provider_or_source.lower() in cls.LOCAL_MODEL_PROVIDERS
+            if is_local:
+                local_name = cls.LLM_PROVIDERS.get(provider_or_source.lower(), provider_or_source)
+                return {
+                    "category": "本地模型连接错误",
+                    "title": f"🖥️ 无法连接到 {local_name}",
+                    "message": f"{local_name} 服务未启动或不可达。请确保本地模型服务已启动并正在运行。",
+                    "suggestion": (
+                        "请按以下步骤检查：\n"
+                        f"1. 确认 {local_name} 应用已启动并加载了模型\n"
+                        f"2. 检查 {local_name} 是否在默认端口运行（LM Studio: 1234, Ollama: 11434）\n"
+                        "3. 如果使用 Docker 部署，确保容器能访问宿主机（host.docker.internal）\n"
+                        "4. 在系统设置中检查本地模型的 API 地址配置\n"
+                        "5. 或者切换到云端大模型（如 DeepSeek、阿里百炼等）"
+                    ),
+                    "technical_detail": original_error
+                }
             return {
                 "category": "大模型网络错误",
                 "title": f"🌐 无法连接到 {friendly_name or '大模型'}",

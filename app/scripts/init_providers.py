@@ -22,6 +22,9 @@ async def init_providers():
     # 初始化数据库连接
     await init_db()
     db = get_mongo_db()
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return None
     providers_collection = db.llm_providers
     
     # 预设厂家数据

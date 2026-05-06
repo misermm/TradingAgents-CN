@@ -7,7 +7,7 @@ import asyncio
 import uuid
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Callable
 from pathlib import Path
 import sys
@@ -124,40 +124,42 @@ class AnalysisService:
                 from app.core.database import get_mongo_db_sync
 
                 db = get_mongo_db_sync()
-                collection = db.system_configs
-
-                # 查询最新的活跃配置
-                doc = collection.find_one({"is_active": True}, sort=[("version", -1)])
-
-                if doc and "llm_configs" in doc:
-                    llm_configs = doc["llm_configs"]
-                    logger.info(f"✅ 从 MongoDB 读取到 {len(llm_configs)} 个模型配置")
-
-                    for llm_config in llm_configs:
-                        if llm_config.get("model_name") == quick_model:
-                            quick_model_config = {
-                                "max_tokens": llm_config.get("max_tokens", 4000),
-                                "temperature": llm_config.get("temperature", 0.7),
-                                "timeout": llm_config.get("timeout", 180),
-                                "retry_times": llm_config.get("retry_times", 3),
-                                "api_base": llm_config.get("api_base")
-                            }
-                            logger.info(f"✅ 读取快速模型配置: {quick_model}")
-                            logger.info(f"   max_tokens={quick_model_config['max_tokens']}, temperature={quick_model_config['temperature']}")
-                            logger.info(f"   timeout={quick_model_config['timeout']}, retry_times={quick_model_config['retry_times']}")
-                            logger.info(f"   api_base={quick_model_config['api_base']}")
-
-                        if llm_config.get("model_name") == deep_model:
-                            deep_model_config = {
-                                "max_tokens": llm_config.get("max_tokens", 4000),
-                                "temperature": llm_config.get("temperature", 0.7),
-                                "timeout": llm_config.get("timeout", 180),
-                                "retry_times": llm_config.get("retry_times", 3),
-                                "api_base": llm_config.get("api_base")
-                            }
-                            logger.info(f"✅ 读取深度模型配置: {deep_model} - {deep_model_config}")
+                if db is None:
+                    logger.warning("MongoDB同步连接不可用，跳过模型配置读取")
                 else:
-                    logger.warning("⚠️ MongoDB 中没有找到系统配置，将使用默认参数")
+                    collection = db.system_configs
+
+                    doc = collection.find_one({"is_active": True}, sort=[("version", -1)])
+
+                    if doc and "llm_configs" in doc:
+                        llm_configs = doc["llm_configs"]
+                        logger.info(f"✅ 从 MongoDB 读取到 {len(llm_configs)} 个模型配置")
+
+                        for llm_config in llm_configs:
+                            if llm_config.get("model_name") == quick_model:
+                                quick_model_config = {
+                                    "max_tokens": llm_config.get("max_tokens", 4000),
+                                    "temperature": llm_config.get("temperature", 0.7),
+                                    "timeout": llm_config.get("timeout", 180),
+                                    "retry_times": llm_config.get("retry_times", 3),
+                                    "api_base": llm_config.get("api_base")
+                                }
+                                logger.info(f"✅ 读取快速模型配置: {quick_model}")
+                                logger.info(f"   max_tokens={quick_model_config['max_tokens']}, temperature={quick_model_config['temperature']}")
+                                logger.info(f"   timeout={quick_model_config['timeout']}, retry_times={quick_model_config['retry_times']}")
+                                logger.info(f"   api_base={quick_model_config['api_base']}")
+
+                            if llm_config.get("model_name") == deep_model:
+                                deep_model_config = {
+                                    "max_tokens": llm_config.get("max_tokens", 4000),
+                                    "temperature": llm_config.get("temperature", 0.7),
+                                    "timeout": llm_config.get("timeout", 180),
+                                    "retry_times": llm_config.get("retry_times", 3),
+                                    "api_base": llm_config.get("api_base")
+                                }
+                                logger.info(f"✅ 读取深度模型配置: {deep_model} - {deep_model_config}")
+                    else:
+                        logger.warning("⚠️ MongoDB 中没有找到系统配置，将使用默认参数")
             except Exception as e:
                 logger.warning(f"⚠️ 从 MongoDB 读取模型配置失败: {e}，将使用默认参数")
 
@@ -210,8 +212,9 @@ class AnalysisService:
 
             # 从决策中提取模型信息
             model_info = decision.get('model_info', 'Unknown') if isinstance(decision, dict) else 'Unknown'
+            if not isinstance(decision, dict):
+                decision = {"raw_response": str(decision)}
 
-            # 构建结果
             result = AnalysisResult(
                 analysis_id=str(uuid.uuid4()),
                 summary=decision.get("summary", ""),
@@ -321,8 +324,9 @@ class AnalysisService:
 
             # 从决策中提取模型信息
             model_info = decision.get('model_info', 'Unknown') if isinstance(decision, dict) else 'Unknown'
+            if not isinstance(decision, dict):
+                decision = {"raw_response": str(decision)}
 
-            # 构建结果
             result = AnalysisResult(
                 analysis_id=str(uuid.uuid4()),
                 summary=decision.get("summary", ""),
@@ -333,7 +337,7 @@ class AnalysisService:
                 detailed_analysis=decision,
                 execution_time=execution_time,
                 tokens_used=decision.get("tokens_used", 0),
-                model_info=model_info  # 🔥 添加模型信息字段
+                model_info=model_info
             )
 
             logger.info(f"✅ [线程池] 分析任务完成: {task.task_id} - 耗时{execution_time:.2f}秒")
@@ -478,10 +482,13 @@ class AnalysisService:
             # 保存任务到数据库
             logger.info(f"💾 开始保存任务到数据库...")
             db = get_mongo_db()
-            task_dict = task.model_dump(by_alias=True)
-            logger.info(f"📄 任务字典: {task_dict}")
-            await db.analysis_tasks.insert_one(task_dict)
-            logger.info(f"✅ 任务已保存到数据库")
+            if db is None:
+                logger.warning("MongoDB连接不可用，无法保存任务")
+            else:
+                task_dict = task.model_dump(by_alias=True)
+                logger.info(f"📄 任务字典: {task_dict}")
+                await db.analysis_tasks.insert_one(task_dict)
+                logger.info(f"✅ 任务已保存到数据库")
 
             # 单股分析：直接在后台执行（不阻塞API响应）
             logger.info(f"🚀 开始在后台执行分析任务...")
@@ -538,8 +545,8 @@ class AnalysisService:
                 self.queue_service.user_concurrent_limit = int(effective_settings.get("max_concurrent_tasks", DEFAULT_USER_CONCURRENT_LIMIT))
                 self.queue_service.global_concurrent_limit = int(effective_settings.get("max_concurrent_tasks", GLOBAL_CONCURRENT_LIMIT))
                 self.queue_service.visibility_timeout = int(effective_settings.get("default_analysis_timeout", VISIBILITY_TIMEOUT_SECONDS))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
 
             # 创建批次记录
             # 获取股票代码列表 (兼容旧字段)
@@ -572,8 +579,11 @@ class AnalysisService:
             
             # 保存到数据库
             db = get_mongo_db()
-            await db.analysis_batches.insert_one(batch.dict(by_alias=True))
-            await db.analysis_tasks.insert_many([task.dict(by_alias=True) for task in tasks])
+            if db is None:
+                logger.warning("MongoDB连接不可用，无法保存批量任务")
+            else:
+                await db.analysis_batches.insert_one(batch.dict(by_alias=True))
+                await db.analysis_tasks.insert_many([task.dict(by_alias=True) for task in tasks])
             
             # 提交任务到队列
             for task in tasks:
@@ -683,13 +693,13 @@ class AnalysisService:
                 progress_callback(50, "执行股票分析...")
             
             # 执行分析
-            start_time = datetime.utcnow()
+            start_time = datetime.now(timezone.utc)
             analysis_date = task.parameters.analysis_date or datetime.now().strftime("%Y-%m-%d")
             
             # 调用现有的分析方法
             _, decision = trading_graph.propagate(task.symbol, analysis_date)
             
-            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
             
             if progress_callback:
                 progress_callback(80, "处理分析结果...")
@@ -775,7 +785,9 @@ class AnalysisService:
 
                 # 从数据库获取任务基本信息
                 db = get_mongo_db()
-                task = await db.analysis_tasks.find_one({"task_id": task_id})
+                task = None
+                if db is not None:
+                    task = await db.analysis_tasks.find_one({"task_id": task_id})
 
                 if task:
                     # 合并数据库信息和进度跟踪器信息
@@ -812,7 +824,9 @@ class AnalysisService:
 
             # 从数据库获取
             db = get_mongo_db()
-            task = await db.analysis_tasks.find_one({"task_id": task_id})
+            task = None
+            if db is not None:
+                task = await db.analysis_tasks.find_one({"task_id": task_id})
 
             if task:
                 # 计算已用时间
@@ -830,7 +844,7 @@ class AnalysisService:
                         remaining_time = 0
                     else:
                         # 任务进行中
-                        elapsed_time = (datetime.utcnow() - start_time).total_seconds()
+                        elapsed_time = (datetime.now(timezone.utc) - start_time).total_seconds()
 
                         # 使用任务的预估时长，如果没有则使用默认值（5分钟）
                         estimated_total_time = task.get("estimated_duration", 300)
@@ -847,8 +861,8 @@ class AnalysisService:
                     "elapsed_time": elapsed_time,
                     "remaining_time": remaining_time,
                     "estimated_total_time": estimated_total_time,
-                    "start_time": task.get("started_at").isoformat() if task.get("started_at") else None,
-                    "updated_at": task.get("updated_at", "").isoformat() if task.get("updated_at") else None,
+                    "start_time": task.get("started_at").isoformat() if hasattr(task.get("started_at"), 'isoformat') else (str(task.get("started_at")) if task.get("started_at") else None),
+                    "updated_at": task.get("updated_at").isoformat() if hasattr(task.get("updated_at"), 'isoformat') else (str(task.get("updated_at")) if task.get("updated_at") else None),
                     "result_data": task.get("result")
                 }
 

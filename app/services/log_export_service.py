@@ -360,8 +360,8 @@ class LogExportService:
                             lines = f.readlines()
                             error_lines = [line for line in lines[-100:] if "ERROR" in line]
                             stats["recent_errors"].extend(error_lines[-10:])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作失败（已忽略）: {e}")
             
             stats["total_size_mb"] = round(stats["total_size_mb"], 2)
             

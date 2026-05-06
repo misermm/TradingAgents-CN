@@ -3,7 +3,7 @@ Cleanup routines extracted from DatabaseService.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
 
 from app.core.database import get_mongo_db
@@ -11,7 +11,10 @@ from app.core.database import get_mongo_db
 
 async def cleanup_old_data(days: int) -> Dict[str, Any]:
     db = get_mongo_db()
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return {}
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     deleted_count = 0
     cleaned_collections = []
@@ -43,7 +46,10 @@ async def cleanup_old_data(days: int) -> Dict[str, Any]:
 
 async def cleanup_analysis_results(days: int) -> Dict[str, Any]:
     db = get_mongo_db()
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return {}
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     deleted_count = 0
     cleaned_collections = []
@@ -70,7 +76,10 @@ async def cleanup_analysis_results(days: int) -> Dict[str, Any]:
 
 async def cleanup_operation_logs(days: int) -> Dict[str, Any]:
     db = get_mongo_db()
-    cutoff_date = datetime.utcnow() - timedelta(days=days)
+    if db is None:
+        logger.warning("MongoDB连接不可用")
+        return {}
+    cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     deleted_count = 0
     cleaned_collections = []

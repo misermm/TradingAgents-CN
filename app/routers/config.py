@@ -349,8 +349,8 @@ async def add_llm_provider(
                 details={"provider_id": str(provider_id), "name": request.name},
                 success=True,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
 
         return ok(data={"message": "厂家添加成功", "id": str(provider_id)}, message="厂家添加成功")
     except Exception as e:
@@ -403,8 +403,8 @@ async def update_llm_provider(
                     details={"provider_id": provider_id, "changed_keys": list(request.model_dump().keys())},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "厂家更新成功"}, message="厂家更新成功")
         else:
             raise HTTPException(
@@ -440,8 +440,8 @@ async def delete_llm_provider(
                     details={"provider_id": provider_id},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "厂家删除成功"}, message="厂家删除成功")
         else:
             raise HTTPException(
@@ -479,8 +479,8 @@ async def toggle_llm_provider(
                     details={"provider_id": provider_id, "is_active": bool(is_active)},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": f"厂家已{'启用' if is_active else '禁用'}"}, message=f"厂家已{'启用' if is_active else '禁用'}")
         else:
             raise HTTPException(
@@ -552,8 +552,8 @@ async def migrate_env_to_providers(
                 },
                 success=bool(result.get("success", False)),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
 
         return ok(
             data={
@@ -593,8 +593,8 @@ async def init_aggregator_providers(
                 },
                 success=bool(result.get("success", False)),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
 
         return ok(
             data={
@@ -723,8 +723,8 @@ async def add_llm_config(
                     details={"provider": llm_config.provider, "model_name": llm_config.model_name},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "大模型配置更新成功", "model_name": llm_config.model_name}, message="大模型配置更新成功")
         else:
             logger.error(f"❌ 大模型配置保存失败")
@@ -830,8 +830,8 @@ async def add_data_source_config(
                     details={"name": ds_config.name, "market_categories": market_categories},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "数据源配置添加成功", "name": ds_config.name}, message="数据源配置添加成功")
         else:
             raise HTTPException(
@@ -882,8 +882,8 @@ async def add_database_config(
                     details={"name": db_config.name},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"success": True, "message": "数据库配置添加成功", "name": db_config.name}, message="数据库配置添加成功")
         else:
             raise HTTPException(
@@ -1058,8 +1058,8 @@ async def delete_llm_config(
                     details={"provider": provider, "model_name": model_name},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "大模型配置删除成功"}, message="大模型配置删除成功")
         else:
             logger.warning(f"⚠️ 未找到大模型配置 - {provider}/{model_name}")
@@ -1096,8 +1096,8 @@ async def set_default_llm(
                     details={"name": request.name},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "默认大模型设置成功", "default_llm": request.name}, message="默认大模型设置成功")
         else:
             raise HTTPException(
@@ -1318,8 +1318,8 @@ async def update_data_source_config(
                             details={"name": name, "market_categories": list(new_categories)},
                             success=True,
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作失败（已忽略）: {e}")
                     return ok(data={"message": "数据源配置更新成功"}, message="数据源配置更新成功")
                 else:
                     raise HTTPException(
@@ -1372,8 +1372,8 @@ async def delete_data_source_config(
                             details={"name": name},
                             success=True,
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"操作失败（已忽略）: {e}")
                     return ok(data={"message": "数据源配置删除成功"}, message="数据源配置删除成功")
                 else:
                     raise HTTPException(
@@ -1432,8 +1432,8 @@ async def add_market_category(
                     details={"id": str(getattr(category, 'id', ''))},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "市场分类添加成功", "id": category.id}, message="市场分类添加成功")
         else:
             raise HTTPException(
@@ -1470,8 +1470,8 @@ async def update_market_category(
                     details={"category_id": category_id, "changed_keys": list(request.keys())},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "市场分类更新成功"}, message="市场分类更新成功")
         else:
             raise HTTPException(
@@ -1507,8 +1507,8 @@ async def delete_market_category(
                     details={"category_id": category_id},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "市场分类删除成功"}, message="市场分类删除成功")
         else:
             raise HTTPException(
@@ -1562,8 +1562,8 @@ async def add_datasource_to_category(
                     details={"data_source_name": request.data_source_name, "category_id": request.category_id},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "数据源添加到分类成功"}, message="数据源添加到分类成功")
         else:
             raise HTTPException(
@@ -1600,8 +1600,8 @@ async def remove_datasource_from_category(
                     details={"data_source_name": data_source_name, "category_id": category_id},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "数据源从分类中移除成功"}, message="数据源从分类中移除成功")
         else:
             raise HTTPException(
@@ -1639,8 +1639,8 @@ async def update_datasource_grouping(
                     details={"data_source_name": data_source_name, "category_id": category_id, "changed_keys": list(request.keys())},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "数据源分组关系更新成功"}, message="数据源分组关系更新成功")
         else:
             raise HTTPException(
@@ -1677,8 +1677,8 @@ async def update_category_datasource_order(
                     details={"category_id": category_id, "data_sources": request.data_sources},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "数据源排序更新成功"}, message="数据源排序更新成功")
         else:
             raise HTTPException(
@@ -1713,8 +1713,8 @@ async def set_default_data_source(
                     details={"name": request.name},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "默认数据源设置成功", "default_data_source": request.name}, message="默认数据源设置成功")
         else:
             raise HTTPException(
@@ -1795,13 +1795,13 @@ async def update_system_settings(
                     details={"changed_keys": list(settings.keys())},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             # 失效缓存
             try:
                 config_provider.invalidate()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "系统设置更新成功"}, message="系统设置更新成功")
         else:
             raise HTTPException(
@@ -1822,8 +1822,8 @@ async def update_system_settings(
                 success=False,
                 error_message=str(e),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"更新系统设置失败: {str(e)}"
@@ -1847,8 +1847,8 @@ async def export_config(
                 details={"size": len(str(config_data))},
                 success=True,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"操作失败（已忽略）: {e}")
         return ok(
             data={
                 "message": "配置导出成功",
@@ -1883,8 +1883,8 @@ async def import_config(
                     details={"keys": list(config_data.keys())[:10]},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "配置导入成功"}, message="配置导入成功")
         else:
             raise HTTPException(
@@ -1918,8 +1918,8 @@ async def migrate_legacy_config(
                     details={},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": "传统配置迁移成功"}, message="传统配置迁移成功")
         else:
             raise HTTPException(
@@ -1956,8 +1956,8 @@ async def set_default_llm(
                     details={"name": request.name},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": f"默认大模型已设置为: {request.name}"}, message=f"默认大模型已设置为: {request.name}")
         else:
             raise HTTPException(
@@ -1994,8 +1994,8 @@ async def set_default_data_source(
                     details={"name": request.name},
                     success=True,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"操作失败（已忽略）: {e}")
             return ok(data={"message": f"默认数据源已设置为: {request.name}"}, message=f"默认数据源已设置为: {request.name}")
         else:
             raise HTTPException(

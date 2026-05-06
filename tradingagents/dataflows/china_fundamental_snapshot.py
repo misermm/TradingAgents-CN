@@ -247,8 +247,8 @@ def _cleanup_provider(provider: Any) -> None:
             continue
         try:
             _run_maybe_async(method())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"执行方法 {method_name} 失败（已忽略）: {e}")
         return
 
 
@@ -847,7 +847,7 @@ def _derived_field_template(fields: Mapping[str, Mapping[str, Any]], dependencie
 
 
 def _set_derived_field(fields: Dict[str, Dict[str, Any]], field_name: str, value: Any, dependencies: List[str]) -> None:
-    if fields[field_name]["status"] == "present":
+    if field_name not in fields or fields[field_name].get("status") == "present":
         return
     metadata = _derived_field_template(fields, dependencies)
     fields[field_name].update(
@@ -952,9 +952,9 @@ def _apply_trend_fields(fields: Dict[str, Dict[str, Any]], source_payloads: List
         current_inventory = _period_numeric_value(current_period, FIELD_SPECS["inventory"]["aliases"])
         previous_inventory = _period_numeric_value(previous_period, FIELD_SPECS["inventory"]["aliases"])
 
-        if current_ocf is not None and current_profit not in (None, 0):
+        if current_ocf is not None and current_profit is not None and current_profit != 0:
             trend_specs["cashflow_to_profit_ratio"] = round(current_ocf / current_profit, 4)
-        if current_revenue not in (None, 0) and previous_revenue not in (None, 0):
+        if current_revenue is not None and current_revenue != 0 and previous_revenue is not None and previous_revenue != 0:
             if current_receivables is not None and previous_receivables is not None:
                 current_ratio = current_receivables / current_revenue
                 previous_ratio = previous_receivables / previous_revenue
@@ -977,7 +977,7 @@ def _apply_trend_fields(fields: Dict[str, Dict[str, Any]], source_payloads: List
                 trend_specs["accounts_payable_to_revenue_change"] = round((current_ratio - previous_ratio) * 100, 4)
 
         for field_name, value in trend_specs.items():
-            if value is None or fields[field_name]["status"] == "present":
+            if value is None or field_name not in fields or fields[field_name].get("status") == "present":
                 continue
             fields[field_name].update(
                 {
@@ -1000,7 +1000,7 @@ def _apply_derived_fields(fields: Dict[str, Dict[str, Any]]) -> None:
 
     total_assets = _numeric_field_value(fields, "total_assets")
     total_liabilities = _numeric_field_value(fields, "total_liabilities")
-    if total_assets:
+    if total_assets is not None and total_assets != 0:
         if total_liabilities is not None:
             _set_derived_field(fields, "debt_ratio", total_liabilities / total_assets * 100, ["total_liabilities", "total_assets"])
         net_profit = _numeric_field_value(fields, "net_profit")
@@ -1009,12 +1009,12 @@ def _apply_derived_fields(fields: Dict[str, Dict[str, Any]]) -> None:
 
     current_assets = _numeric_field_value(fields, "current_assets")
     current_liabilities = _numeric_field_value(fields, "current_liabilities")
-    if current_assets is not None and current_liabilities:
+    if current_assets is not None and current_liabilities is not None and current_liabilities != 0:
         _set_derived_field(fields, "current_ratio", current_assets / current_liabilities, ["current_assets", "current_liabilities"])
 
     revenue = _numeric_field_value(fields, "revenue")
     net_profit = _numeric_field_value(fields, "net_profit")
-    if revenue and net_profit is not None:
+    if revenue is not None and revenue != 0 and net_profit is not None:
         _set_derived_field(fields, "net_margin", net_profit / revenue * 100, ["net_profit", "revenue"])
 
 
@@ -1091,7 +1091,11 @@ def _format_field_value(field_name: str, value: Any) -> str:
         return ""
     if field_name not in PERCENT_FIELDS or not isinstance(value, (int, float)):
         return str(value)
-    percent_value = value * 100 if -1 <= value <= 1 else value
+    # 仅对PERCENT_FIELDS中的字段做百分比转换，其他字段直接显示
+    if field_name in PERCENT_FIELDS and -1 <= value <= 1:
+        percent_value = value * 100
+    else:
+        percent_value = value
     return f"{percent_value:g}%"
 
 

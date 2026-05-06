@@ -39,6 +39,8 @@ class AKShareSyncService:
         try:
             # 初始化数据库连接
             self.db = get_mongo_db()
+            if self.db is None:
+                raise RuntimeError("MongoDB数据库连接不可用")
 
             # 初始化历史数据服务
             self.historical_service = await get_historical_data_service()
