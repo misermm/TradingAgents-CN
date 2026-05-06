@@ -112,7 +112,14 @@ _GENERIC_MASTER_REQUIRED_GROUPS = [
 
 _MASTER_REQUIREMENT_OVERRIDES = {
     "peter_lynch": [_GENERIC_MASTER_REQUIRED_GROUPS[0], _GENERIC_MASTER_REQUIRED_GROUPS[1], _GENERIC_MASTER_REQUIRED_GROUPS[2], _GENERIC_MASTER_REQUIRED_GROUPS[4]],
-    "ben_graham": [_GENERIC_MASTER_REQUIRED_GROUPS[1], _GENERIC_MASTER_REQUIRED_GROUPS[2], _GENERIC_MASTER_REQUIRED_GROUPS[3]],
+    "ben_graham": [
+        _GENERIC_MASTER_REQUIRED_GROUPS[1],
+        _GENERIC_MASTER_REQUIRED_GROUPS[2],
+        _GENERIC_MASTER_REQUIRED_GROUPS[3],
+        {"name": "eps_and_bvps", "aliases": ["eps", "EPS", "每股收益", "basic_eps", "earningsPerShare", "book_value_per_share", "每股净资产", "bvps", "bps", "bookValuePerShare"]},
+        {"name": "ncav_components", "aliases": ["current_assets", "流动资产", "流动资产合计", "totalCurrentAssets", "total_liabilities", "总负债", "负债合计", "totalLiabilities", "total_assets", "总资产", "资产总计", "totalAssets", "current_liabilities", "流动负债", "流动负债合计"]},
+        {"name": "revenue_and_profit", "aliases": ["revenue", "营业收入", "营业总收入", "营收", "net_profit", "净利润", "net_income"]},
+    ],
     "charlie_munger": [
         _GENERIC_MASTER_REQUIRED_GROUPS[1],
         _GENERIC_MASTER_REQUIRED_GROUPS[3],

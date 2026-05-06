@@ -52,7 +52,7 @@ services:
       - .:/app
       - pip_cache:/root/.cache/pip
     env_file:
-      - .env.local
+      - .env.docker
     environment:
       PYTHONUNBUFFERED: 1
       PYTHONDONTWRITEBYTECODE: 1
@@ -72,19 +72,17 @@ services:
       - tradingagents-network
     command: >
       bash -c "
-        apt-get update -qq &&
-        apt-get install -y --no-install-recommends curl fonts-noto-cjk > /dev/null 2>&1 &&
         pip install --upgrade pip -q &&
         pip install --prefer-binary -e . -q &&
         pip install --prefer-binary pdfkit -q &&
         python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --reload-dir /app/tradingagents
       "
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 300s
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -105,10 +103,10 @@ services:
       - frontend_node_modules:/app/frontend/node_modules
     environment:
       TZ: "Asia/Shanghai"
-      VITE_API_BASE_URL: "http://localhost:8000/api"
+      VITE_API_PROXY_TARGET: "http://backend:8000"
     depends_on:
       backend:
-        condition: service_healthy
+        condition: service_started
     networks:
       - tradingagents-network
     command: >

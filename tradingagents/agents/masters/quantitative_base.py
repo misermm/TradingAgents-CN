@@ -69,6 +69,13 @@ _FIELD_ALIASES = {
     "商誉": ["goodwill"],
     "投入资本回报率": ["ROIC", "roic", "return_on_invested_capital"],
     "资本回报率": ["ROIC", "roic", "return_on_invested_capital"],
+    "每股收益(eps)": ["EPS", "eps", "earningsPerShare", "basic_eps"],
+    "每股收益": ["EPS", "eps", "earningsPerShare", "basic_eps"],
+    "每股净资产": ["book_value_per_share", "bvps", "bps", "bookValuePerShare"],
+    "总资产": ["total_assets", "totalAssets", "资产总计"],
+    "总负债": ["total_liabilities", "totalLiabilities", "负债合计"],
+    "流动资产": ["current_assets", "totalCurrentAssets", "流动资产合计"],
+    "流动负债": ["current_liabilities", "totalCurrentLiabilities", "流动负债合计"],
 }
 
 

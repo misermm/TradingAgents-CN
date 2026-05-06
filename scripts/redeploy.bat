@@ -1,14 +1,15 @@
 @echo off
 setlocal enabledelayedexpansion
 
+set "MODE=dev"
 set "SKIP_BUILD=0"
-set "SKIP_FRONTEND=0"
 set "HEALTH_TIMEOUT=120"
 
 :parse_args
 if "%~1"=="" goto :done_args
+if /i "%~1"=="--prod" set "MODE=prod"
+if /i "%~1"=="--dev" set "MODE=dev"
 if /i "%~1"=="--skip-build" set "SKIP_BUILD=1"
-if /i "%~1"=="--skip-frontend" set "SKIP_FRONTEND=1"
 if /i "%~1"=="--timeout" (
     set "HEALTH_TIMEOUT=%~2"
     shift
@@ -18,18 +19,26 @@ shift
 goto :parse_args
 :done_args
 
+if "%MODE%"=="dev" (
+    set "COMPOSE_FILE=docker-compose.local.yml"
+    set "TOTAL_SERVICES=4"
+) else (
+    set "COMPOSE_FILE=docker-compose.yml"
+    set "TOTAL_SERVICES=6"
+)
+
 echo.
 echo ========================================
 echo  TradingAgents-CN  Redeploy
 echo ========================================
-echo  SkipBuild    = %SKIP_BUILD%
-echo  SkipFrontend = %SKIP_FRONTEND%
-echo  Timeout      = %HEALTH_TIMEOUT%s
+echo  Mode        = %MODE% (%COMPOSE_FILE%)
+echo  SkipBuild   = %SKIP_BUILD%
+echo  Timeout     = %HEALTH_TIMEOUT%s
 echo.
 
 echo [1/6] Stopping existing containers
 echo --------------------------------------------------
-docker compose down --remove-orphans
+docker compose -f %COMPOSE_FILE% down --remove-orphans
 echo.
 
 if "%SKIP_BUILD%"=="1" (
@@ -40,11 +49,12 @@ if "%SKIP_BUILD%"=="1" (
 
 echo [2/6] Building Docker images
 echo --------------------------------------------------
-if "%SKIP_FRONTEND%"=="1" (
-    docker compose build backend worker
-) else (
-    docker compose build
+if "%MODE%"=="dev" (
+    echo   Dev mode uses base images with volume mounts, skipping build
+    echo.
+    goto :step3
 )
+docker compose -f %COMPOSE_FILE% build
 if errorlevel 1 (
     echo [FAIL] Image build failed
     exit /b 1
@@ -56,11 +66,7 @@ echo.
 :step3
 echo [3/6] Starting containers
 echo --------------------------------------------------
-if "%SKIP_FRONTEND%"=="1" (
-    docker compose up -d backend worker mongodb redis
-) else (
-    docker compose up -d
-)
+docker compose -f %COMPOSE_FILE% up -d
 if errorlevel 1 (
     echo [FAIL] Container start failed
     exit /b 1
@@ -77,11 +83,11 @@ set "ALL_UP=0"
 if !ELAPSED! geq %HEALTH_TIMEOUT% goto :wait_done
 
 set "RUNNING_COUNT=0"
-for /f %%c in ('docker compose ps --format "{{.State}}" 2^>nul ^| find /c "running"') do set "RUNNING_COUNT=%%c"
+for /f %%c in ('docker compose -f %COMPOSE_FILE% ps --format "{{.State}}" 2^>nul ^| find /c "running"') do set "RUNNING_COUNT=%%c"
 
-echo   [!ELAPSED!/%HEALTH_TIMEOUT%s] running=!RUNNING_COUNT! / 6
+echo   [!ELAPSED!/%HEALTH_TIMEOUT%s] running=!RUNNING_COUNT! / %TOTAL_SERVICES%
 
-if "!RUNNING_COUNT!"=="6" (
+if "!RUNNING_COUNT!"=="%TOTAL_SERVICES%" (
     set "ALL_UP=1"
     timeout /t 10 /nobreak >nul 2>&1
     goto :wait_done
@@ -93,7 +99,7 @@ goto :wait_loop
 
 :wait_done
 if "!ALL_UP!"=="1" (
-    echo   [OK] All 6 services are running
+    echo   [OK] All %TOTAL_SERVICES% services are running
 ) else (
     echo   [WARN] Not all services reached running state within timeout
 )
@@ -103,13 +109,13 @@ echo [5/6] Running health checks
 echo --------------------------------------------------
 
 set "BACKEND_OK=0"
-for /l %%r in (1,1,10) do (
+for /l %%r in (1,1,20) do (
     if "!BACKEND_OK!"=="0" (
-        curl -sf http://localhost:8000/health >nul 2>&1
+        curl -sf http://localhost:8000/api/health >nul 2>&1
         if !errorlevel! equ 0 (
             set "BACKEND_OK=1"
         ) else (
-            timeout /t 3 /nobreak >nul 2>&1
+            timeout /t 5 /nobreak >nul 2>&1
         )
     )
 )
@@ -119,21 +125,40 @@ if "!BACKEND_OK!"=="1" (
     echo   [WARN] Backend API not responding
 )
 
-set "FRONTEND_OK=0"
-for /l %%r in (1,1,5) do (
-    if "!FRONTEND_OK!"=="0" (
-        curl -sf http://localhost:80 >nul 2>&1
-        if !errorlevel! equ 0 (
-            set "FRONTEND_OK=1"
-        ) else (
-            timeout /t 3 /nobreak >nul 2>&1
+if "%MODE%"=="dev" (
+    set "FRONTEND_OK=0"
+    for /l %%r in (1,1,10) do (
+        if "!FRONTEND_OK!"=="0" (
+            curl -sf http://localhost:5173 >nul 2>&1
+            if !errorlevel! equ 0 (
+                set "FRONTEND_OK=1"
+            ) else (
+                timeout /t 3 /nobreak >nul 2>&1
+            )
         )
     )
-)
-if "!FRONTEND_OK!"=="1" (
-    echo   [OK] Frontend     http://localhost:80
+    if "!FRONTEND_OK!"=="1" (
+        echo   [OK] Frontend     http://localhost:5173
+    ) else (
+        echo   [WARN] Frontend not responding
+    )
 ) else (
-    echo   [WARN] Frontend not responding
+    set "NGINX_OK=0"
+    for /l %%r in (1,1,10) do (
+        if "!NGINX_OK!"=="0" (
+            curl -sf http://localhost:80/health >nul 2>&1
+            if !errorlevel! equ 0 (
+                set "NGINX_OK=1"
+            ) else (
+                timeout /t 3 /nobreak >nul 2>&1
+            )
+        )
+    )
+    if "!NGINX_OK!"=="1" (
+        echo   [OK] Nginx+Frontend http://localhost:80
+    ) else (
+        echo   [WARN] Nginx+Frontend not responding
+    )
 )
 
 echo   Testing login...
@@ -147,7 +172,7 @@ echo.
 
 echo [6/6] Deployment summary
 echo --------------------------------------------------
-docker compose ps
+docker compose -f %COMPOSE_FILE% ps
 echo.
 
 echo ========================================
@@ -158,15 +183,20 @@ if "!BACKEND_OK!"=="1" (
 )
 echo ========================================
 echo.
-echo   Frontend : http://localhost:80
-echo   Backend  : http://localhost:8000
+if "%MODE%"=="dev" (
+    echo   Frontend : http://localhost:5173
+    echo   Backend  : http://localhost:8000
+) else (
+    echo   App      : http://localhost:80
+    echo   Backend  : http://localhost:8000
+)
 echo   API Docs : http://localhost:8000/docs
 echo   Login    : admin / admin123
 echo.
 echo   Useful commands:
-echo     View logs : docker compose logs -f backend
-echo     Restart   : docker compose restart backend worker
-echo     Stop all  : docker compose down
+echo     View logs : docker compose -f %COMPOSE_FILE% logs -f backend
+echo     Restart   : docker compose -f %COMPOSE_FILE% restart backend
+echo     Stop all  : docker compose -f %COMPOSE_FILE% down
 echo.
 goto :eof
 
@@ -175,14 +205,15 @@ echo.
 echo Usage: redeploy.bat [options]
 echo.
 echo Options:
+echo   --dev             Dev mode: docker-compose.local.yml (default)
+echo   --prod            Prod mode: docker-compose.yml
 echo   --skip-build      Skip docker image build step
-echo   --skip-frontend   Only build/start backend services
 echo   --timeout SECS    Health check timeout in seconds (default: 120)
 echo   --help            Show this help message
 echo.
 echo Examples:
-echo   redeploy.bat
-echo   redeploy.bat --skip-build
-echo   redeploy.bat --skip-frontend
+echo   redeploy.bat                  Dev mode with volume mounts
+echo   redeploy.bat --prod           Prod mode with Dockerfile build
+echo   redeploy.bat --skip-build     Skip build step
 echo.
 goto :eof

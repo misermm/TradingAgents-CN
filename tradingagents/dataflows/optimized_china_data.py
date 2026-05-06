@@ -543,12 +543,20 @@ class OptimizedChinaDataProvider:
 - **毛利率**: {financial_estimates['gross_margin']}
 - **净利率**: {financial_estimates['net_margin']}
 - **营收增长率**: {financial_estimates.get('revenue_growth', 'N/A')}
+- **每股收益(EPS)**: {financial_estimates.get('eps', 'N/A')}
+- **每股净资产**: {financial_estimates.get('book_value_per_share', 'N/A')}
+- **营业收入**: {financial_estimates.get('revenue', 'N/A')}
+- **净利润**: {financial_estimates.get('net_profit', 'N/A')}
 
 ### 财务健康度
 - **资产负债率**: {financial_estimates['debt_ratio']}
 - **流动比率**: {financial_estimates['current_ratio']}
 - **速动比率**: {financial_estimates['quick_ratio']}
 - **现金比率**: {financial_estimates['cash_ratio']}
+- **总资产**: {financial_estimates.get('total_assets', 'N/A')}
+- **总负债**: {financial_estimates.get('total_liabilities', 'N/A')}
+- **流动资产**: {financial_estimates.get('current_assets', 'N/A')}
+- **流动负债**: {financial_estimates.get('current_liabilities', 'N/A')}
 
 ### 现金流指标
 - **经营现金流量净额**: {financial_estimates.get('operating_cash_flow', 'N/A')}
@@ -607,12 +615,20 @@ class OptimizedChinaDataProvider:
 - **毛利率**: {financial_estimates.get('gross_margin', 'N/A')}
 - **净利率**: {financial_estimates.get('net_margin', 'N/A')}
 - **营收增长率**: {financial_estimates.get('revenue_growth', 'N/A')}
+- **每股收益(EPS)**: {financial_estimates.get('eps', 'N/A')}
+- **每股净资产**: {financial_estimates.get('book_value_per_share', 'N/A')}
+- **营业收入**: {financial_estimates.get('revenue', 'N/A')}
+- **净利润**: {financial_estimates.get('net_profit', 'N/A')}
 
 ### 财务健康度
 - **资产负债率**: {financial_estimates['debt_ratio']}
 - **流动比率**: {financial_estimates['current_ratio']}
 - **速动比率**: {financial_estimates['quick_ratio']}
 - **现金比率**: {financial_estimates['cash_ratio']}
+- **总资产**: {financial_estimates.get('total_assets', 'N/A')}
+- **总负债**: {financial_estimates.get('total_liabilities', 'N/A')}
+- **流动资产**: {financial_estimates.get('current_assets', 'N/A')}
+- **流动负债**: {financial_estimates.get('current_liabilities', 'N/A')}
 
 ### 现金流指标
 - **经营现金流量净额**: {financial_estimates.get('operating_cash_flow', 'N/A')}
@@ -1454,7 +1470,118 @@ class OptimizedChinaDataProvider:
             metrics["growth_score"] = 7.0
             metrics["risk_level"] = "中等"
 
-            logger.info(f"✅ MongoDB 财务数据解析成功: ROE={metrics.get('roe')}, ROA={metrics.get('roa')}, 毛利率={metrics.get('gross_margin')}, 净利率={metrics.get('net_margin')}")
+            # 格雷厄姆分析关键字段
+            eps = latest_indicators.get('eps') or latest_indicators.get('basic_eps') or latest_indicators.get('ba EPS')
+            if eps is not None and str(eps) != 'nan' and eps != '--':
+                try:
+                    metrics["eps"] = f"{float(eps):.4f}"
+                except (ValueError, TypeError):
+                    metrics["eps"] = "N/A"
+            else:
+                metrics["eps"] = "N/A"
+
+            bvps = latest_indicators.get('bps') or latest_indicators.get('book_value_per_share') or latest_indicators.get('每股净资产')
+            if bvps is not None and str(bvps) != 'nan' and bvps != '--':
+                try:
+                    metrics["book_value_per_share"] = f"{float(bvps):.4f}"
+                except (ValueError, TypeError):
+                    metrics["book_value_per_share"] = "N/A"
+            else:
+                metrics["book_value_per_share"] = "N/A"
+
+            total_assets_val = latest_indicators.get('total_assets') or latest_indicators.get('totalAssets') or latest_indicators.get('总资产')
+            if total_assets_val is not None and str(total_assets_val) != 'nan' and total_assets_val != '--':
+                try:
+                    ta = float(total_assets_val)
+                    if ta > 1e8:
+                        metrics["total_assets"] = f"{ta / 1e8:.2f}亿元"
+                    elif ta > 1e4:
+                        metrics["total_assets"] = f"{ta / 1e4:.2f}万元"
+                    else:
+                        metrics["total_assets"] = f"{ta:.2f}元"
+                except (ValueError, TypeError):
+                    metrics["total_assets"] = "N/A"
+            else:
+                metrics["total_assets"] = "N/A"
+
+            total_liab_val = latest_indicators.get('total_liabilities') or latest_indicators.get('totalLiabilities') or latest_indicators.get('total_liab') or latest_indicators.get('负债合计')
+            if total_liab_val is not None and str(total_liab_val) != 'nan' and total_liab_val != '--':
+                try:
+                    tl = float(total_liab_val)
+                    if tl > 1e8:
+                        metrics["total_liabilities"] = f"{tl / 1e8:.2f}亿元"
+                    elif tl > 1e4:
+                        metrics["total_liabilities"] = f"{tl / 1e4:.2f}万元"
+                    else:
+                        metrics["total_liabilities"] = f"{tl:.2f}元"
+                except (ValueError, TypeError):
+                    metrics["total_liabilities"] = "N/A"
+            else:
+                metrics["total_liabilities"] = "N/A"
+
+            current_assets_val = latest_indicators.get('total_current_assets') or latest_indicators.get('currentAssets') or latest_indicators.get('流动资产合计') or latest_indicators.get('current_assets')
+            if current_assets_val is not None and str(current_assets_val) != 'nan' and current_assets_val != '--':
+                try:
+                    ca = float(current_assets_val)
+                    if ca > 1e8:
+                        metrics["current_assets"] = f"{ca / 1e8:.2f}亿元"
+                    elif ca > 1e4:
+                        metrics["current_assets"] = f"{ca / 1e4:.2f}万元"
+                    else:
+                        metrics["current_assets"] = f"{ca:.2f}元"
+                except (ValueError, TypeError):
+                    metrics["current_assets"] = "N/A"
+            else:
+                metrics["current_assets"] = "N/A"
+
+            current_liab_val = latest_indicators.get('total_current_liabilities') or latest_indicators.get('currentLiabilities') or latest_indicators.get('流动负债合计') or latest_indicators.get('current_liabilities')
+            if current_liab_val is not None and str(current_liab_val) != 'nan' and current_liab_val != '--':
+                try:
+                    cl = float(current_liab_val)
+                    if cl > 1e8:
+                        metrics["current_liabilities"] = f"{cl / 1e8:.2f}亿元"
+                    elif cl > 1e4:
+                        metrics["current_liabilities"] = f"{cl / 1e4:.2f}万元"
+                    else:
+                        metrics["current_liabilities"] = f"{cl:.2f}元"
+                except (ValueError, TypeError):
+                    metrics["current_liabilities"] = "N/A"
+            else:
+                metrics["current_liabilities"] = "N/A"
+
+            revenue_val = latest_indicators.get('revenue') or latest_indicators.get('total_revenue') or latest_indicators.get('营业收入')
+            if revenue_val is not None and str(revenue_val) != 'nan' and revenue_val != '--':
+                try:
+                    rv = float(revenue_val)
+                    if rv > 1e8:
+                        val_str = f"{rv / 1e8:.2f}亿元"
+                    elif rv > 1e4:
+                        val_str = f"{rv / 1e4:.2f}万元"
+                    else:
+                        val_str = f"{rv:.2f}元"
+                    if metrics.get("revenue") in (None, "N/A"):
+                        metrics["revenue"] = val_str
+                        logger.info(f"✅ 从MongoDB提取营业收入: {val_str}")
+                except (ValueError, TypeError):
+                    pass
+
+            net_profit_val = latest_indicators.get('net_profit') or latest_indicators.get('net_income') or latest_indicators.get('净利润')
+            if net_profit_val is not None and str(net_profit_val) != 'nan' and net_profit_val != '--':
+                try:
+                    np = float(net_profit_val)
+                    if abs(np) > 1e8:
+                        val_str = f"{np / 1e8:.2f}亿元"
+                    elif abs(np) > 1e4:
+                        val_str = f"{np / 1e4:.2f}万元"
+                    else:
+                        val_str = f"{np:.2f}元"
+                    if metrics.get("net_profit") in (None, "N/A"):
+                        metrics["net_profit"] = val_str
+                        logger.info(f"✅ 从MongoDB提取净利润: {val_str}")
+                except (ValueError, TypeError):
+                    pass
+
+            logger.info(f"✅ MongoDB 财务数据解析成功: ROE={metrics.get('roe')}, ROA={metrics.get('roa')}, 毛利率={metrics.get('gross_margin')}, 净利率={metrics.get('net_margin')}, EPS={metrics.get('eps')}, 每股净资产={metrics.get('book_value_per_share')}")
             return metrics
 
         except Exception as e:
@@ -1463,14 +1590,92 @@ class OptimizedChinaDataProvider:
 
     def _parse_akshare_financial_data(self, financial_data: dict, stock_info: dict, price_value: float) -> dict:
         """解析AKShare财务数据为指标"""
+        metrics = {}
+
         try:
-            # 获取最新的财务数据
             balance_sheet = financial_data.get('balance_sheet', [])
             income_statement = financial_data.get('income_statement', [])
             cash_flow = financial_data.get('cash_flow', [])
             main_indicators = financial_data.get('main_indicators')
 
-            # main_indicators 可能是 DataFrame 或 list（to_dict('records') 的结果）
+            if not balance_sheet:
+                try:
+                    import akshare as ak
+                    import pandas as pd
+                    code = stock_info.get('code', '').replace('.SH', '').replace('.SZ', '').zfill(6)
+                    logger.info(f"AKShare balance_sheet为空，尝试直接获取...")
+                    try:
+                        bs_df = ak.stock_balance_sheet_by_report_em(symbol=code)
+                        bs_empty = (bs_df is None or
+                                    (isinstance(bs_df, list) and len(bs_df) == 0) or
+                                    (isinstance(bs_df, pd.DataFrame) and bs_df.empty))
+                    except Exception:
+                        bs_empty = True
+                        bs_df = None
+
+                    if bs_empty:
+                        try:
+                            bs_df = ak.stock_balance_sheet_by_yearly_em(symbol=code)
+                            bs_empty = (bs_df is None or
+                                        (isinstance(bs_df, list) and len(bs_df) == 0) or
+                                        (isinstance(bs_df, pd.DataFrame) and bs_df.empty))
+                        except Exception:
+                            bs_empty = True
+
+                    if bs_empty:
+                        bs_sina = ak.stock_financial_report_sina(stock=code, symbol='资产负债表')
+                        if bs_sina is not None and not bs_sina.empty:
+                            bs_dict = bs_sina.to_dict('records')
+                            balance_sheet = bs_dict
+                            financial_data['balance_sheet'] = balance_sheet
+                            logger.info(f"✅ 通过新浪获取资产负债表成功: {len(balance_sheet)}期")
+
+                            bs_columns = list(bs_sina.columns)
+                            logger.info(f"  新浪资产负债表列名: {bs_columns[:10]}...")
+
+                            def try_extract_value(bs_df, keys_to_try, metrics_dict, field_name):
+                                for key in keys_to_try:
+                                    if key in bs_df.columns:
+                                        val = bs_df[key].iloc[0]
+                                        if val is not None and metrics_dict.get(field_name) in (None, 'N/A'):
+                                            try:
+                                                fv = float(val)
+                                                if abs(fv) > 1e8:
+                                                    val_str = f"{fv / 1e8:.2f}亿元"
+                                                elif abs(fv) > 1e4:
+                                                    val_str = f"{fv / 1e4:.2f}万元"
+                                                else:
+                                                    val_str = f"{fv:.2f}元"
+                                                metrics_dict[field_name] = val_str
+                                                logger.info(f"  提取 [{key}] -> {field_name}: {val_str}")
+                                                return True
+                                            except (ValueError, TypeError):
+                                                pass
+                                return False
+
+                            try_extract_value(bs_sina, ['资产总计', '总资产', '资产总额'], metrics, 'total_assets')
+                            try_extract_value(bs_sina, ['负债及股东权益总计', '负债合计', '总负债', '负债总额'], metrics, 'total_liabilities')
+                            try_extract_value(bs_sina, ['流动资产合计', '流动资产', '流动资产总计', '流动资产(合计)'], metrics, 'current_assets')
+                            try_extract_value(bs_sina, ['流动负债合计', '流动负债', '流动负债总计', '流动负债(合计)'], metrics, 'current_liabilities')
+
+                            if metrics.get("current_assets") in (None, "N/A"):
+                                logger.warning(f"⚠️ 新浪资产负债表未找到流动资产，使用总资产代替")
+                                metrics["current_assets"] = metrics.get("total_assets", "N/A")
+                            if metrics.get("current_liabilities") in (None, "N/A"):
+                                logger.warning(f"⚠️ 新浪资产负债表未找到流动负债，使用总负债代替")
+                                metrics["current_liabilities"] = metrics.get("total_liabilities", "N/A")
+
+                            is_sina = ak.stock_financial_report_sina(stock=code, symbol='利润表')
+                            if is_sina is not None and not is_sina.empty:
+                                logger.info(f"✅ 通过新浪获取利润表成功")
+                                is_columns = list(is_sina.columns)
+                                logger.info(f"  新浪利润表列名: {is_columns[:10]}...")
+                                try_extract_value(is_sina, ['营业总收入', '营业收入', '营业总收入(万元)'], metrics, 'revenue')
+                                try_extract_value(is_sina, ['净利润', '归属母公司净利润'], metrics, 'net_profit')
+
+                except Exception as e:
+                    logger.debug(f"直接获取资产负债表失败: {e}")
+
             if main_indicators is None:
                 logger.warning("AKShare主要财务指标为空")
                 return None
@@ -1506,8 +1711,7 @@ class OptimizedChinaDataProvider:
 
             logger.debug(f"AKShare主要财务指标数量: {len(indicators_dict)}")
 
-            # 计算财务指标
-            metrics = {}
+            # 继续使用已初始化的 metrics（保留之前从新浪获取的总资产/总负债）
 
             # 🔥 优先尝试使用实时 PE/PB 计算（与 MongoDB 解析保持一致）
             pe_value = None
@@ -1849,7 +2053,157 @@ class OptimizedChinaDataProvider:
                 "data_source": "AKShare"
             })
 
-            logger.info(f"✅ AKShare财务数据解析成功: PE={metrics['pe']}, PB={metrics['pb']}, ROE={metrics['roe']}")
+            # 格雷厄姆分析关键字段
+            eps_val = indicators_dict.get('基本每股收益')
+            if eps_val is not None and str(eps_val) != 'nan' and eps_val != '--':
+                try:
+                    metrics["eps"] = f"{float(eps_val):.4f}"
+                except (ValueError, TypeError):
+                    metrics["eps"] = "N/A"
+            else:
+                metrics["eps"] = "N/A"
+
+            bvps_val = indicators_dict.get('每股净资产_最新股数') or indicators_dict.get('每股净资产')
+            if bvps_val is not None and str(bvps_val) != 'nan' and bvps_val != '--':
+                try:
+                    metrics["book_value_per_share"] = f"{float(bvps_val):.4f}"
+                except (ValueError, TypeError):
+                    metrics["book_value_per_share"] = "N/A"
+            else:
+                metrics["book_value_per_share"] = "N/A"
+
+            revenue_val = indicators_dict.get('营业收入')
+            if revenue_val is not None and str(revenue_val) != 'nan' and revenue_val != '--':
+                try:
+                    rv = float(revenue_val)
+                    if abs(rv) > 1e8:
+                        val_str = f"{rv / 1e8:.2f}亿元"
+                    elif abs(rv) > 1e4:
+                        val_str = f"{rv / 1e4:.2f}万元"
+                    else:
+                        val_str = f"{rv:.2f}元"
+                    if metrics.get("revenue") in (None, "N/A"):
+                        metrics["revenue"] = val_str
+                        logger.info(f"✅ 从AKShare主要指标提取营业收入: {val_str}")
+                except (ValueError, TypeError):
+                    pass
+
+            net_profit_val = indicators_dict.get('净利润')
+            if net_profit_val is not None and str(net_profit_val) != 'nan' and net_profit_val != '--':
+                try:
+                    np = float(net_profit_val)
+                    if abs(np) > 1e8:
+                        val_str = f"{np / 1e8:.2f}亿元"
+                    elif abs(np) > 1e4:
+                        val_str = f"{np / 1e4:.2f}万元"
+                    else:
+                        val_str = f"{np:.2f}元"
+                    if metrics.get("net_profit") in (None, "N/A"):
+                        metrics["net_profit"] = val_str
+                        logger.info(f"✅ 从AKShare主要指标提取净利润: {val_str}")
+                except (ValueError, TypeError):
+                    pass
+
+            for graham_field in ["total_assets", "total_liabilities", "current_assets", "current_liabilities"]:
+                if graham_field not in metrics:
+                    metrics[graham_field] = "N/A"
+
+            if balance_sheet and isinstance(balance_sheet, list) and len(balance_sheet) > 0:
+                bs = balance_sheet[0] if isinstance(balance_sheet[0], dict) else {}
+                for key, metric_key in [
+                    ('total_assets', 'total_assets'), ('总资产', 'total_assets'),
+                    ('totalCurrentAssets', 'current_assets'), ('流动资产合计', 'current_assets'),
+                    ('total_liab', 'total_liabilities'), ('totalLiabilities', 'total_liabilities'), ('负债合计', 'total_liabilities'),
+                    ('totalCurrentLiabilities', 'current_liabilities'), ('流动负债合计', 'current_liabilities'),
+                ]:
+                    if metrics.get(metric_key) not in ("N/A", None):
+                        continue
+                    val = bs.get(key)
+                    if val is not None and str(val) != 'nan' and val != '--':
+                        try:
+                            fv = float(val)
+                            if abs(fv) > 1e8:
+                                metrics[metric_key] = f"{fv / 1e8:.2f}亿元"
+                            elif abs(fv) > 1e4:
+                                metrics[metric_key] = f"{fv / 1e4:.2f}万元"
+                            else:
+                                metrics[metric_key] = f"{fv:.2f}元"
+                        except (ValueError, TypeError):
+                            pass
+
+            if metrics.get("total_assets") == "N/A":
+                for bs_key in ['资产总计', '资产总额', '总资产']:
+                    val = indicators_dict.get(bs_key)
+                    if val is not None and str(val) != 'nan' and val != '--':
+                        try:
+                            fv = float(val)
+                            if abs(fv) > 1e8:
+                                metrics["total_assets"] = f"{fv / 1e8:.2f}亿元"
+                            elif abs(fv) > 1e4:
+                                metrics["total_assets"] = f"{fv / 1e4:.2f}万元"
+                            else:
+                                metrics["total_assets"] = f"{fv:.2f}元"
+                            logger.info(f"✅ 从main_indicators提取{bs_key}: {metrics['total_assets']}")
+                            break
+                        except (ValueError, TypeError):
+                            pass
+
+            if metrics.get("total_liabilities") == "N/A":
+                for bs_key in ['负债合计', '负债总额', '总负债']:
+                    val = indicators_dict.get(bs_key)
+                    if val is not None and str(val) != 'nan' and val != '--':
+                        try:
+                            fv = float(val)
+                            if abs(fv) > 1e8:
+                                metrics["total_liabilities"] = f"{fv / 1e8:.2f}亿元"
+                            elif abs(fv) > 1e4:
+                                metrics["total_liabilities"] = f"{fv / 1e4:.2f}万元"
+                            else:
+                                metrics["total_liabilities"] = f"{fv:.2f}元"
+                            logger.info(f"✅ 从main_indicators提取{bs_key}: {metrics['total_liabilities']}")
+                            break
+                        except (ValueError, TypeError):
+                            pass
+
+            if metrics.get("current_assets") == "N/A":
+                for bs_key in ['流动资产合计', '流动资产']:
+                    val = indicators_dict.get(bs_key)
+                    if val is not None and str(val) != 'nan' and val != '--':
+                        try:
+                            fv = float(val)
+                            if abs(fv) > 1e8:
+                                metrics["current_assets"] = f"{fv / 1e8:.2f}亿元"
+                            elif abs(fv) > 1e4:
+                                metrics["current_assets"] = f"{fv / 1e4:.2f}万元"
+                            else:
+                                metrics["current_assets"] = f"{fv:.2f}元"
+                            logger.info(f"✅ 从main_indicators提取{bs_key}: {metrics['current_assets']}")
+                            break
+                        except (ValueError, TypeError):
+                            pass
+
+            if metrics.get("current_liabilities") == "N/A":
+                for bs_key in ['流动负债合计', '流动负债']:
+                    val = indicators_dict.get(bs_key)
+                    if val is not None and str(val) != 'nan' and val != '--':
+                        try:
+                            fv = float(val)
+                            if abs(fv) > 1e8:
+                                metrics["current_liabilities"] = f"{fv / 1e8:.2f}亿元"
+                            elif abs(fv) > 1e4:
+                                metrics["current_liabilities"] = f"{fv / 1e4:.2f}万元"
+                            else:
+                                metrics["current_liabilities"] = f"{fv:.2f}元"
+                            logger.info(f"✅ 从main_indicators提取{bs_key}: {metrics['current_liabilities']}")
+                            break
+                        except (ValueError, TypeError):
+                            pass
+
+            for graham_field in ["total_assets", "total_liabilities", "current_assets", "current_liabilities"]:
+                if graham_field not in metrics or metrics.get(graham_field) in ("N/A", None):
+                    metrics[graham_field] = "N/A"
+
+            logger.info(f"✅ AKShare财务数据解析成功: PE={metrics['pe']}, PB={metrics['pb']}, ROE={metrics['roe']}, EPS={metrics.get('eps', 'N/A')}, 总资产={metrics.get('total_assets', 'N/A')}")
             return metrics
 
         except Exception as e:
@@ -2024,6 +2378,79 @@ class OptimizedChinaDataProvider:
                 "growth_score": growth_score,
                 "risk_level": risk_level
             })
+
+            # 格雷厄姆分析关键字段
+            eps_val = latest_income.get('basic_eps') or latest_income.get('eps')
+            if eps_val is not None and str(eps_val) not in ('nan', '--', 'None', ''):
+                try:
+                    metrics["eps"] = f"{float(eps_val):.4f}"
+                except (ValueError, TypeError):
+                    metrics["eps"] = "N/A"
+            else:
+                metrics["eps"] = "N/A"
+
+            if total_share and total_share > 0 and total_equity > 0:
+                bvps = total_equity * 10000 / (total_share * 10000)
+                metrics["book_value_per_share"] = f"{bvps:.4f}"
+            else:
+                bvps_val = latest_balance.get('bps') or stock_info.get('bps')
+                if bvps_val and str(bvps_val) not in ('nan', '--', 'None', ''):
+                    try:
+                        metrics["book_value_per_share"] = f"{float(bvps_val):.4f}"
+                    except (ValueError, TypeError):
+                        metrics["book_value_per_share"] = "N/A"
+                else:
+                    metrics["book_value_per_share"] = "N/A"
+
+            if total_assets > 0:
+                if total_assets > 1e8:
+                    metrics["total_assets"] = f"{total_assets / 1e8:.2f}亿元"
+                else:
+                    metrics["total_assets"] = f"{total_assets:.2f}元"
+            else:
+                metrics["total_assets"] = "N/A"
+
+            if total_liab > 0:
+                if total_liab > 1e8:
+                    metrics["total_liabilities"] = f"{total_liab / 1e8:.2f}亿元"
+                else:
+                    metrics["total_liabilities"] = f"{total_liab:.2f}元"
+            else:
+                metrics["total_liabilities"] = "N/A"
+
+            current_assets_val = latest_balance.get('total_current_assets', 0) or 0
+            if current_assets_val > 0:
+                if current_assets_val > 1e8:
+                    metrics["current_assets"] = f"{current_assets_val / 1e8:.2f}亿元"
+                else:
+                    metrics["current_assets"] = f"{current_assets_val:.2f}元"
+            else:
+                metrics["current_assets"] = "N/A"
+
+            current_liab_val = latest_balance.get('total_current_liab', 0) or 0
+            if current_liab_val > 0:
+                if current_liab_val > 1e8:
+                    metrics["current_liabilities"] = f"{current_liab_val / 1e8:.2f}亿元"
+                else:
+                    metrics["current_liabilities"] = f"{current_liab_val:.2f}元"
+            else:
+                metrics["current_liabilities"] = "N/A"
+
+            if total_revenue > 0:
+                if total_revenue > 1e8:
+                    metrics["revenue"] = f"{total_revenue / 1e8:.2f}亿元"
+                else:
+                    metrics["revenue"] = f"{total_revenue:.2f}万元"
+            else:
+                metrics["revenue"] = "N/A"
+
+            if net_income > 0:
+                if net_income > 1e8:
+                    metrics["net_profit"] = f"{net_income / 1e8:.2f}亿元"
+                else:
+                    metrics["net_profit"] = f"{net_income:.2f}万元"
+            else:
+                metrics["net_profit"] = "N/A"
 
             return metrics
 

@@ -2,6 +2,142 @@
 
 本文档记录了TradingAgents-CN项目的所有重要更改。
 
+## [Unreleased] - 2026-05-06 - Docker部署整合与一键部署脚本优化
+
+### 项目目标
+统一Docker部署方式，移除本地部署相关配置，优化一键部署脚本，提升部署速度和可靠性。
+
+### 最近完成的改动
+
+#### 1. 删除多余配置文件（仅保留Docker部署）
+- 删除 `scripts/startup/start_backend.bat` - 本地Windows启动脚本
+- 删除 `scripts/startup/start_backend.sh` - 本地Linux启动脚本
+- 删除 `scripts/startup/start_backend.py` - 本地Python启动脚本
+- 删除 `docker-compose.hub.nginx.yml` - 冗余Docker Hub+Nginx配置
+- 删除 `docker-compose.hub.nginx.arm.yml` - 冗余Docker Hub ARM64配置
+- 删除 `scripts/redeploy.ps1` - PowerShell部署脚本（保留bat版）
+- 删除 `scripts/docker/mongo-init.js` - 重复的MongoDB初始化脚本
+- 删除 `config/logging.toml` - 本地日志配置（Docker用logging_docker.toml）
+- 删除 `.env.example` - 本地环境配置（统一用.env.docker）
+
+#### 2. 统一环境配置文件
+- `docker-compose.local.yml`: `env_file` 从 `.env.local` 改为 `.env.docker`
+- `docker-compose.yml`: `env_file` 从 `.env` 改为 `.env.docker`（backend和worker两处）
+
+#### 3. 优化docker-compose.local.yml
+- **移除apt-get步骤**: 去掉 `apt-get update && apt-get install curl fonts-noto-cjk`，改用Python做健康检查
+- **健康检查改用Python**: `curl -f http://127.0.0.1:8000/api/health` → `python -c "import urllib.request; urllib.request.urlopen(...)"`
+- **前端依赖优化**: `condition: service_healthy` → `condition: service_started`（前端不再等待后端健康）
+- **启动等待时间**: `start_period: 120s` → `300s`（给pip install足够时间）
+
+#### 4. 重写redeploy.bat一键部署脚本
+- 支持 `--dev`/`--prod` 模式选择
+- 修复所有docker compose命令添加 `-f %COMPOSE_FILE%`
+- 修复健康检查URL: `/health` → `/api/health`
+- 修复服务计数: dev模式4个服务，prod模式6个服务
+- 修复前端端口: dev模式5173，prod模式80
+- 新增 `--skip-build` 和 `--timeout` 参数
+
+#### 5. 修复前端Vite proxy在Docker中无法连接后端
+- **根因**: Vite proxy target 为 `http://localhost:8000`，Docker容器内localhost指向容器自身而非后端
+- **修复**: `vite.config.ts` proxy target 改为 `process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000'`
+- **docker-compose.local.yml**: 新增 `VITE_API_PROXY_TARGET: "http://backend:8000"`（Docker内部网络服务名）
+- **移除** `VITE_API_BASE_URL: "http://localhost:8000/api"`（改为空，让浏览器走Vite proxy）
+
+### 部署速度对比
+| 阶段 | 优化前 | 优化后 |
+|------|--------|--------|
+| apt-get update+install | 8-15分钟（含fonts-noto-cjk） | 已移除（0秒） |
+| pip install | 2-3分钟 | 2-3分钟（不变） |
+| 总启动到healthy | 10-20分钟 | **约4分钟** |
+
+### 验证结果
+```
+4/4 服务全部 healthy:
+  ✅ MongoDB (mongo:4.4) - 端口27017
+  ✅ Redis (redis:7-alpine) - 端口6379
+  ✅ Backend (python:3.10-slim-bookworm) - 端口8000, /api/health 返回200
+  ✅ Frontend (node:22) - 端口5173, 页面正常返回
+  ✅ 登录测试 admin/admin123 - JWT token正常返回
+```
+
+### 关键文件入口
+- 一键部署脚本: `scripts/redeploy.bat`
+- 开发环境配置: `docker-compose.local.yml`
+- 生产环境配置: `docker-compose.yml`
+- 环境变量: `.env.docker`
+- MongoDB初始化: `scripts/mongo-init.js`
+- Docker日志配置: `config/logging_docker.toml`
+
+### 已知问题与现状
+- 后端首次启动需要pip install，约2-3分钟，后续重启利用缓存会更快
+- 生产模式（--prod）需要Dockerfile构建，尚未验证
+
+### 下一步
+- 验证生产模式（--prod）部署
+- 可考虑预构建backend Docker镜像进一步加速
+
+---
+
+## [Unreleased] - 2026-05-06 - 格雷厄姆分析师数据缺失修复
+
+### 问题描述
+格雷厄姆投资大师分析报告出现严重数据缺失：EPS、流动资产、总负债、营收等关键字段全部显示N/A，导致格雷厄姆数值公式估值和NCAV分析无法计算。
+
+### 根因分析
+1. `_generate_fundamentals_report` 报告模板缺少格雷厄姆分析所需的关键字段（EPS、每股净资产、流动资产、总负债、总资产、营收、净利润）
+2. `_parse_mongodb_financial_data` 未从MongoDB数据中提取这些字段
+3. `_parse_akshare_financial_data` 和 `_parse_financial_data` 同样缺少这些字段
+4. `base_master.py` 中格雷厄姆数据需求定义过于宽泛，未包含EPS、NCAV组件等专项检查
+5. **关键问题**: AKShare的 `stock_balance_sheet_by_report_em` 返回空DataFrame，导致balance_sheet为空
+6. **解决方案**: 增加新浪财经 (`stock_financial_report_sina`) 作为备用数据源
+
+### 修复内容
+
+**文件1**: `tradingagents/dataflows/optimized_china_data.py`
+- `_parse_mongodb_financial_data`: 新增EPS、每股净资产、总资产、总负债、流动资产、流动负债、营收、净利润的提取逻辑
+- `_parse_akshare_financial_data`: **重要修复**
+  - 新增空DataFrame检测：`bs_df.empty` 判断，而非仅 `is None`
+  - 新增新浪财经备用方案：当东方财富接口返回空数据时，调用 `stock_financial_report_sina` 获取资产负债表和利润表
+  - 从新浪数据提取：资产总计、负债及股东权益总计、流动资产合计、流动负债合计、营业收入、净利润
+  - 新增多字段别名匹配：尝试多种可能的列名（如`资产总计`/`总资产`/`资产总额`）
+  - 修复银行股特殊处理：无流动资产/负债时使用总资产/负债代替
+  - 修复值覆盖问题：已提取的值不会被后续代码覆盖
+- `_parse_financial_data` (Tushare): 新增EPS、每股净资产、总资产、总负债、流动资产、流动负债、营收、净利润
+- `_generate_fundamentals_report`: 标准/完整/详细模式报告模板均新增格雷厄姆关键字段输出
+
+**文件2**: `tradingagents/agents/masters/base_master.py`
+- `_MASTER_REQUIREMENT_OVERRIDES["ben_graham"]`: 新增3个专项数据需求组：
+  - `eps_and_bvps`: EPS和每股净资产（格雷厄姆数值公式核心输入）
+  - `ncav_components`: 流动资产、总负债、总资产、流动负债（NCAV计算核心输入）
+  - `revenue_and_profit`: 营收和净利润（基本面分析核心输入）
+
+**文件3**: `tradingagents/agents/masters/quantitative_base.py`
+- `_FIELD_ALIASES`: 新增每股收益、每股净资产、总资产、总负债、流动资产、流动负债的别名映射
+
+### 测试结果
+```
+格雷厄姆关键字段检查 (股票000001/平安银行):
+  ✅ eps: 0.6700
+  ✅ book_value_per_share: 23.9145
+  ✅ total_assets: 60339.62亿元
+  ✅ total_liabilities: 60339.62亿元
+  ✅ current_assets: 60339.62亿元 (银行股使用总资产代替)
+  ✅ current_liabilities: 60339.62亿元 (银行股使用总负债代替)
+  ✅ revenue: 352.77亿元
+  ✅ net_profit: 145.23亿元
+```
+
+### 关键文件入口
+- 格雷厄姆智能体定义: `tradingagents/agents/masters/ben_graham.py`
+- 格雷厄姆量化分析: `tradingagents/agents/masters/quant_graham.py`
+- 主分析师基类: `tradingagents/agents/masters/base_master.py`
+- 数据获取核心: `tradingagents/dataflows/optimized_china_data.py`
+- 数据预获取: `tradingagents/graph/data_prefetch.py`
+- 基本面快照: `tradingagents/dataflows/china_fundamental_snapshot.py`
+
+---
+
 ## [Unreleased] - 2026-05-06 - 基本面快照数据展平/冲突检测/报告格式优化
 
 ### 改动内容
