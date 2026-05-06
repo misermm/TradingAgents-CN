@@ -1,10 +1,132 @@
 # 开发进度文档
 **更新时间**: 2026-05-06
-**当前项目目标**: 全面均衡优化 — Bug修复完成 + 优化设计完成
+**当前项目目标**: 全面均衡优化 — Bug修复完成 + 过期文件清理完成 + bat部署脚本
 
 ---
 
 ## 最近完成的改动
+
+### 72. 一键部署脚本改为bat格式 ✅ (2026-05-06)
+
+**问题描述**: 原一键部署脚本是 PowerShell (.ps1)，Windows 双击无法直接运行，需 `powershell -ExecutionPolicy Bypass` 前缀
+
+**修复方案**: 新增 `scripts/redeploy.bat`，功能与原 ps1 版本一致
+- 6步流程: 停止容器 → 构建镜像 → 清理悬空镜像 → 启动服务 → 等待就绪 → 健康检查
+- 支持 `--skip-build`、`--skip-frontend`、`--timeout` 参数
+- 使用 `curl` 做 HTTP 健康检查（Windows 10+ 自带）
+- 等待逻辑优化：检测 6 个容器全部 running 后再进入健康检查
+
+**修改的文件**:
+| 文件 | 修改内容 |
+|------|---------|
+| scripts/redeploy.bat | 新增 bat 格式一键部署脚本 |
+
+**验证**: `redeploy.bat` 执行成功，6个容器全部 healthy，登录测试通过 ✅
+
+---
+
+### 71. 过期无用脚本与文档大清理 ✅ (2026-05-06)
+
+**问题描述**: 项目中积累了大量一次性调试脚本、过期文档、旧版本记录，影响项目整洁度
+
+**清理范围与结果**:
+
+| 类别 | 删除数量 | 说明 |
+|------|---------|------|
+| scripts/debug/ | 19 | 一次性调试脚本 |
+| scripts/development/ | 19 | 一次性开发/测试脚本 |
+| scripts/startup/ (Streamlit遗留) | 13 | Streamlit遗留启动脚本 |
+| scripts/deployment/ | 12 | 旧版发布/构建脚本 |
+| scripts/ 根目录 check_*/debug_*/diagnose_*/fix_* | 89 | 一次性检查/调试/修复脚本 |
+| scripts/ 根目录 test_* | 87 | 一次性测试脚本 |
+| scripts/ 根目录 migrate_*/verify_*/analyze_* 等 | ~130 | 一次性迁移/验证/分析脚本 |
+| scripts/ 子目录 (archived/config/fixes/validation/test/git/maintenance/portable/installer/windows-installer) | ~50 | 已归档/过期子目录 |
+| docs/archive/ | 5 | 已归档文档 |
+| docs/agents/v0.1.13/ | 5 | 旧版本文档 |
+| docs/architecture/ (含cache/database/dataflows/v0.1.13/v0.1.16) | 25 | 一次性架构分析文档 |
+| docs/analysis/ | 9 | 一次性分析报告 |
+| docs/bugfix/ | 10 | 一次性Bug修复记录 |
+| docs/changes/ | 5 | 一次性变更记录 |
+| docs/community/ | 2 | 过期社区活动 |
+| docs/config/ | 2 | 过期配置文档 |
+| docs/configuration/ (含migration/config-bridge) | 31 | 过期配置迁移文档 |
+| docs/deployment/ (含demo/docker/operations/v0.1.16) | 32 | 过期部署文档 |
+| docs/design/ (含v0.1.16/v1.0.1) | 39 | 过期设计文档 |
+| docs/development/ | 16 | 过期开发文档 |
+| docs/docker/ | 6 | 过期Docker文档 |
+| docs/features/ (含aggregator/config-wizard/data-sync等) | 38 | 过期功能文档 |
+| docs/fixes/ (含dashboard/data-source/frontend/model/performance) | 73 | 一次性修复记录 |
+| docs/frontend/ | 7 | 过期前端文档 |
+| docs/implementation/ | 2 | 过期实现文档 |
+| docs/improvements/ | 6 | 过期优化文档 |
+| docs/integration/ (含adapters/data-sources/google/providers/rate-limit) | 25 | 过期集成文档 |
+| docs/localization/ | 1 | 过期本地化文档 |
+| docs/maintenance/ | 3 | 过期维护文档 |
+| docs/migration/ | 2 | 过期迁移文档 |
+| docs/summary/ | 14 | 过期总结文档 |
+| docs/survey/ | 5 | 过期调查文档 |
+| docs/tech_reviews/ | 8 | 过期技术评审 |
+| docs/technical/ (含v0.1.16) | 12 | 过期技术文档 |
+| docs/technical-debt/ | 1 | 过期技术债务 |
+| docs/troubleshooting/ | 15 | 过期故障排除 |
+| docs/usage/ | 4 | 过期使用文档 |
+| docs/blog/ | 23 | 过期博客 |
+| docs/releases/ (旧版本) | 24 | 旧版本发布记录 |
+| docs/guides/ (含子目录) | 53 | 过期指南文档 |
+| docs/ 根目录杂项 | 24 | 过期杂项文档 |
+| 根目录遗留文件 | 2 | start-local.sh/bat |
+| **合计** | **~780** | |
+
+**保留的核心文件**:
+- `scripts/akshare_sync_optimized.py` — 核心数据同步
+- `scripts/redeploy.ps1` — 一键部署脚本
+- `scripts/create_default_admin.py` — 初始管理员创建
+- `scripts/mongo-init.js` — Docker MongoDB初始化
+- `scripts/docker/mongo-init.js` — Docker MongoDB初始化
+- `scripts/migrations/` — 数据库迁移脚本（4个）
+- `scripts/migration/` — 数据库迁移脚本（2个）
+- `scripts/setup/` — 数据库初始化脚本（10个）
+- `scripts/startup/` — 后端启动脚本（3个）
+- `docs/README.md`, `docs/QUICK_START.md`, `docs/BUILD_GUIDE.md`, `docs/STRUCTURE.md`, `docs/database_setup.md` — 核心文档
+- `docs/releases/CHANGELOG.md` — 主更新日志
+- `docs/paper/` — 研究论文
+- `docs/learning/` — 学习中心
+- `docs/overview/` — 项目概览
+- `docs/security/` — 安全文档
+- `docs/faq/` — FAQ
+- `docs/examples/` — 示例
+- `docs/llm/` — LLM集成文档（用户保留）
+- `docs/superpowers/specs/` — 最新设计文档（2026）
+
+---
+
+### 70. 登录后自动退出修复 — UserService MongoDB连接失效 + 一键部署脚本 ✅ (2026-05-06)
+
+**问题描述**: 登录后立即提示"登录已过期"并自动退出
+
+**根因分析**:
+1. `UserService.__init__` 在启动时缓存了 `self.db` 和 `self.users_collection` 引用
+2. `close_mongo_db_sync()` 被调用后，底层 MongoClient 被关闭并设为 None
+3. 但 `UserService` 仍持有旧的 `self.db` 和 `self.users_collection` 引用（指向已关闭的 MongoClient）
+4. `self._db_available` 仍为 `True`，导致 `get_user_by_username` 尝试用已关闭的连接查询
+5. 抛出 `Cannot use MongoClient after close`，异常处理返回 `None`，导致 401
+6. 登录时 `authenticate_user` 走异常回退路径所以登录成功，但后续请求验证 token 时 `get_user_by_username` 返回 None → 401
+
+**修复方案**: 重构 `UserService`，每次操作时动态获取数据库连接，而不是缓存引用
+- 新增 `_refresh_db_connection()` 方法：带冷却时间的连接刷新（30秒内不重复检查）
+- 新增 `_get_users_collection()` 方法：每次操作时动态获取 `users` collection
+- `get_user_by_username` 异常时回退到 `_FALLBACK_USERS`（而非返回 None）
+- 修复 `datetime.utcnow()` → `datetime.now(timezone.utc)`
+
+**修改的文件**:
+| 文件 | 修改内容 |
+|------|---------|
+| app/services/user_service.py | 重构数据库连接管理，动态获取连接，异常时回退 |
+| scripts/redeploy.ps1 | 新增一键重新部署脚本（停止→构建→清理→启动→健康检查） |
+
+**验证**: 登录后所有 API 请求均返回 200 ✅
+
+---
 
 ### 69. 单股分析报错修复 — 默认模型 + base_url冲突 + 错误提示增强 ✅ (2026-05-06)
 

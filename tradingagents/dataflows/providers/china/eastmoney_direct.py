@@ -53,6 +53,14 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
         "&filter=(SECURITY_CODE=\"{code}\")"
         "&pageSize=8&sortColumns=REPORT_DATE&sortTypes=-1"
     )
+    # 资产负债表
+    BALANCE_SHEET_URL = (
+        "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        "?reportName=RPT_DMSK_FN_BALANCE"
+        "&columns=SECURITY_CODE,REPORT_DATE,TOTAL_ASSETS,TOTAL_LIABILITIES,TOTAL_CURRENT_ASSETS,TOTAL_CURRENT_LIABILITIES,MGJZC"
+        "&filter=(SECURITY_CODE=%22{code}%22)"
+        "&pageSize=5&sortColumns=REPORT_DATE&sortTypes=-1"
+    )
     # 行业数据
     INDUSTRY_URL = (
         "http://push2.eastmoney.com/api/qt/clist/get"
@@ -449,6 +457,49 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
             self.logger.warning(f"⚠️ 东方财富获取财务数据失败 {code}: {e}")
             return None
 
+    def _fetch_balance_sheet_data(self, code: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        获取资产负债表数据（同步方法，供ResilientHttpClient调用）
+
+        Args:
+            code: 股票代码（如 600519）
+
+        Returns:
+            资产负债表数据列表，失败返回None
+        """
+        url = self.BALANCE_SHEET_URL.format(code=code)
+
+        try:
+            resp = self._http_get(url)
+            data = resp.json()
+
+            if not data or data.get("code") != "0":
+                return None
+
+            result_data = data.get("result", {})
+            items = result_data.get("data", [])
+
+            if not items:
+                return None
+
+            balance_list = []
+            for item in items:
+                balance_list.append({
+                    "symbol": item.get("SECURITY_CODE", code),
+                    "report_date": item.get("REPORT_DATE", ""),
+                    "total_assets": self._safe_float(item.get("TOTAL_ASSETS")),
+                    "total_liabilities": self._safe_float(item.get("TOTAL_LIABILITIES")),
+                    "current_assets": self._safe_float(item.get("TOTAL_CURRENT_ASSETS")),
+                    "current_liabilities": self._safe_float(item.get("TOTAL_CURRENT_LIABILITIES")),
+                    "bvps": self._safe_float(item.get("MGJZC")),
+                })
+
+            return balance_list
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ 东方财富获取资产负债表数据失败 {code}: {e}")
+            return None
+
     async def get_financial_data(
         self, symbol: str, report_type: str = "annual"
     ) -> Optional[Dict[str, Any]]:
@@ -471,7 +522,24 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
             if result.success and result.data:
                 financial_list = result.data
 
-                # 构建财务数据摘要
+                bs_result = self._http_client.call(
+                    self._fetch_balance_sheet_data, code
+                )
+                if bs_result.success and bs_result.data:
+                    bs_map = {}
+                    for bs in bs_result.data:
+                        rd = bs.get("report_date", "")
+                        rd_key = rd[:10] if rd else ""
+                        bs_map[rd_key] = bs
+
+                    bs_fields = ["total_assets", "total_liabilities", "current_assets", "current_liabilities", "bvps"]
+                    for period in financial_list:
+                        rd = period.get("report_date", "")
+                        rd_key = rd[:10] if rd else ""
+                        matched_bs = bs_map.get(rd_key)
+                        for field in bs_fields:
+                            period[field] = matched_bs.get(field) if matched_bs else None
+
                 summary = {
                     "symbol": code,
                     "data_source": "eastmoney_direct",

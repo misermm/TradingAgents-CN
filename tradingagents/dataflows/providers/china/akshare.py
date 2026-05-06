@@ -1157,6 +1157,35 @@ class AKShareProvider(BaseStockDataProvider):
             "sync_status": "success"
         }
     
+    def _parse_balance_sheet_row(self, row: pd.Series) -> Dict[str, Any]:
+        """
+        从 stock_balance_sheet_by_report_em 的一行数据中提取关键资产负债表字段
+
+        Args:
+            row: DataFrame 的一行数据
+
+        Returns:
+            包含标准化字段名的字典
+        """
+        result = {
+            "report_date": self._safe_str(row.get("报告期", "")),
+            "total_assets": self._safe_float(row.get("资产总额", row.get("总资产", None))),
+            "total_liabilities": self._safe_float(row.get("负债总额", row.get("总负债", None))),
+            "total_equity": self._safe_float(row.get("所有者权益总额", row.get("净资产", None))),
+            "equity_parent": self._safe_float(row.get("归属于母公司所有者权益合计", None)),
+            "current_assets": self._safe_float(row.get("流动资产合计", None)),
+            "current_liabilities": self._safe_float(row.get("流动负债合计", None)),
+            "cash": self._safe_float(row.get("货币资金", None)),
+            "accounts_receivable": self._safe_float(row.get("应收账款", None)),
+            "inventory": self._safe_float(row.get("存货", None)),
+            "fixed_assets": self._safe_float(row.get("固定资产", None)),
+            "goodwill": self._safe_float(row.get("商誉", None)),
+            "short_term_debt": self._safe_float(row.get("短期借款", None)),
+            "long_term_debt": self._safe_float(row.get("长期借款", None)),
+            "bvps": self._safe_float(row.get("每股净资产", None)),
+        }
+        return result
+
     def _safe_float(self, value: Any) -> float:
         """安全转换为浮点数"""
         try:
@@ -1331,13 +1360,14 @@ class AKShareProvider(BaseStockDataProvider):
                 logger.debug(f"获取{code}主要财务指标失败: {e}")
 
             # 2. 获取资产负债表
+            balance_sheet_df = None
             try:
                 def fetch_balance_sheet():
                     return self.ak.stock_balance_sheet_by_report_em(symbol=code)
 
-                balance_sheet = await asyncio.to_thread(fetch_balance_sheet)
-                if balance_sheet is not None and not balance_sheet.empty:
-                    financial_data['balance_sheet'] = balance_sheet.to_dict('records')
+                balance_sheet_df = await asyncio.to_thread(fetch_balance_sheet)
+                if balance_sheet_df is not None and not balance_sheet_df.empty:
+                    financial_data['balance_sheet'] = balance_sheet_df.to_dict('records')
                     logger.debug(f"✅ {code}资产负债表获取成功")
             except Exception as e:
                 logger.debug(f"获取{code}资产负债表失败: {e}")
@@ -1365,6 +1395,69 @@ class AKShareProvider(BaseStockDataProvider):
                     logger.debug(f"✅ {code}现金流量表获取成功")
             except Exception as e:
                 logger.debug(f"获取{code}现金流量表失败: {e}")
+
+            # 5. 从资产负债表提取关键字段，构建 latest 和 periods 结构
+            if balance_sheet_df is not None and not balance_sheet_df.empty:
+                try:
+                    periods = []
+                    for _, row in balance_sheet_df.iterrows():
+                        period_data = self._parse_balance_sheet_row(row)
+                        periods.append(period_data)
+
+                    if periods:
+                        financial_data['latest'] = periods[0]
+                        financial_data['periods'] = periods
+                        logger.debug(f"✅ {code}资产负债表关键字段提取成功: {len(periods)}期")
+                except Exception as e:
+                    logger.debug(f"提取{code}资产负债表关键字段失败: {e}")
+
+            # 6. 尝试从 stock_financial_analysis_indicator 获取补充指标（含 bvps）
+            if 'latest' not in financial_data or financial_data.get('latest', {}).get('bvps') in (0.0, None):
+                try:
+                    def fetch_analysis_indicator():
+                        return self.ak.stock_financial_analysis_indicator(symbol=code)
+
+                    analysis_df = await asyncio.to_thread(fetch_analysis_indicator)
+                    if analysis_df is not None and not analysis_df.empty:
+                        latest_analysis = analysis_df.iloc[0]
+                        bvps_from_analysis = self._safe_float(
+                            latest_analysis.get("每股净资产", None)
+                        )
+                        if bvps_from_analysis and bvps_from_analysis > 0:
+                            if 'latest' in financial_data:
+                                financial_data['latest']['bvps'] = bvps_from_analysis
+                            else:
+                                financial_data['latest'] = {'bvps': bvps_from_analysis}
+                            if 'periods' in financial_data:
+                                for p in financial_data['periods']:
+                                    if not p.get('bvps'):
+                                        p['bvps'] = bvps_from_analysis
+                            logger.debug(f"✅ {code}从 stock_financial_analysis_indicator 补充 bvps: {bvps_from_analysis}")
+                except Exception as e:
+                    logger.debug(f"获取{code}财务分析指标补充 bvps 失败: {e}")
+
+            # 7. 尝试从 main_indicators 获取 bvps（备选方案）
+            if 'latest' in financial_data and financial_data['latest'].get('bvps') in (0.0, None):
+                try:
+                    main_indicators_raw = financial_data.get('main_indicators')
+                    if main_indicators_raw:
+                        import pandas as pd
+                        mi_df = main_indicators_raw if isinstance(main_indicators_raw, pd.DataFrame) else pd.DataFrame(main_indicators_raw)
+                        if not mi_df.empty and '指标' in mi_df.columns:
+                            bps_row = mi_df[mi_df['指标'].astype(str).str.contains('每股净资产', na=False)]
+                            if not bps_row.empty:
+                                value_cols = [c for c in bps_row.columns if c != '指标']
+                                if value_cols:
+                                    bps_val = self._safe_float(bps_row[value_cols[0]].iloc[0])
+                                    if bps_val and bps_val > 0:
+                                        financial_data['latest']['bvps'] = bps_val
+                                        if 'periods' in financial_data:
+                                            for p in financial_data['periods']:
+                                                if not p.get('bvps'):
+                                                    p['bvps'] = bps_val
+                                        logger.debug(f"✅ {code}从 main_indicators 补充 bvps: {bps_val}")
+                except Exception as e:
+                    logger.debug(f"从 main_indicators 补充{code} bvps 失败: {e}")
 
             if financial_data:
                 logger.debug(f"✅ {code}财务数据获取完成: {len(financial_data)}个数据集")

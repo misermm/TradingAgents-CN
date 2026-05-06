@@ -981,6 +981,21 @@ class BaoStockProvider(BaseStockDataProvider):
                 logger.debug(f"获取{code}现金流量数据失败: {e}")
 
             if financial_data:
+                balance_data = financial_data.get('balance_data', {})
+                profit_data = financial_data.get('profit_data', {})
+                growth_data = financial_data.get('growth_data', {})
+
+                balance_sheet_fields = self._extract_balance_sheet_fields(
+                    balance_data, profit_data, growth_data
+                )
+
+                if balance_sheet_fields:
+                    financial_data['latest'] = {
+                        'report_period': balance_data.get('statDate', ''),
+                        **balance_sheet_fields,
+                    }
+                    financial_data['periods'] = [financial_data['latest'].copy()]
+
                 logger.info(f"✅ BaoStock财务数据获取成功: {code}, {len(financial_data)}个数据集")
             else:
                 logger.warning(f"⚠️ BaoStock财务数据为空: {code}")
@@ -1106,6 +1121,50 @@ class BaoStockProvider(BaseStockDataProvider):
         except Exception as e:
             logger.debug(f"获取{code}偿债能力数据失败: {e}")
             return None
+
+    def _extract_balance_sheet_fields(
+        self,
+        balance_data: Dict[str, Any],
+        profit_data: Dict[str, Any],
+        growth_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """从偿债能力数据中提取并映射资产负债表字段"""
+        if not balance_data:
+            return {}
+
+        field_mapping = {
+            'total_assets': 'total_assets',
+            'total_liab': 'total_liabilities',
+            'total_current_assets': 'current_assets',
+            'total_current_liab': 'current_liabilities',
+            'total_equity': 'total_equity',
+        }
+
+        result = {}
+        for bs_field, std_field in field_mapping.items():
+            value = balance_data.get(bs_field)
+            if value is not None and str(value) not in ('', 'None', 'nan'):
+                result[std_field] = self._safe_float(value)
+
+        total_equity = result.get('total_equity') or self._safe_float(
+            balance_data.get('total_equity')
+        )
+        total_shares = (
+            self._safe_float(profit_data.get('totalShare'))
+            if profit_data and profit_data.get('totalShare')
+            else None
+        )
+        if not total_shares and growth_data:
+            total_shares = (
+                self._safe_float(growth_data.get('totalShare'))
+                if growth_data.get('totalShare')
+                else None
+            )
+
+        if total_equity and total_shares and total_shares > 0:
+            result['bvps'] = total_equity / total_shares
+
+        return result
 
     async def _get_cash_flow_data(self, code: str, year: int, quarter: int) -> Optional[Dict[str, Any]]:
         """获取现金流量数据（使用连接池）"""

@@ -27,9 +27,12 @@ FREE_SOURCE_PRIORITY = {
 
 
 FIELD_SPECS: Dict[str, Dict[str, Any]] = {
-    "price": {"label": "最新价格", "aliases": ["price", "close", "latest_price", "最新价", "收盘价"], "required": False},
-    "pe_ttm": {"label": "PE_TTM", "aliases": ["pe_ttm", "pe", "市盈率", "滚动市盈率"], "required": True},
-    "pb": {"label": "PB", "aliases": ["pb", "市净率"], "required": True},
+    "price": {"label": "最新价格", "aliases": ["price", "close", "current_price", "latest_price", "最新价", "收盘价"], "required": False},
+    "pe": {"label": "静态市盈率", "aliases": ["pe", "PE", "pe_dynamic", "price_to_earnings", "市盈率", "P/E"], "required": False},
+    "pe_ttm": {"label": "PE_TTM", "aliases": ["pe_ttm", "PE_TTM", "pe_ratio", "市盈率TTM", "滚动市盈率"], "required": True},
+    "eps": {"label": "每股收益", "aliases": ["eps", "EPS", "basic_eps", "每股收益", "earningsPerShare", "基本每股收益"], "required": True},
+    "pb": {"label": "PB", "aliases": ["pb", "PB", "price_to_book", "pb_mrq", "市净率"], "required": True},
+    "book_value_per_share": {"label": "每股净资产", "aliases": ["bvps", "book_value_per_share", "每股净资产", "bookValuePerShare", "bps"], "required": True},
     "total_mv": {"label": "总市值", "aliases": ["total_mv", "market_cap", "总市值"], "required": False},
     "revenue": {"label": "营业收入", "aliases": ["revenue", "total_revenue", "operating_revenue", "营业收入", "营业总收入", "营收"], "required": True},
     "revenue_yoy": {"label": "营收同比", "aliases": ["revenue_yoy", "revenue_growth", "YYZSRTBZZ", "营业收入同比增长率", "营业总收入同比增长率"], "required": False},
@@ -50,10 +53,10 @@ FIELD_SPECS: Dict[str, Dict[str, Any]] = {
     "capital_expenditure": {"label": "资本开支", "aliases": ["capital_expenditure", "capex", "购建固定资产、无形资产和其他长期资产支付的现金"], "required": False},
     "debt_ratio": {"label": "资产负债率", "aliases": ["debt_ratio", "资产负债率", "负债率"], "required": True},
     "debt_ratio_trend": {"label": "资产负债率趋势", "aliases": ["debt_ratio_trend", "资产负债率趋势"], "required": False},
-    "total_assets": {"label": "总资产", "aliases": ["total_assets", "资产总计", "资产合计"], "required": False},
-    "total_liabilities": {"label": "总负债", "aliases": ["total_liabilities", "负债合计", "负债总计"], "required": False},
-    "current_assets": {"label": "流动资产", "aliases": ["current_assets", "流动资产合计"], "required": False},
-    "current_liabilities": {"label": "流动负债", "aliases": ["current_liabilities", "流动负债合计"], "required": False},
+    "total_assets": {"label": "总资产", "aliases": ["total_assets", "总资产", "资产总计", "资产合计", "totalAssets"], "required": True},
+    "total_liabilities": {"label": "总负债", "aliases": ["total_liabilities", "总负债", "负债合计", "负债总计", "totalLiabilities"], "required": True},
+    "current_assets": {"label": "流动资产", "aliases": ["current_assets", "流动资产", "流动资产合计", "totalCurrentAssets"], "required": True},
+    "current_liabilities": {"label": "流动负债", "aliases": ["current_liabilities", "流动负债", "流动负债合计", "totalCurrentLiabilities"], "required": True},
     "current_ratio": {"label": "流动比率", "aliases": ["current_ratio", "流动比率"], "required": False},
     "current_ratio_trend": {"label": "流动比率趋势", "aliases": ["current_ratio_trend", "流动比率趋势"], "required": False},
     "accounts_receivable": {"label": "应收账款", "aliases": ["accounts_receivable", "应收账款"], "required": False},
@@ -170,6 +173,17 @@ def _value_status(value: Any) -> str:
     return "present"
 
 
+def _values_conflict(v1: Any, v2: Any) -> bool:
+    if v1 == v2:
+        return False
+    if isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
+        max_abs = max(abs(v1), abs(v2))
+        if max_abs == 0:
+            return False
+        return abs(v1 - v2) / max_abs > 0.2
+    return str(v1) != str(v2)
+
+
 def _coerce_number(value: Any) -> Any:
     if not isinstance(value, str):
         return value
@@ -185,7 +199,11 @@ def _flatten_mapping(data: Mapping[str, Any]) -> Dict[str, Any]:
     flattened: Dict[str, Any] = {}
     for key, value in data.items():
         normalized_key = str(key).strip()
-        if isinstance(value, Mapping):
+        if normalized_key == "periods":
+            continue
+        if normalized_key == "latest" and isinstance(value, Mapping):
+            flattened.update(_flatten_mapping(value))
+        elif isinstance(value, Mapping):
             flattened.update(_flatten_mapping(value))
         elif isinstance(value, list):
             for item in value:
@@ -747,6 +765,8 @@ def _extract_field(data: Any, aliases: List[str]) -> Optional[Any]:
 def _status_rank(status: str) -> int:
     if status == "present":
         return 2
+    if status == "conflict":
+        return 1
     if status == "estimated":
         return 1
     return 0
@@ -1020,6 +1040,7 @@ def _apply_derived_fields(fields: Dict[str, Dict[str, Any]]) -> None:
 
 def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[str, Any]]) -> Dict[str, Any]:
     fields: Dict[str, Dict[str, Any]] = {}
+    all_candidates: Dict[str, List[Dict[str, Any]]] = {}
     for field_name, spec in FIELD_SPECS.items():
         best: Optional[Dict[str, Any]] = None
         candidates: List[Dict[str, Any]] = []
@@ -1054,14 +1075,41 @@ def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[
             "selection_reason": "no_candidate",
             "required": bool(spec.get("required")),
         }
+        all_candidates[field_name] = candidates
 
     _apply_derived_fields(fields)
     _apply_trend_fields(fields, source_payloads)
+
+    conflict_fields: List[str] = []
+    for field_name, candidates in all_candidates.items():
+        present_candidates = [c for c in candidates if c["status"] == "present"]
+        if len(present_candidates) < 2:
+            continue
+        source_values: Dict[str, Any] = {}
+        for c in present_candidates:
+            if c["source"] not in source_values:
+                source_values[c["source"]] = c["value"]
+        if len(source_values) < 2:
+            continue
+        has_conflict = False
+        sources = list(source_values.keys())
+        for i in range(len(sources)):
+            for j in range(i + 1, len(sources)):
+                if _values_conflict(source_values[sources[i]], source_values[sources[j]]):
+                    has_conflict = True
+                    break
+            if has_conflict:
+                break
+        if has_conflict:
+            conflict_fields.append(field_name)
+            fields[field_name]["status"] = "conflict"
+            fields[field_name]["conflict_values"] = source_values
 
     required_fields = [name for name, spec in FIELD_SPECS.items() if spec.get("required")]
     present_required = [name for name in required_fields if fields[name]["status"] == "present"]
     missing_required = [name for name in required_fields if fields[name]["status"] == "missing"]
     estimated_fields = [name for name, field in fields.items() if field["status"] == "estimated"]
+    conflict_required = [name for name in conflict_fields if name in required_fields]
     present_count = sum(1 for field in fields.values() if field["status"] == "present")
 
     quality = {
@@ -1073,10 +1121,11 @@ def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[
         "required_count": len(required_fields),
         "missing_required_fields": missing_required,
         "estimated_fields": estimated_fields,
-        "is_sufficient": len(missing_required) == 0 and (len(present_required) / len(required_fields) >= 0.75 if required_fields else True),
+        "conflict_fields": conflict_fields,
+        "is_sufficient": len(missing_required) == 0 and len(conflict_required) == 0 and (len(present_required) / len(required_fields) >= 0.75 if required_fields else True),
     }
 
-    sources_used = sorted({field["source"] for field in fields.values() if field["status"] == "present"})
+    sources_used = sorted({field["source"] for field in fields.values() if field["status"] in ("present", "conflict")})
     return {
         "symbol": symbol,
         "market": "china_a",
@@ -1108,10 +1157,27 @@ def format_china_fundamental_snapshot_report(snapshot: Mapping[str, Any]) -> str
         f"数据质量评分: {quality.get('present_count', 0)}/{quality.get('total_count', 0)} (必需字段 {quality.get('present_required_count', 0)}/{quality.get('required_count', 0)})",
         f"是否足够支撑分析: {'是' if quality.get('is_sufficient') else '否'}",
         f"免费数据源: {', '.join(snapshot.get('sources_used', [])) or '无'}",
+    ]
+
+    conflict_fields_list = quality.get("conflict_fields", [])
+    if conflict_fields_list:
+        lines.extend(["", "⚠️ 数据矛盾警告: 以下字段在不同数据源间存在显著差异"])
+        for fname in conflict_fields_list:
+            field = fields.get(fname, {})
+            conflict_values = field.get("conflict_values", {})
+            parts = [f"{src}={_format_field_value(fname, val)}" for src, val in conflict_values.items()]
+            lines.append(f"  - {field.get('label', fname)}: {' vs '.join(parts)}")
+
+    missing_required = quality.get("missing_required_fields", [])
+    if missing_required:
+        missing_labels = [fields.get(name, {}).get("label", name) for name in missing_required]
+        lines.extend(["", f"⚠️ 必需字段缺失: {', '.join(missing_labels)} — 建议使用付费数据源获取完整数据"])
+
+    lines.extend([
         "",
         "| 字段 | 规范别名 | 值 | 状态 | 数据来源 | 报告期 | 更新时间 | 选中原因 |",
         "|------|----------|----|------|----------|--------|----------|----------|",
-    ]
+    ])
 
     for field_name, field in fields.items():
         lines.append(
@@ -1125,15 +1191,21 @@ def format_china_fundamental_snapshot_report(snapshot: Mapping[str, Any]) -> str
             f"source: {field.get('source')}; report_period: {field.get('report_period') or ''}; "
             f"updated_at: {field.get('updated_at') or ''}; selection_reason: {field.get('selection_reason') or ''}"
         )
-        if field.get("status") == "present":
+        if field.get("status") == "conflict":
+            conflict_values = field.get("conflict_values", {})
+            parts = [f"{src}={_format_field_value(field_name, val)}" for src, val in conflict_values.items()]
+            lines.append(f"{field_name}: ⚠️矛盾({', '.join(parts)})  # 数据来源: conflict")
+        elif field.get("status") == "present":
             lines.append(f"{field_name}: {_format_field_value(field_name, field.get('value'))}  # 数据来源: {field.get('source')} | {metadata}")
         elif field.get("status") == "estimated":
             lines.append(f"{field_name}: 行业估算  # 数据来源: {field.get('source')} | {metadata}")
         else:
             lines.append(f"{field_name}: N/A  # {metadata}")
 
-    if quality.get("missing_required_fields"):
-        lines.extend(["", f"缺失必需字段: {', '.join(quality['missing_required_fields'])}"])
+    if missing_required:
+        lines.extend(["", f"缺失必需字段: {', '.join(missing_required)}"])
     if quality.get("estimated_fields"):
         lines.append(f"估算字段: {', '.join(quality['estimated_fields'])}")
+    if conflict_fields_list:
+        lines.append(f"矛盾字段: {', '.join(conflict_fields_list)}")
     return "\n".join(lines)

@@ -229,11 +229,12 @@ def analyze_graham_valuation(data: dict) -> dict:
                 details.append(f"格雷厄姆公式估值: V={graham_value:.2f}")
     else:
         pb_ratio = safe_float(
-            data.get("pb_ratio") or data.get("市净率")
-            or data.get("priceToBookRatio")
+            data.get("pb_ratio") or data.get("pb") or data.get("市净率")
+            or data.get("PB") or data.get("priceToBookRatio")
         )
         pe_ratio = safe_float(
-            data.get("pe_ratio") or data.get("市盈率")
+            data.get("pe_ratio") or data.get("pe_ttm") or data.get("pe")
+            or data.get("市盈率") or data.get("PE")
             or data.get("priceToEarningsRatio") or data.get("P/E")
         )
         if pb_ratio is not None and pe_ratio is not None and pb_ratio > 0 and pe_ratio > 0:
@@ -283,7 +284,7 @@ def graham_quantitative_analysis(raw_data: str) -> dict:
             margin_score += 1
             margin_details.append(f"安全边际>20%: {safety_margin:.1%}")
 
-    pe_ratio = safe_float(data.get("pe_ratio") or data.get("市盈率"))
+    pe_ratio = safe_float(data.get("pe_ratio") or data.get("pe_ttm") or data.get("pe") or data.get("市盈率"))
     if pe_ratio is not None:
         margin_max += 1
         if 0 < pe_ratio < 10:
@@ -292,7 +293,7 @@ def graham_quantitative_analysis(raw_data: str) -> dict:
         elif 10 <= pe_ratio < 15:
             margin_score += 0.5
 
-    pb_ratio = safe_float(data.get("pb_ratio") or data.get("市净率"))
+    pb_ratio = safe_float(data.get("pb_ratio") or data.get("pb") or data.get("市净率") or data.get("PB"))
     if pb_ratio is not None:
         margin_max += 1
         if 0 < pb_ratio < 1.0:
@@ -327,8 +328,8 @@ def graham_quantitative_analysis(raw_data: str) -> dict:
     if de_ratio is not None:
         evidence_table.append(make_evidence_row("财务实力", "低负债约束", "debt_ratio", round(de_ratio, 2), 2 if de_ratio < 0.5 else 1 if de_ratio < 1.0 else 0, 2, "低负债能提供安全边际"))
 
-    pe_ratio = safe_float(data.get("pe_ratio") or data.get("市盈率") or data.get("P/E"))
-    pb_ratio = safe_float(data.get("pb_ratio") or data.get("市净率"))
+    pe_ratio = safe_float(data.get("pe_ratio") or data.get("pe_ttm") or data.get("pe") or data.get("市盈率") or data.get("P/E"))
+    pb_ratio = safe_float(data.get("pb_ratio") or data.get("pb") or data.get("市净率") or data.get("PB"))
     if pe_ratio is not None and pb_ratio is not None and pe_ratio > 0 and pb_ratio > 0:
         combo = pe_ratio * pb_ratio
         evidence_table.append(make_evidence_row("估值分析", "PE*PB组合", "pe*pb", round(combo, 2), 2 if combo < 15 else 1 if combo < 22.5 else 0, 2, "格雷厄姆经典估值组合"))

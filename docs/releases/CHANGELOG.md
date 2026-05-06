@@ -2,6 +2,38 @@
 
 本文档记录了TradingAgents-CN项目的所有重要更改。
 
+## [Unreleased] - 2026-05-06 - 基本面快照数据展平/冲突检测/报告格式优化
+
+### 改动内容
+
+**文件**: `tradingagents/dataflows/china_fundamental_snapshot.py`
+
+#### Task 5: 修复数据展平逻辑 (`_flatten_mapping`)
+- 新增 `periods` 键跳过逻辑（periods 由 `_apply_trend_fields` 单独处理，避免历史期数据覆盖最新值）
+- 显式处理 `latest` 键：当值为 Mapping 时展平到顶层，确保最新值直接可访问
+- 其他 list 值保持取第一项展平的行为不变
+
+#### Task 6: 添加冲突检测 (`build_china_fundamental_snapshot`)
+- 新增 `_values_conflict` 辅助函数：数值差异超 20% 判定为冲突，非数值类型按字符串比较
+- `_status_rank` 新增 `conflict` 状态，排名为 1（与 estimated 同级，低于 present）
+- `build_china_fundamental_snapshot` 新增冲突检测：多数据源 present 候选值差异超阈值时标记为 conflict
+- 冲突字段存储 `conflict_values: {source: value}` 记录各源值
+- quality 字典新增 `conflict_fields` 列表
+- `is_sufficient` 现在在必需字段有冲突时也返回 False
+- `sources_used` 现在包含 conflict 状态的数据源
+
+#### Task 7: 修复报告格式 (`format_china_fundamental_snapshot_report`)
+- 新增 ⚠️ 数据矛盾警告段：报告头部显示冲突字段及各源值对比
+- 新增 ⚠️ 必需字段缺失警告：建议使用付费数据源获取完整数据
+- 大师分析可读字段段：conflict 字段显示 `⚠️矛盾(src1=val1, src2=val2)  # 数据来源: conflict`
+- 报告尾部新增矛盾字段汇总行
+
+### 当前开发进度
+- **项目目标**: 免费数据源基本面快照融合质量提升
+- **最近完成**: Task 5/6/7 三项改动，语法检查与端到端测试通过
+- **下一步**: 可继续优化冲突解决策略（如加权平均、人工标注优先源等）
+- **关键文件入口**: `tradingagents/dataflows/china_fundamental_snapshot.py`
+
 ## [v1.0.1] - 2026-04-14 - 配置体验与数据同步稳定性增强
 
 ### 🎉 重点更新
