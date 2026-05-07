@@ -2,14 +2,13 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 
-# 导入统一日志系统和分析模块日志装饰器
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.tool_logging import log_analyst_module
 logger = get_logger("analysts.social_media")
 
-# 导入Google工具调用处理器
 from tradingagents.agents.utils.google_tool_handler import GoogleToolCallHandler
 from tradingagents.agents.utils.instrument_utils import build_instrument_context
+from tradingagents.agents.utils.text_tool_call_parser import TextToolCallParser
 
 
 def _get_company_name_for_social_media(ticker: str, market_info: dict) -> str:
@@ -217,13 +216,29 @@ def create_social_media_analyst(llm, toolkit):
                 analyst_name="社交媒体分析师"
             )
         else:
-            # 非Google模型的处理逻辑
             logger.debug(f"📊 [DEBUG] 非Google模型 ({llm.__class__.__name__})，使用标准处理逻辑")
             
             tool_calls = getattr(result, 'tool_calls', [])
             report = ""
             if len(tool_calls) == 0:
-                report = result.content
+                content_str = result.content if hasattr(result, 'content') else ""
+
+                if TextToolCallParser.detect_text_tool_call(content_str):
+                    logger.info(f"🔧 [社媒分析师] 检测到文本格式工具调用，启动解析执行")
+                    parsed_report = TextToolCallParser.execute_and_generate_report(
+                        content=content_str,
+                        available_tools=tools,
+                        llm=llm,
+                        analyst_name="社交媒体分析师",
+                    )
+                    if parsed_report:
+                        report = parsed_report
+                        logger.info(f"✅ [社媒分析师] 文本工具调用解析成功，报告长度: {len(report)}")
+                    else:
+                        logger.warning(f"⚠️ [社媒分析师] 文本工具调用解析失败，使用原始内容")
+                        report = content_str
+                else:
+                    report = content_str
             else:
                 logger.info(f"💭 [社媒分析师] 检测到工具调用，执行工具并生成报告")
                 try:

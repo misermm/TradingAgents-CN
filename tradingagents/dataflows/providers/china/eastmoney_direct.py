@@ -250,11 +250,42 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
             # f168:PB f169:涨跌额 f170:涨跌幅 f171:振幅
             current = self._safe_float(item.get("f43"))
             pre_close = self._safe_float(item.get("f60"))
+            raw_f43 = item.get("f43")
+            raw_f60 = item.get("f60")
+
+            current, pre_close, needs_div = self._normalize_a_share_prices(
+                current, pre_close, symbol, raw_f43, raw_f60
+            )
 
             # 计算涨跌额和涨跌幅（东方财富有时返回"-"
             # 表示停牌等异常状态）
             change = self._safe_float(item.get("f169"))
             pct_chg = self._safe_float(item.get("f170"))
+
+            if needs_div:
+                if change is not None:
+                    change = round(change / 100, 4) if abs(change) > 1 else change
+                open_price = self._safe_float(item.get("f46"))
+                high = self._safe_float(item.get("f44"))
+                low = self._safe_float(item.get("f45"))
+                limit_up = self._safe_float(item.get("f51"))
+                limit_down = self._safe_float(item.get("f52"))
+                if open_price is not None and open_price > 50:
+                    open_price = open_price / 100
+                if high is not None and high > 50:
+                    high = high / 100
+                if low is not None and low > 50:
+                    low = low / 100
+                if limit_up is not None and limit_up > 50:
+                    limit_up = limit_up / 100
+                if limit_down is not None and limit_down > 50:
+                    limit_down = limit_down / 100
+            else:
+                open_price = self._safe_float(item.get("f46"))
+                high = self._safe_float(item.get("f44"))
+                low = self._safe_float(item.get("f45"))
+                limit_up = self._safe_float(item.get("f51"))
+                limit_down = self._safe_float(item.get("f52"))
 
             # 如果东方财富未返回涨跌数据，自行计算
             if change is None and current is not None and pre_close is not None and pre_close != 0:
@@ -265,12 +296,12 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
             return {
                 "symbol": str(item.get("f57", symbol)),
                 "name": item.get("f58", ""),
-                "open": self._safe_float(item.get("f46")),
+                "open": open_price,
                 "pre_close": pre_close,
                 "close": current,
                 "current_price": current,
-                "high": self._safe_float(item.get("f44")),
-                "low": self._safe_float(item.get("f45")),
+                "high": high,
+                "low": low,
                 "volume": self._safe_float(item.get("f47")),
                 "amount": self._safe_float(item.get("f48")),
                 "change": change,
@@ -283,8 +314,8 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
                 "pb": self._safe_float(item.get("f168")),
                 "total_mv": self._safe_float(item.get("f116")),
                 "circ_mv": self._safe_float(item.get("f117")),
-                "limit_up": self._safe_float(item.get("f51")),
-                "limit_down": self._safe_float(item.get("f52")),
+                "limit_up": limit_up,
+                "limit_down": limit_down,
             }
 
         except Exception as e:
@@ -826,3 +857,51 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
             return float(value)
         except (ValueError, TypeError):
             return None
+
+    def _normalize_a_share_prices(
+        self,
+        current: Optional[float],
+        pre_close: Optional[float],
+        symbol: str,
+        raw_f43: Any = None,
+        raw_f60: Any = None,
+    ) -> tuple:
+        if current is None or pre_close is None:
+            return current, pre_close, False
+
+        is_a_share = (
+            symbol
+            and len(symbol) == 6
+            and symbol[:3] in ("000", "001", "002", "003", "300", "301")
+            or (len(symbol) == 6 and symbol[:3] in ("600", "601", "603", "605", "688", "689"))
+        )
+        if not is_a_share:
+            return current, pre_close, False
+
+        f43_is_int = isinstance(raw_f43, int) or (
+            isinstance(raw_f43, float) and raw_f43 == int(raw_f43)
+        )
+        f60_is_int = isinstance(raw_f60, int) or (
+            isinstance(raw_f60, float) and raw_f60 == int(raw_f60)
+        )
+
+        both_large = current > 50 and pre_close > 50
+        both_int_like = f43_is_int and f60_is_int
+        ratio_normal = 0.8 <= (current / pre_close) <= 1.2 if pre_close != 0 else False
+        normalized_current = current / 100
+        normalized_pre_close = pre_close / 100
+        normalized_reasonable = (
+            0.1 <= normalized_current <= 500 and 0.1 <= normalized_pre_close <= 500
+        )
+
+        needs_div = both_large and both_int_like and ratio_normal and normalized_reasonable
+
+        if needs_div:
+            self.logger.info(
+                f"🔧 [价格校正] 检测到东方财富API返回分单位价格: {symbol} "
+                f"原始 current={current}, pre_close={pre_close} "
+                f"→ 校正后 current={normalized_current}, pre_close={normalized_pre_close}"
+            )
+            return normalized_current, normalized_pre_close, True
+
+        return current, pre_close, False

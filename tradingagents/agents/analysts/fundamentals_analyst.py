@@ -6,16 +6,14 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage
 
-# 导入分析模块日志装饰器
 from tradingagents.utils.tool_logging import log_analyst_module
 
-# 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
 
-# 导入Google工具调用处理器
 from tradingagents.agents.utils.google_tool_handler import GoogleToolCallHandler
 from tradingagents.agents.utils.instrument_utils import build_instrument_context
+from tradingagents.agents.utils.text_tool_call_parser import TextToolCallParser
 from tradingagents.llm_clients import create_llm_client
 
 
@@ -540,17 +538,23 @@ def create_fundamentals_analyst(llm, toolkit):
 
                 # 方案2：检查 AIMessage 是否已有分析内容
                 has_analysis_content = False
+                has_text_tool_call = False
                 if hasattr(result, 'content') and result.content:
                     content_length = len(str(result.content))
                     content_str = str(result.content).strip()
                     logger.info(f"🔍 [内容检查] LLM返回内容长度: {content_length}字符")
+
+                    has_text_tool_call = TextToolCallParser.detect_text_tool_call(content_str)
+                    if has_text_tool_call:
+                        logger.info(f"🔧 [内容检查] 检测到文本格式工具调用，将解析执行")
+
                     invalid_patterns = ['请选择', 'Continue', '选项', 'Option', '以下选项', '请告诉我', '请确认', 'I need clarification', 'How can I help']
                     is_invalid_response = any(p.lower() in content_str.lower() for p in invalid_patterns)
-                    if content_length > 500 and not is_invalid_response:
+                    if content_length > 500 and not is_invalid_response and not has_text_tool_call:
                         has_analysis_content = True
                         logger.info(f"✅ [内容检查] LLM已返回有效分析内容 (长度: {content_length}字符 > 500字符阈值)")
                     else:
-                        reason = "包含无效回复模式" if is_invalid_response else "内容过短"
+                        reason = "包含无效回复模式" if is_invalid_response else ("包含文本工具调用" if has_text_tool_call else "内容过短")
                         logger.info(f"⚠️ [内容检查] LLM返回内容无效 (原因: {reason}, 长度: {content_length}字符)")
                 else:
                     logger.info(f"⚠️ [内容检查] LLM未返回内容或内容为空")
@@ -570,18 +574,35 @@ def create_fundamentals_analyst(llm, toolkit):
                     if has_analysis_content:
                         logger.info(f"⚠️ [决策原因] LLM已返回有效分析内容，无需强制工具调用")
 
-                    # 直接使用 LLM 返回的内容作为报告
                     report = str(result.content) if hasattr(result, 'content') else "基本面分析完成"
                     logger.info(f"📊 [返回结果] 使用LLM返回的分析内容，报告长度: {len(report)}字符")
-                    logger.info(f"📊 [返回结果] 报告预览(前200字符): {report[:200]}...")
                     logger.info(f"✅ [决策] 基本面分析完成，跳过重复调用成功")
 
-                    # 🔧 保持工具调用计数器不变（已在开始时根据ToolMessage更新）
                     return {
                         "fundamentals_report": report,
                         "messages": [result],
                         "fundamentals_tool_call_count": tool_call_count
                     }
+
+                # 如果检测到文本格式工具调用，使用 TextToolCallParser 解析执行
+                if has_text_tool_call:
+                    logger.info(f"🔧 [决策] ===== 执行文本工具调用解析 =====")
+                    content_str = str(result.content) if hasattr(result, 'content') else ""
+                    parsed_report = TextToolCallParser.execute_and_generate_report(
+                        content=content_str,
+                        available_tools=tools,
+                        llm=fresh_llm,
+                        analyst_name="基本面分析师",
+                    )
+                    if parsed_report:
+                        logger.info(f"✅ [文本工具调用] 解析执行成功，报告长度: {len(parsed_report)}")
+                        return {
+                            "fundamentals_report": parsed_report,
+                            "messages": [result],
+                            "fundamentals_tool_call_count": tool_call_count
+                        }
+                    else:
+                        logger.warning(f"⚠️ [文本工具调用] 解析执行失败，继续强制工具调用")
 
                 # 如果没有工具结果且没有分析内容，才进行强制调用
                 logger.info(f"🔧 [决策] ===== 执行强制工具调用 =====")

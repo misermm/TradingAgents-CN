@@ -3183,7 +3183,11 @@ class DataSourceManager:
                     import asyncio
                     from tradingagents.dataflows.providers.china.eastmoney_direct import EastMoneyDirectProvider
                     em = EastMoneyDirectProvider()
-                    em_result = asyncio.get_event_loop().run_until_complete(em.get_stock_quotes(symbol))
+                    loop = asyncio.new_event_loop()
+                    try:
+                        em_result = loop.run_until_complete(em.get_stock_quotes(symbol))
+                    finally:
+                        loop.close()
                     if em_result is not None and isinstance(em_result, pd.DataFrame) and not em_result.empty:
                         row = em_result.iloc[0]
                         result_parts.append("📈 估值指标（东方财富直连）:")

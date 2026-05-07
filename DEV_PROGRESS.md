@@ -6,6 +6,128 @@
 
 ## 最近完成的改动
 
+### 90. 分析报告数据质量问题修复 — 文本工具调用解析+价格单位校正+报告质量守门 ✅ (2026-05-07)
+
+**问题描述**: 000002(万科A)分析报告存在3大问题：
+1. 情绪分析和基本面分析报告显示原始工具调用代码（如 `get_stock_fundamental_data_unified\nticker\n000002...`），而非实际分析结果
+2. 股价数据矛盾严重（eastmoney显示¥398，实际应为¥3.98，其他来源显示¥6.60）
+3. 最终决策和风控决策回退到默认"持有"建议（因输入报告无效导致LLM调用失败）
+
+**根因分析**:
+1. **文本工具调用问题**: LLM模型 `z-ai/glm-4.5-air:free`（通过OpenRouter）不支持标准OpenAI function calling格式，将工具调用以纯文本输出到 `result.content` 中，代码误将原始文本当作报告
+2. **价格单位问题**: 东方财富API的 `f43` 字段可能返回以"分"为单位的价格（398 = 3.98元×100），代码中 `_safe_float` 只做 `float(value)` 转换没有单位校正
+3. **级联失败**: 无效的 sentiment_report 和 fundamentals_report 污染了风控LLM的prompt，导致3次重试均失败，回退到默认建议
+
+**修复方案**: 方案A — 文本工具调用解析 + 价格单位校正 + 报告质量守门
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/agents/utils/text_tool_call_parser.py` | 新建 | 文本工具调用解析器，支持3种格式检测和自动执行 |
+| `tradingagents/dataflows/providers/china/eastmoney_direct.py` | 修改 | 新增 `_normalize_a_share_prices` 价格单位校正方法 |
+| `tradingagents/agents/analysts/social_media_analyst.py` | 修改 | 集成 TextToolCallParser，当检测到文本工具调用时自动解析执行 |
+| `tradingagents/agents/analysts/fundamentals_analyst.py` | 修改 | 集成 TextToolCallParser，在强制工具调用前先尝试文本工具调用解析 |
+| `tradingagents/graph/conditional_logic.py` | 修改 | 新增 `_is_invalid_report` 报告质量守门函数 |
+| `tradingagents/agents/managers/risk_manager.py` | 修改 | 新增 `_sanitize_report` 输入验证函数，净化无效报告 |
+
+**详细改动**:
+
+1. **TextToolCallParser** (新建):
+   - `detect_text_tool_call(content)` — 检测3种格式：简单键值对、XML标签、JSON块
+   - `parse_text_tool_calls(content)` — 解析工具名和参数
+   - `execute_text_tool_calls(content, tools)` — 执行解析出的工具调用
+   - `execute_and_generate_report(content, tools, llm)` — 解析→执行→用结果重新调用LLM生成报告
+   - `_fuzzy_match_tool(name, tool_map)` — 模糊匹配工具名（处理LLM输出错误工具名的情况）
+   - 支持 `get_stock_fundamental_data_unified` 和 `get_stock_fundamentals_unified` 两种变体
+
+2. **东方财富价格单位校正**:
+   - `_normalize_a_share_prices(current, pre_close, symbol, raw_f43, raw_f60)` — 检测并校正价格单位
+   - 检测逻辑：A股代码 + 两个价格都>50 + 都是整数值 + 比值正常(0.8-1.2) + 除以100后在合理区间(0.1-500)
+   - 校正范围：current, pre_close, open, high, low, limit_up, limit_down, change
+   - 详细日志记录校正过程
+
+3. **social_media_analyst 集成**:
+   - 当 `tool_calls` 为空时，先检查 `result.content` 是否包含文本工具调用
+   - 如果检测到，调用 `TextToolCallParser.execute_and_generate_report` 自动解析执行
+
+4. **fundamentals_analyst 集成**:
+   - 内容检查增加 `has_text_tool_call` 标志
+   - 当检测到文本工具调用且无有效分析内容时，优先尝试文本工具调用解析
+   - 解析成功则直接返回报告，解析失败则继续强制工具调用流程
+
+5. **conditional_logic.py 报告质量守门**:
+   - `_is_invalid_report(report)` — 检查报告是否包含原始工具调用文本
+   - `should_continue_social` 和 `should_continue_fundamentals` 中增加质量检查
+   - 无效报告不视为有效完成，继续执行工具
+
+6. **risk_manager.py 输入验证**:
+   - `_sanitize_report(report, report_name)` — 净化输入报告
+   - 包含原始工具调用文本的报告替换为警告信息
+   - 避免无效内容污染LLM prompt导致调用失败
+
+**验证结果**:
+- ✅ 6个修改文件 py_compile 语法检查全部通过
+- ✅ TextToolCallParser 单元测试通过（4个测试用例）
+  - 简单键值格式检测和解析 ✅
+  - 正常文本不误检 ✅
+  - XML标签格式检测 ✅
+  - 带前缀文本的键值格式检测和解析 ✅
+- ✅ 模块导入验证通过
+
+**关键文件入口**:
+- 文本工具调用解析器: `tradingagents/agents/utils/text_tool_call_parser.py`
+- 东方财富价格校正: `tradingagents/dataflows/providers/china/eastmoney_direct.py`
+- 社媒分析师: `tradingagents/agents/analysts/social_media_analyst.py`
+- 基本面分析师: `tradingagents/agents/analysts/fundamentals_analyst.py`
+- 报告质量守门: `tradingagents/graph/conditional_logic.py`
+- 风控输入验证: `tradingagents/agents/managers/risk_manager.py`
+
+---
+
+### 89. 逻辑Bug深度排查与修复（Ralph Loop 第二轮） ✅ (2026-05-07)
+
+**问题描述**: 使用 Ralph Loop 方法论对项目进行第二轮深度逻辑Bug扫描和修复，共发现并修复7个Bug。
+
+**修复的Bug清单**:
+
+| # | 严重度 | 文件 | Bug描述 | 修复方式 |
+|---|--------|------|---------|---------|
+| 11 | 🟠ObjectId | `app/services/tags_service.py:86,94` | `update_tag`和`delete_tag`中ObjectId(tag_id)无异常处理 | 添加try-except ObjectId回退模式 + db None检查 |
+| 12 | 🟠ObjectId | `app/services/database/backups.py:233,245` | `delete_backup`中ObjectId(backup_id)无异常处理 | 添加try-except ObjectId回退模式 |
+| 13 | 🔴TypeError | `tradingagents/dataflows/optimized_china_data.py:1217,1232,1248` | `pe_ttm_check <= 0`在字符串类型时抛TypeError（比较顺序错误） | 改为先检查字符串再检查数值：`str(x) in ('nan','--','None') or (isinstance(x,(int,float)) and x<=0)` |
+| 14 | 🔴RuntimeError | `tradingagents/dataflows/optimized_china_data.py:1000,1035,1065` | `asyncio.get_event_loop().run_until_complete()`在已有事件循环中抛RuntimeError | 改为`asyncio.new_event_loop()`+try/finally/close模式 |
+| 15 | 🔴RuntimeError | `tradingagents/dataflows/data_source_manager.py:3186` | 同上：`asyncio.get_event_loop().run_until_complete()` | 改为`asyncio.new_event_loop()`+try/finally/close模式 |
+| 16 | 🟠KeyError | `tradingagents/dataflows/cache/adaptive.py:215-223` | MongoDB缓存文档字段直接访问`doc['data_type']`等未校验 | 改用`.get()`并添加空值检查和警告日志 |
+| 17 | 🟠ValueError | `tradingagents/graph/signal_processing.py:205-206` | `float(decision_data.get('confidence'))`无try-except，LLM返回非数值时崩溃 | 添加try-except (ValueError,TypeError)回退到默认值 |
+
+**修改的文件**:
+
+| 文件 | 修改类型 |
+|------|---------|
+| `app/services/tags_service.py` | ObjectId异常处理 + db None检查 |
+| `app/services/database/backups.py` | ObjectId异常处理 |
+| `tradingagents/dataflows/optimized_china_data.py` | TypeError修复 + asyncio事件循环安全化 |
+| `tradingagents/dataflows/data_source_manager.py` | asyncio事件循环安全化 |
+| `tradingagents/dataflows/cache/adaptive.py` | KeyError防护：安全字典访问 |
+| `tradingagents/graph/signal_processing.py` | ValueError防护：float转换安全化 |
+
+**验证结果**:
+- ✅ 所有6个修改文件 py_compile 语法检查通过
+- ✅ asyncio.new_event_loop() 替代 get_event_loop() 避免嵌套事件循环崩溃
+- ✅ 字符串/数值类型比较顺序修正避免TypeError
+- ✅ ObjectId调用统一添加异常处理
+
+**关键文件入口**:
+- 标签服务: `app/services/tags_service.py`
+- 数据库备份: `app/services/database/backups.py`
+- 优化A股数据: `tradingagents/dataflows/optimized_china_data.py`
+- 数据源管理: `tradingagents/dataflows/data_source_manager.py`
+- 自适应缓存: `tradingagents/dataflows/cache/adaptive.py`
+- 信号处理: `tradingagents/graph/signal_processing.py`
+
+---
+
 ### 88. 逻辑Bug全面排查与修复（Ralph Loop） ✅ (2026-05-07)
 
 **问题描述**: 使用 Ralph Loop 方法论对项目进行系统性逻辑Bug扫描和修复，共发现并修复10个Bug。

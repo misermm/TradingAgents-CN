@@ -1,9 +1,19 @@
 from tradingagents.agents.utils.agent_states import AgentState
 from tradingagents.agents.masters.base_master import MASTER_ANALYST_CONFIG
 from tradingagents.agents.utils.analyst_registry import AnalystRegistry
+from tradingagents.agents.utils.text_tool_call_parser import TextToolCallParser
 
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+
+
+def _is_invalid_report(report: str) -> bool:
+    if not report or len(report) <= 100:
+        return True
+    if TextToolCallParser.detect_text_tool_call(report):
+        logger.warning(f"🚫 [报告质量守门] 报告包含原始工具调用文本，视为无效")
+        return True
+    return False
 
 
 def _make_master_should_continue(master_id: str):
@@ -105,7 +115,7 @@ class ConditionalLogic:
         if tool_call_count >= max_tool_calls:
             return "Msg Clear Social"
 
-        if sentiment_report and len(sentiment_report) > 100:
+        if sentiment_report and len(sentiment_report) > 100 and not _is_invalid_report(sentiment_report):
             return "Msg Clear Social"
 
         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
@@ -159,7 +169,7 @@ class ConditionalLogic:
         if tool_call_count >= max_tool_calls:
             return "Msg Clear Fundamentals"
 
-        if fundamentals_report and len(fundamentals_report) > 100:
+        if fundamentals_report and len(fundamentals_report) > 100 and not _is_invalid_report(fundamentals_report):
             return "Msg Clear Fundamentals"
 
         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:

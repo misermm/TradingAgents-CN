@@ -206,21 +206,25 @@ class AdaptiveCacheSystem:
             if not doc:
                 return None
             
-            # 检查是否过期
             if doc.get('expires_at') and doc['expires_at'] < datetime.now():
                 collection.delete_one({'_id': cache_key})
                 return None
             
-            # 反序列化数据
-            if doc['data_type'] == 'dataframe':
-                data = pd.read_json(doc['data'])
+            data_type = doc.get('data_type', '')
+            raw_data = doc.get('data')
+            if raw_data is None:
+                self.logger.warning(f"MongoDB缓存文档缺少data字段: {cache_key}")
+                return None
+
+            if data_type == 'dataframe':
+                data = pd.read_json(raw_data)
             else:
-                data = pickle.loads(bytes.fromhex(doc['data']))
+                data = pickle.loads(bytes.fromhex(raw_data))
             
             cache_data = {
                 'data': data,
-                'metadata': doc['metadata'],
-                'timestamp': doc['timestamp'],
+                'metadata': doc.get('metadata', {}),
+                'timestamp': doc.get('timestamp'),
                 'backend': 'mongodb'
             }
             

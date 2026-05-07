@@ -230,19 +230,21 @@ async def delete_backup(backup_id: str) -> None:
     if db is None:
         logger.warning("MongoDB连接不可用")
         return None
-    backup = await db.database_backups.find_one({"_id": ObjectId(backup_id)})
+    try:
+        oid = ObjectId(backup_id)
+    except Exception:
+        logger.warning(f"无效的备份ID: {backup_id}")
+        raise Exception("无效的备份ID")
+    backup = await db.database_backups.find_one({"_id": oid})
     if not backup:
         raise Exception("备份不存在")
     if os.path.exists(backup["file_path"]):
-        # 🔥 使用 asyncio.to_thread 将阻塞的文件删除操作放到线程池执行
         backup_type = backup.get("backup_type", "python")
         if backup_type == "mongodump":
-            # mongodump 备份是目录，需要递归删除
             await asyncio.to_thread(shutil.rmtree, backup["file_path"])
         else:
-            # Python 备份是单个文件
             await asyncio.to_thread(os.remove, backup["file_path"])
-    await db.database_backups.delete_one({"_id": ObjectId(backup_id)})
+    await db.database_backups.delete_one({"_id": oid})
 
 
 def _convert_date_fields(doc: dict) -> dict:

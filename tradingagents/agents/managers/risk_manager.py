@@ -1,10 +1,19 @@
 import time
 import json
 
-# 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.agents.utils.instrument_utils import build_instrument_context
+from tradingagents.agents.utils.text_tool_call_parser import TextToolCallParser
 logger = get_logger("default")
+
+
+def _sanitize_report(report: str, report_name: str) -> str:
+    if not report:
+        return f"⚠️ {report_name}数据未获取"
+    if TextToolCallParser.detect_text_tool_call(report):
+        logger.warning(f"⚠️ [风控输入验证] {report_name}包含原始工具调用文本，替换为警告")
+        return f"⚠️ {report_name}数据获取异常，无法提供有效分析内容。请基于其他可用报告进行决策。"
+    return report
 
 
 def create_risk_manager(llm, memory):
@@ -15,10 +24,10 @@ def create_risk_manager(llm, memory):
 
         history = state["risk_debate_state"]["history"]
         risk_debate_state = state["risk_debate_state"]
-        market_research_report = state["market_report"]
-        news_report = state["news_report"]
-        fundamentals_report = state["fundamentals_report"]
-        sentiment_report = state["sentiment_report"]
+        market_research_report = _sanitize_report(state["market_report"], "市场分析")
+        news_report = _sanitize_report(state["news_report"], "新闻分析")
+        fundamentals_report = _sanitize_report(state["fundamentals_report"], "基本面分析")
+        sentiment_report = _sanitize_report(state["sentiment_report"], "情绪分析")
         trader_plan = state["investment_plan"]
         master_consensus = state.get("master_consensus_report", "")
 

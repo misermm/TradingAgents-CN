@@ -996,28 +996,27 @@ class OptimizedChinaDataProvider:
             akshare_provider = get_akshare_provider()
 
             if akshare_provider.connected:
-                # AKShare的get_financial_data是异步方法，需要使用asyncio运行
-                loop = asyncio.get_event_loop()
-                financial_data = loop.run_until_complete(akshare_provider.get_financial_data(symbol))
+                loop = asyncio.new_event_loop()
+                try:
+                    financial_data = loop.run_until_complete(akshare_provider.get_financial_data(symbol))
 
-                if financial_data and any(not v.empty if hasattr(v, 'empty') else bool(v) for v in financial_data.values()):
-                    logger.info(f"✅ AKShare财务数据获取成功: {symbol}")
-                    # 获取股票基本信息（也是异步方法）
-                    stock_info = loop.run_until_complete(akshare_provider.get_stock_basic_info(symbol))
+                    if financial_data and any(not v.empty if hasattr(v, 'empty') else bool(v) for v in financial_data.values()):
+                        logger.info(f"✅ AKShare财务数据获取成功: {symbol}")
+                        stock_info = loop.run_until_complete(akshare_provider.get_stock_basic_info(symbol))
 
-                    # 解析AKShare财务数据
-                    logger.debug(f"🔧 调用AKShare解析函数，股价: {price_value}")
-                    metrics = self._parse_akshare_financial_data(financial_data, stock_info, price_value)
-                    logger.debug(f"🔧 AKShare解析结果: {metrics}")
-                    if metrics:
-                        logger.info(f"✅ AKShare解析成功，返回指标")
-                        # 缓存原始财务数据到数据库（而不是解析后的指标）
-                        self._cache_raw_financial_data(symbol, financial_data, stock_info)
-                        return metrics
+                        logger.debug(f"🔧 调用AKShare解析函数，股价: {price_value}")
+                        metrics = self._parse_akshare_financial_data(financial_data, stock_info, price_value)
+                        logger.debug(f"🔧 AKShare解析结果: {metrics}")
+                        if metrics:
+                            logger.info(f"✅ AKShare解析成功，返回指标")
+                            self._cache_raw_financial_data(symbol, financial_data, stock_info)
+                            return metrics
+                        else:
+                            logger.warning(f"⚠️ AKShare解析失败，返回None")
                     else:
-                        logger.warning(f"⚠️ AKShare解析失败，返回None")
-                else:
-                    logger.warning(f"⚠️ AKShare未获取到{symbol}财务数据，尝试Tushare")
+                        logger.warning(f"⚠️ AKShare未获取到{symbol}财务数据，尝试Tushare")
+                finally:
+                    loop.close()
             else:
                 logger.warning(f"⚠️ AKShare未连接，尝试Tushare")
 
@@ -1031,22 +1030,21 @@ class OptimizedChinaDataProvider:
                 logger.debug(f"Tushare未连接，无法获取{symbol}真实财务数据")
                 return None
 
-            # 获取财务数据（异步方法）
-            loop = asyncio.get_event_loop()
-            financial_data = loop.run_until_complete(provider.get_financial_data(symbol))
-            if not financial_data:
-                logger.debug(f"未获取到{symbol}的财务数据")
-                return None
+            loop = asyncio.new_event_loop()
+            try:
+                financial_data = loop.run_until_complete(provider.get_financial_data(symbol))
+                if not financial_data:
+                    logger.debug(f"未获取到{symbol}的财务数据")
+                    return None
 
-            # 获取股票基本信息（异步方法）
-            stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+                stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
 
-            # 解析Tushare财务数据
-            metrics = self._parse_financial_data(financial_data, stock_info, price_value)
-            if metrics:
-                # 缓存原始财务数据到数据库
-                self._cache_raw_financial_data(symbol, financial_data, stock_info)
-                return metrics
+                metrics = self._parse_financial_data(financial_data, stock_info, price_value)
+                if metrics:
+                    self._cache_raw_financial_data(symbol, financial_data, stock_info)
+                    return metrics
+            finally:
+                loop.close()
 
         except Exception as e:
             logger.debug(f"获取{symbol}真实财务数据失败: {e}")
@@ -1061,21 +1059,21 @@ class OptimizedChinaDataProvider:
                 logger.debug(f"BaoStock未连接，无法获取{symbol}真实财务数据")
                 return None
 
-            # 获取财务数据（异步方法）
-            loop = asyncio.get_event_loop()
-            financial_data = loop.run_until_complete(provider.get_financial_data(symbol))
-            if not financial_data:
-                logger.debug(f"未获取到{symbol}的财务数据")
-                return None
+            loop = asyncio.new_event_loop()
+            try:
+                financial_data = loop.run_until_complete(provider.get_financial_data(symbol))
+                if not financial_data:
+                    logger.debug(f"未获取到{symbol}的财务数据")
+                    return None
 
-            # 获取股票基本信息（异步方法）
-            stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+                stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
 
-            # 解析BaoStock财务数据
-            metrics = self._parse_baostock_financial_data(financial_data, stock_info, price_value)
-            if metrics:
-                logger.info(f"✅ BaoStock财务数据获取成功: {symbol}")
-                return metrics
+                metrics = self._parse_baostock_financial_data(financial_data, stock_info, price_value)
+                if metrics:
+                    logger.info(f"✅ BaoStock财务数据获取成功: {symbol}")
+                    return metrics
+            finally:
+                loop.close()
 
         except Exception as e:
             logger.debug(f"获取{symbol}真实财务数据失败: {e}")
@@ -1213,8 +1211,7 @@ class OptimizedChinaDataProvider:
                             elif pe_value is None:
                                 # 🔥 PE 为 None，检查是否是亏损股
                                 pe_ttm_check = latest_indicators.get('pe_ttm')
-                                # pe_ttm 为 None、<= 0、'nan'、'--' 都认为是亏损股
-                                if pe_ttm_check is None or pe_ttm_check <= 0 or str(pe_ttm_check) == 'nan' or pe_ttm_check == '--':
+                                if pe_ttm_check is None or str(pe_ttm_check) in ('nan', '--', 'None') or (isinstance(pe_ttm_check, (int, float)) and pe_ttm_check <= 0):
                                     is_loss_stock = True
                                     logger.info(f"⚠️ [PE计算-第1层] PE为None且pe_ttm={pe_ttm_check}，确认为亏损股")
 
@@ -1228,8 +1225,7 @@ class OptimizedChinaDataProvider:
                             elif pe_ttm_value is None and not is_loss_stock:
                                 # 🔥 PE_TTM 为 None，再次检查是否是亏损股
                                 pe_ttm_check = latest_indicators.get('pe_ttm')
-                                # pe_ttm 为 None、<= 0、'nan'、'--' 都认为是亏损股
-                                if pe_ttm_check is None or pe_ttm_check <= 0 or str(pe_ttm_check) == 'nan' or pe_ttm_check == '--':
+                                if pe_ttm_check is None or str(pe_ttm_check) in ('nan', '--', 'None') or (isinstance(pe_ttm_check, (int, float)) and pe_ttm_check <= 0):
                                     is_loss_stock = True
                                     logger.info(f"⚠️ [PE_TTM计算-第1层] PE_TTM为None且pe_ttm={pe_ttm_check}，确认为亏损股")
 
@@ -1244,8 +1240,7 @@ class OptimizedChinaDataProvider:
                             # 🔥 检查是否因为亏损导致返回 None
                             # 从 stock_basic_info 获取 pe_ttm 判断是否亏损
                             pe_ttm_static = latest_indicators.get('pe_ttm')
-                            # pe_ttm 为 None、<= 0、'nan'、'--' 都认为是亏损股
-                            if pe_ttm_static is None or pe_ttm_static <= 0 or str(pe_ttm_static) == 'nan' or pe_ttm_static == '--':
+                            if pe_ttm_static is None or str(pe_ttm_static) in ('nan', '--', 'None') or (isinstance(pe_ttm_static, (int, float)) and pe_ttm_static <= 0):
                                 is_loss_stock = True
                                 logger.info(f"⚠️ [PE计算-第1层失败] 检测到亏损股（pe_ttm={pe_ttm_static}），跳过降级计算")
                             else:

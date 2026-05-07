@@ -72,6 +72,8 @@ class TagsService:
 
     async def update_tag(self, user_id: str, tag_id: str, *, name: Optional[str] = None, color: Optional[str] = None, sort_order: Optional[int] = None) -> bool:
         db = await self._get_db()
+        if db is None:
+            return False
         await self.ensure_indexes()
         update: Dict[str, Any] = {"updated_at": datetime.utcnow()}
         if name is not None:
@@ -80,18 +82,28 @@ class TagsService:
             update["color"] = color
         if sort_order is not None:
             update["sort_order"] = int(sort_order)
-        if len(update) == 1:  # 只有updated_at
+        if len(update) == 1:
             return True
+        try:
+            oid = ObjectId(tag_id)
+        except Exception:
+            return False
         result = await db.user_tags.update_one(
-            {"_id": ObjectId(tag_id), "user_id": self._normalize_user_id(user_id)},
+            {"_id": oid, "user_id": self._normalize_user_id(user_id)},
             {"$set": update}
         )
         return result.matched_count > 0
 
     async def delete_tag(self, user_id: str, tag_id: str) -> bool:
         db = await self._get_db()
+        if db is None:
+            return False
         await self.ensure_indexes()
-        result = await db.user_tags.delete_one({"_id": ObjectId(tag_id), "user_id": self._normalize_user_id(user_id)})
+        try:
+            oid = ObjectId(tag_id)
+        except Exception:
+            return False
+        result = await db.user_tags.delete_one({"_id": oid, "user_id": self._normalize_user_id(user_id)})
         return result.deleted_count > 0
 
 

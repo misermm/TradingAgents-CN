@@ -199,11 +199,20 @@ class SignalProcessor:
                         target_price = None
                         logger.warning(f"🔍 [SignalProcessor] 价格转换失败，设置为None")
 
+                try:
+                    confidence = float(decision_data.get('confidence', 0.7))
+                except (ValueError, TypeError):
+                    confidence = 0.7
+                try:
+                    risk_score = float(decision_data.get('risk_score', 0.5))
+                except (ValueError, TypeError):
+                    risk_score = 0.5
+
                 result = {
                     'action': action,
                     'target_price': target_price,
-                    'confidence': float(decision_data.get('confidence', 0.7)),
-                    'risk_score': float(decision_data.get('risk_score', 0.5)),
+                    'confidence': confidence,
+                    'risk_score': risk_score,
                     'reasoning': decision_data.get('reasoning', '基于综合分析的投资建议')
                 }
                 logger.info(f"🔍 [SignalProcessor] 处理结果: {result}",
