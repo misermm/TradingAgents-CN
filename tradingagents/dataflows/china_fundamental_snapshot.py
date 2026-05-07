@@ -587,8 +587,6 @@ def _apply_announcement_metrics(signals: Dict[str, Any], announcement_items: Lis
     if earnings_change_ranges:
         signals["earnings_guidance_change_pct_min"] = min(item["earnings_guidance_change_pct_min"] for item in earnings_change_ranges)
         signals["earnings_guidance_change_pct_max"] = max(item["earnings_guidance_change_pct_max"] for item in earnings_change_ranges)
-        if earnings_negative_count > 0 and signals["earnings_guidance_change_pct_min"] >= 0:
-            signals["earnings_guidance_change_pct_min"] = -signals["earnings_guidance_change_pct_max"]
     if earnings_profit_ranges:
         signals["earnings_guidance_net_profit_min"] = min(item["earnings_guidance_net_profit_min"] for item in earnings_profit_ranges)
         signals["earnings_guidance_net_profit_max"] = max(item["earnings_guidance_net_profit_max"] for item in earnings_profit_ranges)
@@ -598,8 +596,6 @@ def _apply_announcement_metrics(signals: Dict[str, Any], announcement_items: Lis
     if earnings_revenue_change_ranges:
         signals["earnings_guidance_revenue_change_pct_min"] = min(item["earnings_guidance_revenue_change_pct_min"] for item in earnings_revenue_change_ranges)
         signals["earnings_guidance_revenue_change_pct_max"] = max(item["earnings_guidance_revenue_change_pct_max"] for item in earnings_revenue_change_ranges)
-        if earnings_negative_count > 0 and signals["earnings_guidance_revenue_change_pct_min"] >= 0:
-            signals["earnings_guidance_revenue_change_pct_min"] = -signals["earnings_guidance_revenue_change_pct_max"]
     if regulatory_penalty_count > 0:
         signals["regulatory_penalty_events"] = regulatory_penalty_count
     if regulatory_penalty_severities:

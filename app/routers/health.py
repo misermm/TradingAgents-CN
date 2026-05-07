@@ -10,8 +10,9 @@ def get_version() -> str:
         version_file = Path(__file__).parent.parent.parent / "VERSION"
         if version_file.exists():
             return version_file.read_text(encoding='utf-8').strip()
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"读取VERSION文件失败: {e}")
     return "0.1.16"
 
 

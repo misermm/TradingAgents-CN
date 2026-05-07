@@ -2796,7 +2796,6 @@ class OptimizedChinaDataProvider:
     def _try_get_old_cache(self, symbol: str, start_date: str, end_date: str) -> Optional[str]:
         """尝试获取过期的缓存数据作为备用"""
         try:
-            # 查找任何相关的缓存，不考虑TTL
             for metadata_file in self.cache.metadata_dir.glob(f"*_meta.json"):
                 try:
                     import json
@@ -2812,10 +2811,11 @@ class OptimizedChinaDataProvider:
                         cached_data = self.cache.load_stock_data(cache_key)
                         if cached_data:
                             return cached_data + "\n\n⚠️ 注意: 使用的是过期缓存数据"
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"读取缓存元数据失败 {metadata_file}: {e}")
                     continue
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"查找过期缓存失败: {e}")
 
         return None
 

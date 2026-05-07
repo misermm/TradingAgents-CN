@@ -287,14 +287,19 @@ class DatabaseCacheManager:
                     data_dict = json.loads(redis_data)
                     logger.info(f"⚡ 从Redis加载数据: {cache_key}")
 
-                    if data_dict["data_format"] == "dataframe_json":
-                        return pd.read_json(data_dict["data"], orient='records')
+                    data_format = data_dict.get("data_format", "")
+                    data_content = data_dict.get("data")
+                    if data_content is None:
+                        logger.warning(f"⚠️ Redis缓存数据缺少data字段: {cache_key}")
+                        return None
+
+                    if data_format == "dataframe_json":
+                        return pd.read_json(data_content, orient='records')
                     else:
-                        return data_dict["data"]
+                        return data_content
             except Exception as e:
                 logger.error(f"⚠️ Redis加载失败: {e}")
 
-        # 如果Redis没有，从MongoDB加载
         if self.mongodb_db is not None:
             try:
                 collection = self.mongodb_db.stock_data
@@ -303,16 +308,23 @@ class DatabaseCacheManager:
                 if doc:
                     logger.info(f"💾 从MongoDB加载数据: {cache_key}")
 
-                    # 同时更新到Redis缓存
+                    doc_data = doc.get("data")
+                    doc_data_format = doc.get("data_format", "")
+                    if doc_data is None:
+                        logger.warning(f"⚠️ MongoDB文档缺少data字段: {cache_key}")
+                        return None
+
                     if self.redis_client:
                         try:
                             redis_data = {
-                                "data": doc["data"],
-                                "data_format": doc["data_format"],
-                                "symbol": doc["symbol"],
-                                "data_source": doc["data_source"],
-                                "created_at": doc["created_at"].isoformat()
+                                "data": doc_data,
+                                "data_format": doc_data_format,
+                                "symbol": doc.get("symbol", ""),
+                                "data_source": doc.get("data_source", ""),
                             }
+                            created_at = doc.get("created_at")
+                            if created_at:
+                                redis_data["created_at"] = created_at.isoformat() if hasattr(created_at, 'isoformat') else str(created_at)
                             self.redis_client.setex(
                                 cache_key,
                                 6 * 3600,
@@ -322,10 +334,10 @@ class DatabaseCacheManager:
                         except Exception as e:
                             logger.error(f"⚠️ Redis同步失败: {e}")
 
-                    if doc["data_format"] == "dataframe_json":
-                        return pd.read_json(doc["data"], orient='records')
+                    if doc_data_format == "dataframe_json":
+                        return pd.read_json(doc_data, orient='records')
                     else:
-                        return doc["data"]
+                        return doc_data
 
             except Exception as e:
                 logger.error(f"⚠️ MongoDB加载失败: {e}")

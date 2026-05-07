@@ -1,10 +1,104 @@
 # 开发进度文档
 **更新时间**: 2026-05-07
-**当前项目目标**: A股分析准确性全面优化 + Docker部署优化
+**当前项目目标**: 逻辑Bug全面排查与修复 + A股分析准确性优化 + Docker部署优化
 
 ---
 
 ## 最近完成的改动
+
+### 88. 逻辑Bug全面排查与修复（Ralph Loop） ✅ (2026-05-07)
+
+**问题描述**: 使用 Ralph Loop 方法论对项目进行系统性逻辑Bug扫描和修复，共发现并修复10个Bug。
+
+**修复的Bug清单**:
+
+| # | 严重度 | 文件 | Bug描述 | 修复方式 |
+|---|--------|------|---------|---------|
+| 1 | 🔴安全 | `app/services/auth_service.py:34` | JWT Secret前10字符被写入日志 | 删除密钥日志行和payload日志行 |
+| 2 | 🟠逻辑 | `tradingagents/dataflows/china_fundamental_snapshot.py:590-602` | 负面盈利指引覆盖逻辑错误：当min>=0时设置min=-max | 删除错误的override块（解析函数已正确处理符号） |
+| 3 | 🟠KeyError | `tradingagents/dataflows/cache/db_cache.py:290` | `data_dict["data_format"]`未检查key存在性 | 改用`.get()`并添加空值检查 |
+| 4 | 🟠KeyError | `tradingagents/dataflows/cache/db_cache.py:310-314` | MongoDB文档字段直接访问未校验 | 改用`.get()`并添加空值检查和类型安全处理 |
+| 5 | 🟡静默异常 | `tradingagents/dataflows/optimized_china_data.py:2815-2818` | 裸except吞掉所有异常无日志 | 添加`as e`和`logger.debug()`记录 |
+| 6 | 🟡静默异常 | `app/routers/health.py:13-14` | 版本读取异常被pass吞掉 | 添加`as e`和debug日志 |
+| 7 | 🟡KeyError | `tradingagents/dataflows/cache/adaptive.py:415` | 缓存清理时metadata/timestamp直接访问未校验 | 改用`.get()`并添加空值检查 |
+| 8 | 🟠逻辑 | `app/services/config_service.py:3010-3060` | `delete_llm_provider`中ObjectId异常未处理，与`update_llm_provider`不一致 | 重写为try ObjectId/回退字符串的模式 |
+| 9 | 🟡代码质量 | `app/services/config_service.py` | 125+个print()调用替代logger | 全部替换为对应级别的logger调用 |
+| 10 | 🟠逻辑 | `app/services/config_service.py:1044,1461` | async函数中同步requests调用阻塞事件循环 | 用`asyncio.to_thread()`包装 |
+
+**修改的文件**:
+
+| 文件 | 修改类型 |
+|------|---------|
+| `app/services/auth_service.py` | 安全修复：移除JWT密钥日志 |
+| `tradingagents/dataflows/china_fundamental_snapshot.py` | 逻辑修复：删除错误的盈利指引override |
+| `tradingagents/dataflows/cache/db_cache.py` | KeyError防护：安全字典访问 |
+| `tradingagents/dataflows/optimized_china_data.py` | 异常处理：添加日志记录 |
+| `app/routers/health.py` | 异常处理：添加日志记录 |
+| `tradingagents/dataflows/cache/adaptive.py` | KeyError防护：安全字典访问 |
+| `app/services/config_service.py` | 多项修复：ObjectId处理、print→logger、async阻塞修复 |
+
+**验证结果**:
+- ✅ 所有修改文件 py_compile 语法检查通过
+- ✅ 同步函数中不再有误用的 await
+- ✅ 异步函数中阻塞调用已用 asyncio.to_thread 包装
+
+**关键文件入口**:
+- 认证服务: `app/services/auth_service.py`
+- 基本面快照: `tradingagents/dataflows/china_fundamental_snapshot.py`
+- 数据库缓存: `tradingagents/dataflows/cache/db_cache.py`
+- 自适应缓存: `tradingagents/dataflows/cache/adaptive.py`
+- 配置服务: `app/services/config_service.py`
+- 健康检查: `app/routers/health.py`
+
+---
+
+### 87. config_service.py 同步函数中 await asyncio.to_thread() 误用修复 ✅ (2026-05-07)
+
+**问题描述**: 子代理错误地在同步函数（`def`，非 `async def`）中添加了 `await asyncio.to_thread(requests.post/get, ...)` 包装。这些同步函数通过 `run_in_executor` 在线程池中执行，内部使用同步 `requests` 调用是正确的，`await` 在同步函数中会导致 `SyntaxError: 'await' outside async function`。
+
+**修复原则**: 
+- 同步函数（`def`）中的 `await asyncio.to_thread(requests.post/get, ...)` → 恢复为 `requests.post/get(...)`
+- 异步函数（`async def`）中的 `await asyncio.to_thread()` → 保留不变
+
+**修改的文件**:
+
+| 文件 | 修改内容 |
+|------|---------|
+| `app/services/config_service.py` | 10个同步函数中的 `await asyncio.to_thread(requests...)` 恢复为直接 `requests...` 调用 |
+
+**具体改动（10处恢复）**:
+
+| 函数 | 类型 | 行号 | 修改 |
+|------|------|------|------|
+| `_test_google_api` | def | ~3485 | `await asyncio.to_thread(requests.post, ...)` → `requests.post(...)` |
+| `_test_deepseek_api` | def | ~3641 | `await asyncio.to_thread(requests.post, ...)` → `requests.post(...)` |
+| `_test_dashscope_api` | def | ~3727 | `await asyncio.to_thread(requests.post, ...)` → `requests.post(...)` |
+| `_test_openrouter_api` | def | ~3796 | `await asyncio.to_thread(requests.get, ...)` → `requests.get(...)` |
+| `_test_openrouter_api` | def | ~3825 | `await asyncio.to_thread(requests.post, ...)` → `requests.post(...)` |
+| `_test_openai_api` | def | ~3872 | `await asyncio.to_thread(requests.get, ...)` → `requests.get(...)` |
+| `_test_openai_api` | def | ~3901 | `await asyncio.to_thread(requests.post, ...)` → `requests.post(...)` |
+| `_test_anthropic_api` | def | ~3964 | `await asyncio.to_thread(requests.post, ...)` → `requests.post(...)` |
+| `_test_qianfan_api` | def | ~4038 | `await asyncio.to_thread(requests.post, ...)` → `requests.post(...)` |
+| `_test_openai_compatible_api` | def | ~4767 | `await asyncio.to_thread(requests.post, ...)` → `requests.post(...)` |
+| `_fetch_models_from_api` | def | ~4219 | `await asyncio.to_thread(requests.get, ...)` → `requests.get(...)` |
+| `_fetch_aihubmix_models` | def | ~4332 | `await asyncio.to_thread(requests.get, ...)` → `requests.get(...)` |
+
+**保留的异步函数调用（2处）**:
+
+| 函数 | 类型 | 行号 | 说明 |
+|------|------|------|------|
+| `test_data_source_config` | async def | ~1601 | 保留 `await asyncio.to_thread()` |
+| `test_data_source_config` | async def | ~1696 | 保留 `await asyncio.to_thread()` |
+
+**验证结果**:
+- ✅ py_compile 语法检查通过
+- ✅ 同步函数中不再有 `await asyncio.to_thread(requests...)`
+- ✅ 异步函数中 `await asyncio.to_thread()` 保持不变
+
+**关键文件入口**:
+- 配置服务: `app/services/config_service.py`
+
+---
 
 ### 86. 健康检查端点增强 — 启动进度指示 ✅ (2026-05-07)
 

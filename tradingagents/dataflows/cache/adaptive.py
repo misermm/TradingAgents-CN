@@ -411,12 +411,14 @@ class AdaptiveCacheSystem:
             try:
                 with open(cache_file, 'rb') as f:
                     cache_data = pickle.load(f)
-                
-                symbol = cache_data['metadata'].get('symbol', '')
-                data_type = cache_data['metadata'].get('data_type', 'stock_data')
+
+                metadata = cache_data.get('metadata', {})
+                symbol = metadata.get('symbol', '')
+                data_type = metadata.get('data_type', 'stock_data')
                 ttl_seconds = self._get_ttl_seconds(symbol, data_type)
-                
-                if not self._is_cache_valid(cache_data['timestamp'], ttl_seconds):
+
+                timestamp = cache_data.get('timestamp')
+                if timestamp and not self._is_cache_valid(timestamp, ttl_seconds):
                     cache_file.unlink()
                     cleared_files += 1
                     
