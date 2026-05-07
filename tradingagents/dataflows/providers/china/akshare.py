@@ -1186,6 +1186,42 @@ class AKShareProvider(BaseStockDataProvider):
         }
         return result
 
+    def _parse_cash_flow_row(self, row: pd.Series) -> Dict[str, Any]:
+        result = {
+            "operating_cash_flow": self._safe_float(row.get("经营活动产生的现金流量净额", row.get("经营性现金流净额", None))),
+            "capital_expenditure": self._safe_float(row.get("购建固定资产、无形资产和其他长期资产支付的现金", row.get("资本支出", None))),
+            "free_cash_flow": None,
+        }
+        ocf = result.get("operating_cash_flow")
+        capex = result.get("capital_expenditure")
+        if ocf and capex:
+            result["free_cash_flow"] = ocf - abs(capex)
+        return result
+
+    def _parse_indicator_lg_row(self, row: pd.Series) -> Dict[str, Any]:
+        result = {
+            "pe_ttm": self._safe_float(row.get("pe_ttm", row.get("pe", None))),
+            "pb": self._safe_float(row.get("pb", None)),
+            "dividend_yield": self._safe_float(row.get("dv_ratio", row.get("股息率", None))),
+            "total_mv": self._safe_float(row.get("total_mv", row.get("总市值", None))),
+        }
+        if result.get("dividend_yield") and result["dividend_yield"] > 1:
+            result["dividend_yield"] = result["dividend_yield"] / 100
+        return result
+
+    def _parse_financial_analysis_row(self, row: pd.Series) -> Dict[str, Any]:
+        result = {
+            "eps": self._safe_float(row.get("基本每股收益", row.get("每股收益", None))),
+            "bvps": self._safe_float(row.get("每股净资产", None)),
+            "roe": self._safe_float(row.get("加权净资产收益率", row.get("净资产收益率", row.get("全面摊薄净资产收益率", None)))),
+            "gross_margin": self._safe_float(row.get("销售毛利率", row.get("毛利率", None))),
+            "net_margin": self._safe_float(row.get("销售净利率", row.get("净利率", None))),
+            "revenue": self._safe_float(row.get("营业收入", None)),
+            "net_profit": self._safe_float(row.get("净利润", None)),
+            "operating_cash_flow": self._safe_float(row.get("每股经营现金流", None)),
+        }
+        return result
+
     def _safe_float(self, value: Any) -> float:
         """安全转换为浮点数"""
         try:
@@ -1385,12 +1421,14 @@ class AKShareProvider(BaseStockDataProvider):
                 logger.debug(f"获取{code}利润表失败: {e}")
 
             # 4. 获取现金流量表
+            cash_flow_df = None
             try:
                 def fetch_cash_flow():
                     return self.ak.stock_cash_flow_sheet_by_report_em(symbol=code)
 
                 cash_flow = await asyncio.to_thread(fetch_cash_flow)
                 if cash_flow is not None and not cash_flow.empty:
+                    cash_flow_df = cash_flow
                     financial_data['cash_flow'] = cash_flow.to_dict('records')
                     logger.debug(f"✅ {code}现金流量表获取成功")
             except Exception as e:
@@ -1411,53 +1449,82 @@ class AKShareProvider(BaseStockDataProvider):
                 except Exception as e:
                     logger.debug(f"提取{code}资产负债表关键字段失败: {e}")
 
-            # 6. 尝试从 stock_financial_analysis_indicator 获取补充指标（含 bvps）
-            if 'latest' not in financial_data or financial_data.get('latest', {}).get('bvps') in (0.0, None):
+            # 6. 从现金流量表提取经营现金流和资本开支
+            if cash_flow_df is not None and not cash_flow_df.empty:
                 try:
-                    def fetch_analysis_indicator():
-                        return self.ak.stock_financial_analysis_indicator(symbol=code)
-
-                    analysis_df = await asyncio.to_thread(fetch_analysis_indicator)
-                    if analysis_df is not None and not analysis_df.empty:
-                        latest_analysis = analysis_df.iloc[0]
-                        bvps_from_analysis = self._safe_float(
-                            latest_analysis.get("每股净资产", None)
-                        )
-                        if bvps_from_analysis and bvps_from_analysis > 0:
-                            if 'latest' in financial_data:
-                                financial_data['latest']['bvps'] = bvps_from_analysis
-                            else:
-                                financial_data['latest'] = {'bvps': bvps_from_analysis}
-                            if 'periods' in financial_data:
-                                for p in financial_data['periods']:
-                                    if not p.get('bvps'):
-                                        p['bvps'] = bvps_from_analysis
-                            logger.debug(f"✅ {code}从 stock_financial_analysis_indicator 补充 bvps: {bvps_from_analysis}")
+                    cf_row = cash_flow_df.iloc[0]
+                    cf_fields = self._parse_cash_flow_row(cf_row)
+                    for k, v in cf_fields.items():
+                        if v and (not financial_data.get('latest') or not financial_data['latest'].get(k)):
+                            if 'latest' not in financial_data:
+                                financial_data['latest'] = {}
+                            financial_data['latest'][k] = v
+                    if 'periods' in financial_data:
+                        for i, (_, row) in enumerate(cash_flow_df.iterrows()):
+                            if i < len(financial_data['periods']):
+                                cf_p = self._parse_cash_flow_row(row)
+                                for k, v in cf_p.items():
+                                    if v and not financial_data['periods'][i].get(k):
+                                        financial_data['periods'][i][k] = v
+                    logger.debug(f"✅ {code}现金流量表关键字段提取成功")
                 except Exception as e:
-                    logger.debug(f"获取{code}财务分析指标补充 bvps 失败: {e}")
+                    logger.debug(f"提取{code}现金流量表关键字段失败: {e}")
 
-            # 7. 尝试从 main_indicators 获取 bvps（备选方案）
-            if 'latest' in financial_data and financial_data['latest'].get('bvps') in (0.0, None):
-                try:
-                    main_indicators_raw = financial_data.get('main_indicators')
-                    if main_indicators_raw:
-                        import pandas as pd
-                        mi_df = main_indicators_raw if isinstance(main_indicators_raw, pd.DataFrame) else pd.DataFrame(main_indicators_raw)
-                        if not mi_df.empty and '指标' in mi_df.columns:
-                            bps_row = mi_df[mi_df['指标'].astype(str).str.contains('每股净资产', na=False)]
-                            if not bps_row.empty:
-                                value_cols = [c for c in bps_row.columns if c != '指标']
-                                if value_cols:
-                                    bps_val = self._safe_float(bps_row[value_cols[0]].iloc[0])
-                                    if bps_val and bps_val > 0:
-                                        financial_data['latest']['bvps'] = bps_val
-                                        if 'periods' in financial_data:
-                                            for p in financial_data['periods']:
-                                                if not p.get('bvps'):
-                                                    p['bvps'] = bps_val
-                                        logger.debug(f"✅ {code}从 main_indicators 补充 bvps: {bps_val}")
-                except Exception as e:
-                    logger.debug(f"从 main_indicators 补充{code} bvps 失败: {e}")
+            # 7. 从 stock_a_indicator_lg 获取 PE/PB/股息率（乐咕乐股，覆盖率高）
+            try:
+                def fetch_indicator_lg():
+                    return self.ak.stock_a_indicator_lg(symbol=code)
+
+                indicator_lg_df = await asyncio.to_thread(fetch_indicator_lg)
+                if indicator_lg_df is not None and not indicator_lg_df.empty:
+                    financial_data['indicator_lg'] = indicator_lg_df.to_dict('records')
+                    lg_row = indicator_lg_df.iloc[0]
+                    lg_fields = self._parse_indicator_lg_row(lg_row)
+                    for k, v in lg_fields.items():
+                        if v and (not financial_data.get('latest') or not financial_data['latest'].get(k)):
+                            if 'latest' not in financial_data:
+                                financial_data['latest'] = {}
+                            financial_data['latest'][k] = v
+                    logger.debug(f"✅ {code}从 stock_a_indicator_lg 补充指标成功: pe_ttm={lg_fields.get('pe_ttm')}, pb={lg_fields.get('pb')}, dividend_yield={lg_fields.get('dividend_yield')}")
+            except Exception as e:
+                logger.debug(f"获取{code}乐咕乐股指标失败: {e}")
+
+            # 8. 从 stock_financial_analysis_indicator 获取更多财务分析指标
+            try:
+                def fetch_analysis_indicator():
+                    return self.ak.stock_financial_analysis_indicator(symbol=code)
+
+                analysis_df = await asyncio.to_thread(fetch_analysis_indicator)
+                if analysis_df is not None and not analysis_df.empty:
+                    financial_data['financial_analysis'] = analysis_df.to_dict('records')
+                    latest_analysis = analysis_df.iloc[0]
+                    fa_fields = self._parse_financial_analysis_row(latest_analysis)
+                    for k, v in fa_fields.items():
+                        if v and (not financial_data.get('latest') or not financial_data['latest'].get(k)):
+                            if 'latest' not in financial_data:
+                                financial_data['latest'] = {}
+                            financial_data['latest'][k] = v
+                    if 'periods' in financial_data and len(analysis_df) > 1:
+                        for i in range(min(len(analysis_df) - 1, len(financial_data['periods']))):
+                            fa_p = self._parse_financial_analysis_row(analysis_df.iloc[i + 1])
+                            for k, v in fa_p.items():
+                                if v and not financial_data['periods'][i].get(k):
+                                    financial_data['periods'][i][k] = v
+                    logger.debug(f"✅ {code}从 stock_financial_analysis_indicator 补充指标成功")
+            except Exception as e:
+                logger.debug(f"获取{code}财务分析指标失败: {e}")
+
+            # 9. 尝试从 stock_profit_forecast_ths 获取盈利预测
+            try:
+                def fetch_profit_forecast():
+                    return self.ak.stock_profit_forecast_ths(symbol=code)
+
+                forecast_df = await asyncio.to_thread(fetch_profit_forecast)
+                if forecast_df is not None and not forecast_df.empty:
+                    financial_data['profit_forecast'] = forecast_df.to_dict('records')
+                    logger.debug(f"✅ {code}盈利预测数据获取成功")
+            except Exception as e:
+                logger.debug(f"获取{code}盈利预测数据失败: {e}")
 
             if financial_data:
                 logger.debug(f"✅ {code}财务数据获取完成: {len(financial_data)}个数据集")

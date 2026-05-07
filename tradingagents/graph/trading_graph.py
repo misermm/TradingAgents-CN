@@ -687,6 +687,8 @@ class TradingAgentsGraph:
                     # 中国市场工具（备用）
                     self.toolkit.get_china_stock_data,
                     self.toolkit.get_china_fundamentals,
+                    # A股资金面工具
+                    self.toolkit.get_china_capital_flow,
                 ]
             ),
         }

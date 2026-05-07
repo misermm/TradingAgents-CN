@@ -11,14 +11,19 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional
+
+logger = logging.getLogger(__name__)
 
 
 FREE_SOURCE_PRIORITY = {
     "eastmoney": 100,
     "akshare": 80,
+    "akshare_direct": 78,
+    "akshare_indicator_lg": 75,
     "baostock": 70,
     "mongodb": 60,
     "cache": 50,
@@ -47,16 +52,16 @@ FIELD_SPECS: Dict[str, Dict[str, Any]] = {
     "gross_margin": {"label": "毛利率", "aliases": ["gross_margin", "毛利率"], "required": False},
     "gross_margin_trend": {"label": "毛利率趋势", "aliases": ["gross_margin_trend", "毛利率趋势"], "required": False},
     "net_margin": {"label": "净利率", "aliases": ["net_margin", "net_profit_margin", "净利率", "净利润率"], "required": False},
-    "operating_cash_flow": {"label": "经营现金流", "aliases": ["operating_cash_flow", "n_cashflow_act", "经营现金流", "经营活动现金流", "经营活动产生的现金流量净额"], "required": True},
-    "free_cash_flow": {"label": "自由现金流", "aliases": ["free_cash_flow", "fcf", "自由现金流"], "required": True},
+    "operating_cash_flow": {"label": "经营现金流", "aliases": ["operating_cash_flow", "n_cashflow_act", "经营现金流", "经营活动现金流", "经营活动产生的现金流量净额", "operating_cash_flow_per_share"], "required": False},
+    "free_cash_flow": {"label": "自由现金流", "aliases": ["free_cash_flow", "fcf", "自由现金流"], "required": False},
     "free_cash_flow_trend": {"label": "自由现金流趋势", "aliases": ["free_cash_flow_trend", "自由现金流趋势"], "required": False},
     "capital_expenditure": {"label": "资本开支", "aliases": ["capital_expenditure", "capex", "购建固定资产、无形资产和其他长期资产支付的现金"], "required": False},
     "debt_ratio": {"label": "资产负债率", "aliases": ["debt_ratio", "资产负债率", "负债率"], "required": True},
     "debt_ratio_trend": {"label": "资产负债率趋势", "aliases": ["debt_ratio_trend", "资产负债率趋势"], "required": False},
     "total_assets": {"label": "总资产", "aliases": ["total_assets", "总资产", "资产总计", "资产合计", "totalAssets"], "required": True},
     "total_liabilities": {"label": "总负债", "aliases": ["total_liabilities", "总负债", "负债合计", "负债总计", "totalLiabilities"], "required": True},
-    "current_assets": {"label": "流动资产", "aliases": ["current_assets", "流动资产", "流动资产合计", "totalCurrentAssets"], "required": True},
-    "current_liabilities": {"label": "流动负债", "aliases": ["current_liabilities", "流动负债", "流动负债合计", "totalCurrentLiabilities"], "required": True},
+    "current_assets": {"label": "流动资产", "aliases": ["current_assets", "流动资产", "流动资产合计", "totalCurrentAssets"], "required": False},
+    "current_liabilities": {"label": "流动负债", "aliases": ["current_liabilities", "流动负债", "流动负债合计", "totalCurrentLiabilities"], "required": False},
     "current_ratio": {"label": "流动比率", "aliases": ["current_ratio", "流动比率"], "required": False},
     "current_ratio_trend": {"label": "流动比率趋势", "aliases": ["current_ratio_trend", "流动比率趋势"], "required": False},
     "accounts_receivable": {"label": "应收账款", "aliases": ["accounts_receivable", "应收账款"], "required": False},
@@ -254,7 +259,9 @@ def _safe_provider_call(provider: Any, method_name: str, symbol: str) -> Any:
         return None
     try:
         return _run_maybe_async(method(symbol))
-    except Exception:
+    except Exception as e:
+        source_name = getattr(provider, "__class__", type(provider)).__name__
+        logger.debug(f"_safe_provider_call: {source_name}.{method_name}({symbol}) 失败: {e}")
         return None
 
 
@@ -693,6 +700,209 @@ def collect_china_announcement_payload(symbol: str, days: int = 90, limit: int =
     }
 
 
+def _akshare_safe_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        import pandas as pd
+        if pd.isna(value):
+            return None
+    except (ImportError, TypeError, ValueError):
+        pass
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _set_if_valid(data: Dict[str, Any], key: str, value: Any) -> None:
+    if value is not None and key not in data:
+        data[key] = value
+
+
+def _to_baostock_code(symbol: str) -> str:
+    s = str(symbol).strip()
+    if s.startswith("6") or s.startswith("5"):
+        return f"sh.{s}"
+    if s.startswith("0") or s.startswith("3"):
+        return f"sz.{s}"
+    if s.startswith("8") or s.startswith("4"):
+        return f"bj.{s}"
+    return f"sz.{s}"
+
+
+def _collect_akshare_direct_payload(symbol: str, updated_at: str) -> Optional[Dict[str, Any]]:
+    try:
+        import akshare as ak
+    except ImportError:
+        logger.warning("akshare not installed, skip akshare_direct")
+        return None
+
+    data: Dict[str, Any] = {}
+
+    try:
+        df = ak.stock_financial_analysis_indicator(symbol=symbol, start_year=str(datetime.now().year - 1))
+        if df is not None and not df.empty:
+            row = df.iloc[0]
+            _set_if_valid(data, "eps", _akshare_safe_float(row.get("摊薄每股收益(元)") or row.get("加权每股收益(元)")))
+            _set_if_valid(data, "book_value_per_share", _akshare_safe_float(row.get("每股净资产_调整前(元)") or row.get("每股净资产_调整后(元)")))
+            _set_if_valid(data, "bvps", _akshare_safe_float(row.get("每股净资产_调整前(元)") or row.get("每股净资产_调整后(元)")))
+            roe_val = _akshare_safe_float(row.get("加权净资产收益率(%)") or row.get("净资产收益率(%)"))
+            if roe_val is not None:
+                data["roe"] = roe_val
+            _set_if_valid(data, "gross_margin", _akshare_safe_float(row.get("销售毛利率(%)")))
+            _set_if_valid(data, "net_margin", _akshare_safe_float(row.get("销售净利率(%)")))
+            _set_if_valid(data, "total_assets", _akshare_safe_float(row.get("总资产(元)")))
+            debt_ratio_val = _akshare_safe_float(row.get("资产负债率(%)"))
+            if debt_ratio_val is not None:
+                data["debt_ratio"] = debt_ratio_val
+            _set_if_valid(data, "current_ratio", _akshare_safe_float(row.get("流动比率")))
+            ocf_per_share = _akshare_safe_float(row.get("每股经营性现金流(元)"))
+            if ocf_per_share is not None:
+                data["operating_cash_flow_per_share"] = ocf_per_share
+            _set_if_valid(data, "net_profit", _akshare_safe_float(row.get("扣除非经常性损益后的净利润(元)")))
+            report_date = row.get("日期")
+            if report_date is not None:
+                data["report_period"] = str(report_date)
+            logger.info(f"akshare_direct: stock_financial_analysis_indicator OK, {len([k for k in ('eps','book_value_per_share','roe','gross_margin','net_margin','total_assets','debt_ratio') if k in data])} fields")
+    except Exception as e:
+        logger.warning(f"akshare_direct: stock_financial_analysis_indicator failed: {e}")
+
+    try:
+        import baostock as bs
+        lg = bs.login()
+        if lg.error_code == '0':
+            bs_code = _to_baostock_code(symbol)
+            year = datetime.now().year
+            for quarter in [4, 3, 2, 1]:
+                for y in [year, year - 1]:
+                    rs = bs.query_profit_data(code=bs_code, year=y, quarter=quarter)
+                    rows_data = []
+                    while (rs.error_code == '0') and rs.next():
+                        rows_data.append(rs.get_row_data())
+                    if rows_data:
+                        profit_row = rows_data[0]
+                        profit_fields = rs.fields
+                        field_map = dict(zip(profit_fields, profit_row))
+                        _set_if_valid(data, "net_profit", _akshare_safe_float(field_map.get("netProfit")))
+                        _set_if_valid(data, "eps", _akshare_safe_float(field_map.get("epsTTM")))
+                        _set_if_valid(data, "revenue", _akshare_safe_float(field_map.get("MBRevenue")))
+                        _set_if_valid(data, "roe", _akshare_safe_float(field_map.get("roeAvg")))
+                        _set_if_valid(data, "net_margin", _akshare_safe_float(field_map.get("npMargin")))
+                        _set_if_valid(data, "gross_margin", _akshare_safe_float(field_map.get("gpMargin")))
+                        break
+                else:
+                    continue
+                break
+
+            for quarter in [4, 3, 2, 1]:
+                for y in [year, year - 1]:
+                    rs = bs.query_balance_data(code=bs_code, year=y, quarter=quarter)
+                    rows_data = []
+                    while (rs.error_code == '0') and rs.next():
+                        rows_data.append(rs.get_row_data())
+                    if rows_data:
+                        balance_row = rows_data[0]
+                        balance_fields = rs.fields
+                        field_map = dict(zip(balance_fields, balance_row))
+                        _set_if_valid(data, "debt_ratio", _akshare_safe_float(field_map.get("liabilityToAsset")))
+                        _set_if_valid(data, "current_ratio", _akshare_safe_float(field_map.get("currentRatio")))
+                        break
+                else:
+                    continue
+                break
+
+            for quarter in [4, 3, 2, 1]:
+                for y in [year, year - 1]:
+                    rs = bs.query_growth_data(code=bs_code, year=y, quarter=quarter)
+                    rows_data = []
+                    while (rs.error_code == '0') and rs.next():
+                        rows_data.append(rs.get_row_data())
+                    if rows_data:
+                        growth_row = rows_data[0]
+                        growth_fields = rs.fields
+                        field_map = dict(zip(growth_fields, growth_row))
+                        _set_if_valid(data, "revenue_yoy", _akshare_safe_float(field_map.get("YOYEquity")))
+                        _set_if_valid(data, "net_profit_yoy", _akshare_safe_float(field_map.get("YOYNI")))
+                        break
+                else:
+                    continue
+                break
+
+            bs.logout()
+            logger.info(f"akshare_direct: baostock OK, {len([k for k in ('net_profit','eps','revenue','roe','debt_ratio') if k in data])} fields")
+    except Exception as e:
+        logger.warning(f"akshare_direct: baostock failed: {e}")
+
+    if data.get("total_assets") and data.get("debt_ratio"):
+        debt_ratio_decimal = data["debt_ratio"]
+        if debt_ratio_decimal and debt_ratio_decimal < 1:
+            debt_ratio_decimal = debt_ratio_decimal * 100
+            data["debt_ratio"] = debt_ratio_decimal
+        if debt_ratio_decimal and debt_ratio_decimal > 0:
+            data["total_liabilities"] = data["total_assets"] * (debt_ratio_decimal / 100)
+
+    if data.get("total_assets") and not data.get("total_liabilities"):
+        pass
+
+    if data.get("book_value_per_share") and data.get("total_assets") and not data.get("total_liabilities"):
+        pass
+
+    if not data:
+        logger.warning(f"akshare_direct: {symbol} all sources failed")
+        return None
+
+    report_period = data.pop("report_period", None)
+
+    logger.info(f"akshare_direct: {symbol} done, {len(data)} fields: {list(data.keys())}")
+
+    return {
+        "source": "akshare_direct",
+        "data": data,
+        "updated_at": updated_at,
+        "report_period": report_period,
+    }
+
+
+def _collect_indicator_lg_payload(symbol: str, updated_at: str) -> Optional[Dict[str, Any]]:
+    try:
+        import akshare as ak
+    except ImportError:
+        return None
+    try:
+        df = ak.stock_financial_analysis_indicator(symbol=symbol, start_year=str(datetime.now().year - 1))
+        if df is None or df.empty:
+            return None
+        latest = df.iloc[0]
+        data = {}
+        pe_ttm = _akshare_safe_float(latest.get("摊薄每股收益(元)"))
+        if pe_ttm is not None:
+            data["pe_ttm"] = pe_ttm
+        bvps = _akshare_safe_float(latest.get("每股净资产_调整前(元)"))
+        if bvps is not None:
+            data["pb"] = bvps
+            data["book_value_per_share"] = bvps
+        roe_val = _akshare_safe_float(latest.get("加权净资产收益率(%)") or latest.get("净资产收益率(%)"))
+        if roe_val is not None:
+            data["roe"] = roe_val
+        total_assets = _akshare_safe_float(latest.get("总资产(元)"))
+        if total_assets is not None:
+            data["total_assets"] = total_assets
+        debt_ratio = _akshare_safe_float(latest.get("资产负债率(%)"))
+        if debt_ratio is not None:
+            data["debt_ratio"] = debt_ratio
+        if not data:
+            return None
+        return {
+            "source": "akshare_indicator_lg",
+            "data": data,
+            "updated_at": updated_at,
+            "report_period": None,
+        }
+    except Exception:
+        return None
+
+
 def collect_china_free_source_payloads(symbol: str) -> List[Dict[str, Any]]:
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     provider_specs = [
@@ -727,9 +937,37 @@ def collect_china_free_source_payloads(symbol: str) -> List[Dict[str, Any]]:
         finally:
             _cleanup_provider(provider)
 
+    indicator_lg_payload = _collect_indicator_lg_payload(symbol, updated_at)
+    if indicator_lg_payload:
+        payloads.append(indicator_lg_payload)
+
     announcement_payload = collect_china_announcement_payload(symbol)
     if announcement_payload:
         payloads.append(announcement_payload)
+
+    required_fields = [name for name, spec in FIELD_SPECS.items() if spec.get("required")]
+    present_required = set()
+    for payload in payloads:
+        payload_data = payload.get("data", {})
+        if isinstance(payload_data, Mapping):
+            flattened = _flatten_mapping(payload_data)
+            for field_name in required_fields:
+                if field_name in present_required:
+                    continue
+                spec = FIELD_SPECS[field_name]
+                raw_value = _extract_field(flattened, spec["aliases"])
+                if _value_status(raw_value) == "present":
+                    present_required.add(field_name)
+
+    required_coverage = len(present_required) / len(required_fields) if required_fields else 1.0
+    if required_coverage < 0.75:
+        missing_fields = [name for name in required_fields if name not in present_required]
+        logger.info(f"{symbol} 必需字段覆盖率 {required_coverage:.0%} < 75%，缺失: {missing_fields}，启用 akshare_direct 兜底")
+        direct_payload = _collect_akshare_direct_payload(symbol, updated_at)
+        if direct_payload:
+            payloads.append(direct_payload)
+            logger.info(f"{symbol} akshare_direct 兜底数据已添加，字段: {list(direct_payload.get('data', {}).keys())}")
+
     return payloads
 
 
@@ -1112,9 +1350,30 @@ def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[
     conflict_required = [name for name in conflict_fields if name in required_fields]
     present_count = sum(1 for field in fields.values() if field["status"] == "present")
 
+    required_coverage = len(present_required) / len(required_fields) if required_fields else 1.0
+    overall_coverage = present_count / len(fields) if fields else 0.0
+
+    if required_coverage >= 0.9:
+        quality_grade = "A"
+    elif required_coverage >= 0.75:
+        quality_grade = "B"
+    elif required_coverage >= 0.6:
+        quality_grade = "C"
+    elif required_coverage >= 0.4:
+        quality_grade = "D"
+    else:
+        quality_grade = "F"
+
+    source_field_map: Dict[str, List[str]] = {}
+    for fname, finfo in fields.items():
+        if finfo["status"] in ("present", "conflict"):
+            src = finfo.get("source", "unknown")
+            source_field_map.setdefault(src, []).append(fname)
+
     quality = {
-        "score": round(present_count / len(fields), 4) if fields else 0.0,
-        "required_score": round(len(present_required) / len(required_fields), 4) if required_fields else 1.0,
+        "score": round(overall_coverage, 4),
+        "required_score": round(required_coverage, 4),
+        "quality_grade": quality_grade,
         "present_count": present_count,
         "total_count": len(fields),
         "present_required_count": len(present_required),
@@ -1122,7 +1381,8 @@ def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[
         "missing_required_fields": missing_required,
         "estimated_fields": estimated_fields,
         "conflict_fields": conflict_fields,
-        "is_sufficient": len(missing_required) == 0 and len(conflict_required) == 0 and (len(present_required) / len(required_fields) >= 0.75 if required_fields else True),
+        "is_sufficient": required_coverage >= 0.75 and len(conflict_required) == 0,
+        "source_field_map": source_field_map,
     }
 
     sources_used = sorted({field["source"] for field in fields.values() if field["status"] in ("present", "conflict")})
@@ -1154,10 +1414,18 @@ def format_china_fundamental_snapshot_report(snapshot: Mapping[str, Any]) -> str
     lines = [
         "## A股免费数据融合质量报告",
         f"股票代码: {snapshot.get('symbol', '')}",
+        f"数据质量等级: {quality.get('quality_grade', 'F')} (必需字段覆盖率: {quality.get('required_score', 0):.1%})",
         f"数据质量评分: {quality.get('present_count', 0)}/{quality.get('total_count', 0)} (必需字段 {quality.get('present_required_count', 0)}/{quality.get('required_count', 0)})",
         f"是否足够支撑分析: {'是' if quality.get('is_sufficient') else '否'}",
         f"免费数据源: {', '.join(snapshot.get('sources_used', [])) or '无'}",
     ]
+
+    source_field_map = quality.get("source_field_map", {})
+    if source_field_map:
+        lines.append("")
+        lines.append("### 数据源覆盖详情")
+        for src, field_names in sorted(source_field_map.items()):
+            lines.append(f"  - {src}: {len(field_names)} 个字段 ({', '.join(field_names[:5])}{'...' if len(field_names) > 5 else ''})")
 
     conflict_fields_list = quality.get("conflict_fields", [])
     if conflict_fields_list:

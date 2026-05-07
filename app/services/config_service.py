@@ -3694,10 +3694,34 @@ class ConfigService:
                         "success": False,
                         "message": f"{display_name} API响应格式异常"
                     }
-            else:
+            elif response.status_code == 429:
+                return {
+                    "success": True,
+                    "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                }
+            elif response.status_code == 401:
                 return {
                     "success": False,
-                    "message": f"{display_name} API测试失败: HTTP {response.status_code}"
+                    "message": f"{display_name} API Key 无效，请检查后重试"
+                }
+            elif response.status_code == 402:
+                return {
+                    "success": False,
+                    "message": f"{display_name} 账户余额不足，请充值后重试"
+                }
+            else:
+                error_msg = ""
+                try:
+                    error_body = response.json()
+                    error_msg = error_body.get("error", {}).get("message", "")
+                except Exception:
+                    pass
+                msg = f"{display_name} API测试失败: HTTP {response.status_code}"
+                if error_msg:
+                    msg += f" - {error_msg}"
+                return {
+                    "success": False,
+                    "message": msg
                 }
 
         except Exception as e:
@@ -3756,10 +3780,34 @@ class ConfigService:
                         "success": False,
                         "message": f"{display_name} API响应格式异常"
                     }
-            else:
+            elif response.status_code == 429:
+                return {
+                    "success": True,
+                    "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                }
+            elif response.status_code == 401:
                 return {
                     "success": False,
-                    "message": f"{display_name} API测试失败: HTTP {response.status_code}"
+                    "message": f"{display_name} API Key 无效，请检查后重试"
+                }
+            elif response.status_code == 402:
+                return {
+                    "success": False,
+                    "message": f"{display_name} 账户余额不足，请充值后重试"
+                }
+            else:
+                error_msg = ""
+                try:
+                    error_body = response.json()
+                    error_msg = error_body.get("error", {}).get("message", "")
+                except Exception:
+                    pass
+                msg = f"{display_name} API测试失败: HTTP {response.status_code}"
+                if error_msg:
+                    msg += f" - {error_msg}"
+                return {
+                    "success": False,
+                    "message": msg
                 }
 
         except Exception as e:
@@ -3773,50 +3821,72 @@ class ConfigService:
         try:
             import requests
 
-            url = "https://openrouter.ai/api/v1/chat/completions"
-
             headers = {
-                "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
-                "HTTP-Referer": "https://tradingagents.cn",  # OpenRouter要求
+                "HTTP-Referer": "https://tradingagents.cn",
                 "X-Title": "TradingAgents-CN"
             }
 
-            data = {
-                "model": "meta-llama/llama-3.2-3b-instruct:free",  # 使用免费模型
-                "messages": [
-                    {"role": "user", "content": "你好，请简单介绍一下你自己。"}
-                ],
-                "max_tokens": 50,
-                "temperature": 0.1
-            }
+            models_url = "https://openrouter.ai/api/v1/models"
+            models_resp = requests.get(models_url, headers=headers, timeout=10)
 
-            response = requests.post(url, json=data, headers=headers, timeout=15)
-
-            if response.status_code == 200:
-                result = response.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0]["message"]["content"]
-                    if content and len(content.strip()) > 0:
-                        return {
-                            "success": True,
-                            "message": f"{display_name} API连接测试成功"
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "message": f"{display_name} API响应为空"
-                        }
-                else:
-                    return {
-                        "success": False,
-                        "message": f"{display_name} API响应格式异常"
-                    }
-            else:
+            if models_resp.status_code == 200:
+                models_data = models_resp.json()
+                model_count = len(models_data.get("data", []))
+                return {
+                    "success": True,
+                    "message": f"{display_name} API连接测试成功，可用模型 {model_count} 个"
+                }
+            elif models_resp.status_code == 401:
                 return {
                     "success": False,
-                    "message": f"{display_name} API测试失败: HTTP {response.status_code}"
+                    "message": f"{display_name} API Key 无效，请检查后重试"
                 }
+            elif models_resp.status_code == 429:
+                return {
+                    "success": True,
+                    "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                }
+            else:
+                chat_url = "https://openrouter.ai/api/v1/chat/completions"
+                data = {
+                    "model": "meta-llama/llama-3.2-3b-instruct:free",
+                    "messages": [
+                        {"role": "user", "content": "Hi"}
+                    ],
+                    "max_tokens": 5,
+                    "temperature": 0.1
+                }
+                chat_resp = requests.post(chat_url, json=data, headers={**headers, "Content-Type": "application/json"}, timeout=15)
+                if chat_resp.status_code == 200:
+                    return {
+                        "success": True,
+                        "message": f"{display_name} API连接测试成功"
+                    }
+                elif chat_resp.status_code == 429:
+                    return {
+                        "success": True,
+                        "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                    }
+                elif chat_resp.status_code == 401:
+                    return {
+                        "success": False,
+                        "message": f"{display_name} API Key 无效，请检查后重试"
+                    }
+                else:
+                    error_msg = ""
+                    try:
+                        error_body = chat_resp.json()
+                        error_msg = error_body.get("error", {}).get("message", "")
+                    except Exception:
+                        pass
+                    msg = f"{display_name} API测试失败: HTTP {chat_resp.status_code}"
+                    if error_msg:
+                        msg += f" - {error_msg}"
+                    return {
+                        "success": False,
+                        "message": msg
+                    }
 
         except Exception as e:
             return {
@@ -3829,48 +3899,75 @@ class ConfigService:
         try:
             import requests
 
-            url = "https://api.openai.com/v1/chat/completions"
-
             headers = {
-                "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}"
             }
 
-            data = {
-                "model": "gpt-3.5-turbo",
-                "messages": [
-                    {"role": "user", "content": "你好，请简单介绍一下你自己。"}
-                ],
-                "max_tokens": 50,
-                "temperature": 0.1
-            }
+            models_url = "https://api.openai.com/v1/models"
+            models_resp = requests.get(models_url, headers=headers, timeout=10)
 
-            response = requests.post(url, json=data, headers=headers, timeout=10)
-
-            if response.status_code == 200:
-                result = response.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    content = result["choices"][0]["message"]["content"]
-                    if content and len(content.strip()) > 0:
-                        return {
-                            "success": True,
-                            "message": f"{display_name} API连接测试成功"
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "message": f"{display_name} API响应为空"
-                        }
-                else:
-                    return {
-                        "success": False,
-                        "message": f"{display_name} API响应格式异常"
-                    }
-            else:
+            if models_resp.status_code == 200:
+                models_data = models_resp.json()
+                model_count = len(models_data.get("data", []))
+                return {
+                    "success": True,
+                    "message": f"{display_name} API连接测试成功，可用模型 {model_count} 个"
+                }
+            elif models_resp.status_code == 429:
+                return {
+                    "success": True,
+                    "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                }
+            elif models_resp.status_code == 401:
                 return {
                     "success": False,
-                    "message": f"{display_name} API测试失败: HTTP {response.status_code}"
+                    "message": f"{display_name} API Key 无效，请检查后重试"
                 }
+            else:
+                url = "https://api.openai.com/v1/chat/completions"
+                data = {
+                    "model": "gpt-3.5-turbo",
+                    "messages": [
+                        {"role": "user", "content": "Hi"}
+                    ],
+                    "max_tokens": 5,
+                    "temperature": 0.1
+                }
+                response = requests.post(url, json=data, headers={**headers, "Content-Type": "application/json"}, timeout=10)
+                if response.status_code == 200:
+                    return {
+                        "success": True,
+                        "message": f"{display_name} API连接测试成功"
+                    }
+                elif response.status_code == 429:
+                    return {
+                        "success": True,
+                        "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                    }
+                elif response.status_code == 401:
+                    return {
+                        "success": False,
+                        "message": f"{display_name} API Key 无效，请检查后重试"
+                    }
+                elif response.status_code == 402:
+                    return {
+                        "success": False,
+                        "message": f"{display_name} 账户余额不足，请充值后重试"
+                    }
+                else:
+                    error_msg = ""
+                    try:
+                        error_body = response.json()
+                        error_msg = error_body.get("error", {}).get("message", "")
+                    except Exception:
+                        pass
+                    msg = f"{display_name} API测试失败: HTTP {response.status_code}"
+                    if error_msg:
+                        msg += f" - {error_msg}"
+                    return {
+                        "success": False,
+                        "message": msg
+                    }
 
         except Exception as e:
             return {
@@ -3893,9 +3990,9 @@ class ConfigService:
 
             data = {
                 "model": "claude-3-haiku-20240307",
-                "max_tokens": 50,
+                "max_tokens": 5,
                 "messages": [
-                    {"role": "user", "content": "你好，请简单介绍一下你自己。"}
+                    {"role": "user", "content": "Hi"}
                 ]
             }
 
@@ -3920,10 +4017,29 @@ class ConfigService:
                         "success": False,
                         "message": f"{display_name} API响应格式异常"
                     }
-            else:
+            elif response.status_code == 429:
+                return {
+                    "success": True,
+                    "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                }
+            elif response.status_code == 401:
                 return {
                     "success": False,
-                    "message": f"{display_name} API测试失败: HTTP {response.status_code}"
+                    "message": f"{display_name} API Key 无效，请检查后重试"
+                }
+            else:
+                error_msg = ""
+                try:
+                    error_body = response.json()
+                    error_msg = error_body.get("error", {}).get("message", "")
+                except Exception:
+                    pass
+                msg = f"{display_name} API测试失败: HTTP {response.status_code}"
+                if error_msg:
+                    msg += f" - {error_msg}"
+                return {
+                    "success": False,
+                    "message": msg
                 }
 
         except Exception as e:
@@ -3984,6 +4100,16 @@ class ConfigService:
                 return {
                     "success": False,
                     "message": f"{display_name} API权限不足或配额已用完"
+                }
+            elif response.status_code == 429:
+                return {
+                    "success": True,
+                    "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                }
+            elif response.status_code == 402:
+                return {
+                    "success": False,
+                    "message": f"{display_name} 账户余额不足，请充值后重试"
                 }
             else:
                 try:

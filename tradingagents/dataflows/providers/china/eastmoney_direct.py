@@ -61,6 +61,22 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
         "&filter=(SECURITY_CODE=%22{code}%22)"
         "&pageSize=5&sortColumns=REPORT_DATE&sortTypes=-1"
     )
+    # 现金流量表
+    CASH_FLOW_URL = (
+        "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        "?reportName=RPT_DMSK_FN_CASHFLOW"
+        "&columns=SECURITY_CODE,REPORT_DATE,NETCASH_OPERATE,NETCASH_INVEST,NETCASH_FINANCE,BUY_FIX_ASSET"
+        "&filter=(SECURITY_CODE=%22{code}%22)"
+        "&pageSize=5&sortColumns=REPORT_DATE&sortTypes=-1"
+    )
+    # 股息率数据
+    DIVIDEND_URL = (
+        "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        "?reportName=RPT_SHAREBONUS_DET"
+        "&columns=SECURITY_CODE,REPORT_DATE,BONUS_SHARE_LISTDATE,CASH_PAY_TAX,CONVERT_PRICE,DIVIDEND_YIELD"
+        "&filter=(SECURITY_CODE=%22{code}%22)"
+        "&pageSize=5&sortColumns=REPORT_DATE&sortTypes=-1"
+    )
     # 行业数据
     INDUSTRY_URL = (
         "http://push2.eastmoney.com/api/qt/clist/get"
@@ -500,6 +516,75 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
             self.logger.warning(f"⚠️ 东方财富获取资产负债表数据失败 {code}: {e}")
             return None
 
+    def _fetch_cash_flow_data(self, code: str) -> Optional[List[Dict[str, Any]]]:
+        url = self.CASH_FLOW_URL.format(code=code)
+
+        try:
+            resp = self._http_get(url)
+            data = resp.json()
+
+            if not data or data.get("code") != "0":
+                return None
+
+            result_data = data.get("result", {})
+            items = result_data.get("data", [])
+
+            if not items:
+                return None
+
+            cash_flow_list = []
+            for item in items:
+                ocf = self._safe_float(item.get("NETCASH_OPERATE"))
+                capex = self._safe_float(item.get("BUY_FIX_ASSET"))
+                fcf = None
+                if ocf is not None and capex is not None:
+                    fcf = ocf - abs(capex)
+                cash_flow_list.append({
+                    "symbol": item.get("SECURITY_CODE", code),
+                    "report_date": item.get("REPORT_DATE", ""),
+                    "operating_cash_flow": ocf,
+                    "capital_expenditure": capex,
+                    "free_cash_flow": fcf,
+                })
+
+            return cash_flow_list
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ 东方财富获取现金流量表数据失败 {code}: {e}")
+            return None
+
+    def _fetch_dividend_data(self, code: str) -> Optional[Dict[str, Any]]:
+        url = self.DIVIDEND_URL.format(code=code)
+
+        try:
+            resp = self._http_get(url)
+            data = resp.json()
+
+            if not data or data.get("code") != "0":
+                return None
+
+            result_data = data.get("result", {})
+            items = result_data.get("data", [])
+
+            if not items:
+                return None
+
+            latest = items[0]
+            dividend_yield = self._safe_float(latest.get("DIVIDEND_YIELD"))
+            if dividend_yield is not None and dividend_yield > 1:
+                dividend_yield = dividend_yield / 100
+
+            return {
+                "symbol": latest.get("SECURITY_CODE", code),
+                "dividend_yield": dividend_yield,
+                "dividend_cash_per_10_shares": self._safe_float(latest.get("CASH_PAY_TAX")),
+                "report_date": latest.get("REPORT_DATE", ""),
+            }
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ 东方财富获取股息率数据失败 {code}: {e}")
+            return None
+
     async def get_financial_data(
         self, symbol: str, report_type: str = "annual"
     ) -> Optional[Dict[str, Any]]:
@@ -540,12 +625,46 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
                         for field in bs_fields:
                             period[field] = matched_bs.get(field) if matched_bs else None
 
+                cf_result = self._http_client.call(
+                    self._fetch_cash_flow_data, code
+                )
+                if cf_result.success and cf_result.data:
+                    cf_map = {}
+                    for cf in cf_result.data:
+                        rd = cf.get("report_date", "")
+                        rd_key = rd[:10] if rd else ""
+                        cf_map[rd_key] = cf
+
+                    cf_fields = ["operating_cash_flow", "capital_expenditure", "free_cash_flow"]
+                    for period in financial_list:
+                        rd = period.get("report_date", "")
+                        rd_key = rd[:10] if rd else ""
+                        matched_cf = cf_map.get(rd_key)
+                        for field in cf_fields:
+                            if not period.get(field):
+                                period[field] = matched_cf.get(field) if matched_cf else None
+
+                div_result = self._http_client.call(
+                    self._fetch_dividend_data, code
+                )
+                dividend_fields = {}
+                if div_result.success and div_result.data:
+                    dividend_fields = {
+                        "dividend_yield": div_result.data.get("dividend_yield"),
+                        "dividend_cash_per_10_shares": div_result.data.get("dividend_cash_per_10_shares"),
+                    }
+
+                latest = financial_list[0] if financial_list else {}
+                for k, v in dividend_fields.items():
+                    if v is not None and not latest.get(k):
+                        latest[k] = v
+
                 summary = {
                     "symbol": code,
                     "data_source": "eastmoney_direct",
                     "report_type": report_type,
                     "periods": financial_list,
-                    "latest": financial_list[0] if financial_list else None,
+                    "latest": latest,
                 }
 
                 self.logger.info(

@@ -60,12 +60,22 @@ def create_data_prefetch_node(toolkit):
 
         industry_context = _get_industry_context(ticker, market_info, log_tag)
 
+        capital_flow_data = ""
+        announcement_data = ""
+        if is_china:
+            capital_flow_data = _get_china_capital_flow(ticker, log_tag)
+            announcement_data = _get_china_announcement_signals(ticker, log_tag)
+
         logger.info(f"{log_tag} 数据质量: {data_quality}")
         logger.info(f"{log_tag} ===== 预获取完成 =====")
 
         fundamentals_with_industry = str(fundamentals_data) if fundamentals_data else ""
         if industry_context:
             fundamentals_with_industry += f"\n\n## 📊 同行业对比数据\n{industry_context}"
+        if capital_flow_data:
+            fundamentals_with_industry += f"\n\n## 💰 资金面数据\n{capital_flow_data}"
+        if announcement_data:
+            fundamentals_with_industry += f"\n\n## 📋 公告信号数据\n{announcement_data}"
 
         return {
             "prefetched_fundamentals_data": fundamentals_with_industry,
@@ -158,4 +168,65 @@ def _get_industry_context(ticker: str, market_info: dict, log_tag: str) -> str:
         return ""
     except Exception as e:
         logger.debug(f"{log_tag} 行业对比数据获取失败: {e}")
+        return ""
+
+
+def _get_china_capital_flow(ticker: str, log_tag: str) -> str:
+    try:
+        from tradingagents.dataflows.capital_flow import ChinaCapitalFlowProvider
+        provider = ChinaCapitalFlowProvider()
+        summary = provider.get_capital_flow_summary(ticker, days=30)
+        if summary and len(summary) > 50:
+            logger.info(f"{log_tag} ✅ 资金面数据获取成功")
+            return summary
+        return ""
+    except Exception as e:
+        logger.debug(f"{log_tag} 资金面数据获取失败: {e}")
+        return ""
+
+
+def _get_china_announcement_signals(ticker: str, log_tag: str) -> str:
+    try:
+        from tradingagents.dataflows.china_fundamental_snapshot import (
+            collect_china_announcement_payload,
+            format_china_fundamental_snapshot_report,
+        )
+        payload = collect_china_announcement_payload(ticker, days=90, limit=50)
+        if payload and payload.get("data"):
+            signals = payload["data"]
+            lines = [f"公告信号分析（近90天）:"]
+            key_fields = [
+                ("dividend_events", "分红公告"),
+                ("buyback_events", "回购公告"),
+                ("pledge_risk_events", "质押风险"),
+                ("litigation_risk_events", "诉讼风险"),
+                ("management_change_events", "管理层变更"),
+                ("insider_increase_events", "高管增持"),
+                ("insider_decrease_events", "高管减持"),
+                ("earnings_positive_events", "业绩利好"),
+                ("earnings_negative_events", "业绩利空"),
+                ("regulatory_penalty_events", "监管处罚"),
+                ("goodwill_impairment_events", "商誉减值"),
+            ]
+            for field, label in key_fields:
+                val = signals.get(field)
+                if val:
+                    lines.append(f"  - {label}: {val}")
+            summary_fields = [
+                ("shareholder_return_summary", "股东回报摘要"),
+                ("governance_risk_summary", "治理风险摘要"),
+                ("management_alignment_summary", "管理层增减持摘要"),
+                ("earnings_guidance_summary", "业绩预告摘要"),
+            ]
+            for field, label in summary_fields:
+                val = signals.get(field)
+                if val:
+                    lines.append(f"  - {label}: {val}")
+            if len(lines) > 1:
+                result = "\n".join(lines)
+                logger.info(f"{log_tag} ✅ 公告信号数据获取成功")
+                return result
+        return ""
+    except Exception as e:
+        logger.debug(f"{log_tag} 公告信号数据获取失败: {e}")
         return ""

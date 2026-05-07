@@ -109,7 +109,7 @@ echo [5/6] Running health checks
 echo --------------------------------------------------
 
 set "BACKEND_OK=0"
-for /l %%r in (1,1,20) do (
+for /l %%r in (1,1,40) do (
     if "!BACKEND_OK!"=="0" (
         curl -sf http://localhost:8000/api/health >nul 2>&1
         if !errorlevel! equ 0 (

@@ -15,12 +15,13 @@
     <el-alert
       v-else-if="!appStore.apiConnected"
       title="后端服务连接失败"
-      type="error"
+      :type="retryCount > 3 ? 'error' : 'warning'"
       :closable="false"
       show-icon
     >
       <template #default>
-        <span>无法连接到后端服务，请检查服务是否正常运行</span>
+        <span v-if="retryCount <= 3">后端服务正在启动中，请稍候...</span>
+        <span v-else>无法连接到后端服务，请检查服务是否正常运行</span>
         <el-button 
           type="primary" 
           size="small" 
@@ -28,7 +29,7 @@
           :loading="retrying"
           style="margin-left: 10px;"
         >
-          重试连接
+          {{ retryCount <= 3 ? '立即检查' : '重试连接' }}
         </el-button>
       </template>
     </el-alert>
@@ -41,19 +42,18 @@ import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
 const retrying = ref(false)
+const retryCount = ref(0)
 
-// 只在有网络问题时显示状态
 const showStatus = computed(() => {
   return !appStore.isOnline || !appStore.apiConnected
 })
 
-// 重试连接
 const retryConnection = async () => {
   retrying.value = true
   try {
     await appStore.checkApiConnection()
     if (appStore.apiConnected) {
-      console.log('✅ API连接恢复')
+      retryCount.value = 0
     }
   } catch (error) {
     console.error('❌ 重试连接失败:', error)
@@ -62,21 +62,37 @@ const retryConnection = async () => {
   }
 }
 
-// 定期检查API连接状态
 let checkInterval: number | null = null
 
 onMounted(() => {
-  // 每30秒检查一次API连接状态
-  checkInterval = window.setInterval(() => {
-    if (appStore.isOnline && !appStore.apiConnected) {
-      appStore.checkApiConnection()
-    }
-  }, 30000)
+  const getCheckInterval = () => {
+    if (retryCount.value < 3) return 5000
+    if (retryCount.value < 6) return 10000
+    return 30000
+  }
+
+  const scheduleCheck = () => {
+    checkInterval = window.setTimeout(async () => {
+      if (appStore.isOnline && !appStore.apiConnected) {
+        retryCount.value++
+        await appStore.checkApiConnection()
+        if (!appStore.apiConnected) {
+          scheduleCheck()
+        } else {
+          retryCount.value = 0
+        }
+      }
+    }, getCheckInterval())
+  }
+
+  if (appStore.isOnline && !appStore.apiConnected) {
+    scheduleCheck()
+  }
 })
 
 onUnmounted(() => {
   if (checkInterval) {
-    clearInterval(checkInterval)
+    clearTimeout(checkInterval)
   }
 })
 </script>

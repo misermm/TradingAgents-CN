@@ -38,6 +38,8 @@ services:
       # Docker环境标识
       DOCKER_CONTAINER: "true"
       RUNNING_IN_DOCKER: "1"
+      DEBUG: "false"
+      MONGODB_DATABASE_SCOPE: "explicit"
       # API配置
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
@@ -98,6 +100,8 @@ services:
       REDIS_PASSWORD: tradingagents123
       DOCKER_CONTAINER: "true"
       RUNNING_IN_DOCKER: "1"
+      DEBUG: "false"
+      MONGODB_DATABASE_SCOPE: "explicit"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

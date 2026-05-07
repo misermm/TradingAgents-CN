@@ -596,7 +596,7 @@ def test_collect_free_source_payloads_uses_available_sources_and_ignores_failure
     payloads = collect_china_free_source_payloads("000001")
     snapshot = build_china_fundamental_snapshot("000001", payloads)
 
-    assert [payload["source"] for payload in payloads] == ["eastmoney", "akshare", "baostock"]
+    assert [payload["source"] for payload in payloads] == ["eastmoney", "akshare", "baostock", "akshare_indicator_lg"]
     assert snapshot["fields"]["pe_ttm"]["source"] == "eastmoney"
     assert snapshot["fields"]["roe"]["source"] == "akshare"
     assert snapshot["fields"]["operating_cash_flow"]["source"] == "baostock"
@@ -634,7 +634,11 @@ def test_collect_free_source_payloads_disconnects_providers(monkeypatch):
 
     payloads = collect_china_free_source_payloads("000001")
 
-    assert len(payloads) == 3
+    # 由于 indicator_lg 和可能的 akshare_direct（当覆盖率不足时），payloads 数量会变化
+    source_names = [payload["source"] for payload in payloads]
+    assert "eastmoney" in source_names
+    assert "akshare" in source_names
+    assert "baostock" in source_names
     assert disconnect_calls == ["eastmoney", "akshare", "baostock"]
 
 
@@ -660,6 +664,6 @@ def test_collect_free_source_payloads_appends_announcement_signals(monkeypatch):
     payloads = collect_china_free_source_payloads("000001")
     snapshot = build_china_fundamental_snapshot("000001", payloads)
 
-    assert [payload["source"] for payload in payloads] == ["akshare"]
+    assert "akshare" in [payload["source"] for payload in payloads]
     assert snapshot["fields"]["dividend_events"]["value"] == 1
     assert snapshot["fields"]["buyback_events"]["value"] == 1

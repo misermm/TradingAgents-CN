@@ -1339,32 +1339,15 @@ class Toolkit:
             result_data = []
 
             if is_china or is_hk:
-                # 中国A股和港股：使用社交媒体情绪分析
                 logger.info(f"🇨🇳🇭🇰 [统一情绪工具] 处理中文市场情绪...")
 
                 try:
-                    # 可以集成微博、雪球、东方财富等中文社交媒体情绪
-                    # 目前使用基础的情绪分析
-                    sentiment_summary = f"""
-## 中文市场情绪分析
-
-**股票**: {ticker} ({market_info['market_name']})
-**分析日期**: {curr_date}
-
-### 市场情绪概况
-- 由于中文社交媒体情绪数据源暂未完全集成，当前提供基础分析
-- 建议关注雪球、东方财富、同花顺等平台的讨论热度
-- 港股市场还需关注香港本地财经媒体情绪
-
-### 情绪指标
-- 整体情绪: 中性
-- 讨论热度: 待分析
-- 投资者信心: 待评估
-
-*注：完整的中文社交媒体情绪分析功能正在开发中*
-"""
-                    result_data.append(sentiment_summary)
+                    from tradingagents.dataflows.news.chinese_finance import get_chinese_social_sentiment
+                    sentiment_data = get_chinese_social_sentiment(ticker, curr_date)
+                    result_data.append(f"## 中文市场情绪分析\n{sentiment_data}")
+                    logger.info(f"🇨🇳🇭🇰 [统一情绪工具] 真实情绪数据获取成功")
                 except Exception as e:
+                    logger.error(f"❌ [统一情绪工具] 中文市场情绪获取失败: {e}")
                     result_data.append(f"## 中文市场情绪\n获取失败: {e}")
 
             else:
@@ -1397,4 +1380,41 @@ class Toolkit:
         except Exception as e:
             error_msg = f"统一情绪分析工具执行失败: {str(e)}"
             logger.error(f"❌ [统一情绪工具] {error_msg}")
+            return error_msg
+
+    @staticmethod
+    @tool
+    @log_tool_call(tool_name="get_china_capital_flow", log_args=True)
+    def get_china_capital_flow(
+        ticker: Annotated[str, "中国A股股票代码，如 000001(平安银行), 600519(贵州茅台)"],
+        days: Annotated[int, "回溯天数，默认30天"] = 30,
+    ) -> str:
+        """
+        获取A股资金面数据，包括北向资金净流入、融资融券、个股资金流向等关键数据。
+        这是A股市场最重要的分析维度之一，资金面数据能反映主力资金动向和市场情绪。
+        仅支持中国A股股票代码。
+
+        Args:
+            ticker (str): 中国A股股票代码，如 000001, 600519
+            days (int): 回溯天数，默认30天
+
+        Returns:
+            str: 包含北向资金、融资融券、个股资金流向的综合资金面报告
+        """
+        import re
+        if not re.match(r'^\d{6}$', str(ticker)):
+            return f"错误：{ticker} 不是有效的中国A股代码格式，请使用6位数字代码（如 000001, 600519）"
+
+        try:
+            from tradingagents.dataflows.capital_flow import get_capital_flow_provider
+
+            provider = get_capital_flow_provider()
+            result = provider.get_capital_flow_summary(ticker, days=days)
+
+            logger.info(f"💰 [资金面工具] {ticker} 资金面数据获取完成，长度: {len(result)}")
+            return result
+
+        except Exception as e:
+            error_msg = f"A股资金面数据获取失败: {str(e)}"
+            logger.error(f"❌ [资金面工具] {error_msg}")
             return error_msg

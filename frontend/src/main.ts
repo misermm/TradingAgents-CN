@@ -102,9 +102,18 @@ const initApp = async () => {
       appStore.setApiConnected(false)
     })
 
-    // 检查API连接状态
+    // 检查API连接状态（带重试）
     console.log('🔍 检查API连接状态...')
-    const apiConnected = await appStore.checkApiConnection()
+    let apiConnected = false
+    const maxRetries = 3
+    for (let i = 0; i < maxRetries; i++) {
+      apiConnected = await appStore.checkApiConnection()
+      if (apiConnected) break
+      if (i < maxRetries - 1) {
+        console.log(`⏳ API连接失败，${(i + 1) * 3}秒后重试 (${i + 1}/${maxRetries})...`)
+        await new Promise(resolve => setTimeout(resolve, (i + 1) * 3000))
+      }
+    }
 
     if (apiConnected) {
       console.log('✅ API连接正常，检查认证状态...')

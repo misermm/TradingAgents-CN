@@ -61,6 +61,8 @@ services:
       RUNNING_IN_DOCKER: "1"
       PIP_INDEX_URL: "https://pypi.tuna.tsinghua.edu.cn/simple"
       TRUSTED_HOSTS: "pypi.tuna.tsinghua.edu.cn"
+      DEBUG: "false"
+      MONGODB_DATABASE_SCOPE: "explicit"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -106,7 +108,7 @@ services:
       VITE_API_PROXY_TARGET: "http://backend:8000"
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
     networks:
       - tradingagents-network
     command: >

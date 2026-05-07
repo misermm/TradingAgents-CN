@@ -200,9 +200,8 @@ export const useAppStore = defineStore('app', {
     // 检查API连接状态
     async checkApiConnection() {
       try {
-        // 使用 AbortController 实现超时
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 3000) // 3秒超时
+        const timeoutId = setTimeout(() => controller.abort(), 10000)
 
         const response = await fetch('/api/health', {
           method: 'GET',
@@ -230,7 +229,7 @@ export const useAppStore = defineStore('app', {
       try {
         // 使用 AbortController 实现超时
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 3000) // 3秒超时
+        const timeoutId = setTimeout(() => controller.abort(), 10000)
 
         const response = await fetch('/api/health', {
           signal: controller.signal
