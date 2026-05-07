@@ -12,7 +12,11 @@ export interface AppState {
   // 网络状态
   isOnline: boolean
   apiConnected: boolean
+  apiReady: boolean
+  apiComponents: Record<string, { status: string; latency_ms?: number; error?: string }>
   lastApiCheck: number
+  apiConnectTime: number
+  apiResponseTime: number
 
   // 布局状态
   sidebarCollapsed: boolean
@@ -55,7 +59,11 @@ export const useAppStore = defineStore('app', {
 
     isOnline: navigator.onLine,
     apiConnected: false,
+    apiReady: false,
+    apiComponents: {},
     lastApiCheck: 0,
+    apiConnectTime: 0,
+    apiResponseTime: 0,
 
     sidebarCollapsed: useStorage('sidebar-collapsed', false).value || false,
     sidebarWidth: useStorage('sidebar-width', 240).value || 240,
@@ -202,6 +210,7 @@ export const useAppStore = defineStore('app', {
       try {
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 10000)
+        const startTime = Date.now()
 
         const response = await fetch('/api/health', {
           method: 'GET',
@@ -209,8 +218,23 @@ export const useAppStore = defineStore('app', {
         })
 
         clearTimeout(timeoutId)
+        const responseTime = Date.now() - startTime
         const connected = response.ok
         this.setApiConnected(connected)
+
+        if (connected) {
+          this.apiConnectTime = Date.now()
+          this.apiResponseTime = responseTime
+          const json = await response.json()
+          const data = json.data || {}
+          this.apiReady = !!data.ready
+          this.apiComponents = data.components || {}
+          this.apiVersion = data.version || ''
+        } else {
+          this.apiReady = false
+          this.apiComponents = {}
+        }
+
         return connected
       } catch (error) {
         const err = error as Error
@@ -220,6 +244,8 @@ export const useAppStore = defineStore('app', {
           console.warn('API连接检查失败:', err)
         }
         this.setApiConnected(false)
+        this.apiReady = false
+        this.apiComponents = {}
         return false
       }
     },
@@ -227,7 +253,6 @@ export const useAppStore = defineStore('app', {
     // 获取API版本信息
     async fetchApiVersion() {
       try {
-        // 使用 AbortController 实现超时
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 10000)
 
@@ -238,11 +263,16 @@ export const useAppStore = defineStore('app', {
         clearTimeout(timeoutId)
 
         if (response.ok) {
-          const data = await response.json()
+          const json = await response.json()
+          const data = json.data || {}
           this.apiVersion = data.version || 'unknown'
+          this.apiReady = !!data.ready
+          this.apiComponents = data.components || {}
           this.setApiConnected(true)
         } else {
           this.setApiConnected(false)
+          this.apiReady = false
+          this.apiComponents = {}
         }
       } catch (error) {
         const err = error as Error
@@ -252,6 +282,8 @@ export const useAppStore = defineStore('app', {
           console.warn('获取API版本失败:', err)
         }
         this.apiVersion = 'unknown'
+        this.apiReady = false
+        this.apiComponents = {}
         this.setApiConnected(false)
       }
     },

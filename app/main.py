@@ -217,6 +217,7 @@ async def _print_config_summary(logger):
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时初始化
+    app.state.start_time = time.time()
     setup_logging()
     logger = logging.getLogger("app.main")
 

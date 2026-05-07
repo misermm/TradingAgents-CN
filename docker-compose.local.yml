@@ -43,14 +43,15 @@ services:
       start_period: 5s
 
   backend:
-    image: python:3.10-slim-bookworm
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
     container_name: tradingagents-backend
     working_dir: /app
     ports:
       - "8000:8000"
     volumes:
       - .:/app
-      - pip_cache:/root/.cache/pip
     env_file:
       - .env.docker
     environment:
@@ -72,19 +73,13 @@ services:
         condition: service_healthy
     networks:
       - tradingagents-network
-    command: >
-      bash -c "
-        pip install --upgrade pip -q &&
-        pip install --prefer-binary -e . -q &&
-        pip install --prefer-binary pdfkit -q &&
-        python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --reload-dir /app/tradingagents
-      "
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --reload-dir /app/tradingagents
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 300s
+      start_period: 60s
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -138,9 +133,6 @@ volumes:
   redis_data:
     driver: local
     name: tradingagents_redis_data
-  pip_cache:
-    driver: local
-    name: tradingagents_pip_cache
   frontend_node_modules:
     driver: local
     name: tradingagents_frontend_node_modules

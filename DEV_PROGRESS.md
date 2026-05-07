@@ -1,10 +1,154 @@
 # 开发进度文档
 **更新时间**: 2026-05-07
-**当前项目目标**: A股分析准确性全面优化 + Docker部署修复
+**当前项目目标**: A股分析准确性全面优化 + Docker部署优化
 
 ---
 
 ## 最近完成的改动
+
+### 86. 健康检查端点增强 — 启动进度指示 ✅ (2026-05-07)
+
+**问题描述**: 后端 `/api/health` 端点只返回 `{"status": "ok"}`，无法区分"正在启动"和"已就绪"状态。前端无法展示启动进度。
+
+**修改的文件**:
+
+| 文件 | 修改内容 |
+|------|---------|
+| `app/main.py` | lifespan 中添加 `app.state.start_time = time.time()` 记录启动时间 |
+| `app/routers/health.py` | 重写健康检查端点，增加 MongoDB/Redis/Scheduler 状态检查 + 延迟测量 + 就绪状态 + 启动耗时 |
+| `frontend/src/stores/app.ts` | AppState 新增 `apiReady` 和 `apiComponents` 字段；`checkApiConnection`/`fetchApiVersion` 解析 health 响应 |
+| `frontend/src/components/NetworkStatus.vue` | 新增"后端服务启动中"黄色提示 + 组件状态标签 + 自动重试直到 ready |
+
+**具体改动**:
+
+1. **app/main.py**:
+   - `lifespan` 函数开头添加 `app.state.start_time = time.time()`
+
+2. **app/routers/health.py**:
+   - 新增 `_check_mongodb()` — `db.command('ping')` + 延迟测量
+   - 新增 `_check_redis()` — `redis.ping()` + 延迟测量
+   - 新增 `_check_scheduler()` — 检查 `scheduler.running` 状态
+   - `/health` 端点返回增强：`ready`（MongoDB+Redis 都 ok 才为 true）、`uptime_seconds`、`components` 详情
+   - 组件不可用时 `status="degraded"`、`ready=false`
+   - `/readyz` 端点也改为基于实际 MongoDB/Redis 连接检查
+
+3. **frontend/src/stores/app.ts**:
+   - `AppState` 新增 `apiReady: boolean` 和 `apiComponents: Record<string, {status, latency_ms?, error?}>`
+   - `checkApiConnection()` 解析 `json.data.ready` 和 `json.data.components`
+   - `fetchApiVersion()` 同步解析 ready/components
+
+4. **frontend/src/components/NetworkStatus.vue**:
+   - 新增第三层 alert：`apiConnected=true` 但 `apiReady=false` 时显示"后端服务启动中..."
+   - `pendingComponents` computed 过滤非 ok 组件，显示中文标签和状态
+   - 组件标签样式：黄色（启动中）、红色（error）、灰色（unavailable）
+   - 自动重试逻辑扩展：`!apiReady` 时也触发定时重试
+
+**返回格式示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "status": "ok",
+    "ready": true,
+    "version": "v1.0.1",
+    "timestamp": 1778140319,
+    "service": "TradingAgents-CN API",
+    "uptime_seconds": 1234.5,
+    "components": {
+      "mongodb": {"status": "ok", "latency_ms": 2.3},
+      "redis": {"status": "ok", "latency_ms": 0.5},
+      "scheduler": {"status": "ok"}
+    }
+  },
+  "message": "服务运行正常"
+}
+```
+
+**关键文件入口**:
+- 后端健康检查: `app/routers/health.py`
+- 后端启动时间: `app/main.py` (lifespan)
+- 前端应用状态: `frontend/src/stores/app.ts`
+- 前端网络状态: `frontend/src/components/NetworkStatus.vue`
+
+---
+
+### 85. NetworkStatus 连接状态 UI 优化 ✅ (2026-05-07)
+
+**问题描述**: `NetworkStatus.vue` 的重试间隔策略不够合理（前3次5秒，4-6次10秒，之后30秒），用户感知后端恢复太慢；缺少连接恢复提示、倒计时显示和启动动画
+
+**优化方案**: 优化重试策略和 UI 显示，让用户更快感知后端恢复
+
+**修改的文件**:
+
+| 文件 | 修改内容 |
+|------|---------|
+| `frontend/src/stores/app.ts` | AppState 新增 `apiConnectTime` 和 `apiResponseTime` 字段；`checkApiConnection` 成功后记录连接时间和响应时间 |
+| `frontend/src/components/NetworkStatus.vue` | 重试策略优化 + 恢复提示 + 倒计时 + 脉冲动画 |
+
+**具体改动**:
+
+1. **app.ts**:
+   - `AppState` 接口新增 `apiConnectTime: number` 和 `apiResponseTime: number`
+   - state 初始化新增 `apiConnectTime: 0` 和 `apiResponseTime: 0`
+   - `checkApiConnection()` 成功时记录 `this.apiConnectTime = Date.now()` 和 `this.apiResponseTime = responseTime`
+
+2. **NetworkStatus.vue 重试间隔策略优化**:
+   - 前5次每5秒（原3次）→ 6-10次每10秒（原4-6次）→ 之后每15秒（原30秒）
+   - 用户更快感知后端恢复
+
+3. **NetworkStatus.vue 连接恢复成功提示**:
+   - 新增 `showRecovery` 状态和 `triggerRecovery()` 方法
+   - 后端恢复时显示绿色 `el-alert`（type="success"），展示响应时间
+   - 3秒后自动消失（slideIn + fadeOut 动画）
+
+4. **NetworkStatus.vue 重试倒计时显示**:
+   - 新增 `countdown` ref 和 `startCountdown()` 方法
+   - 每次调度重试时同步启动倒计时，显示 "Xs 后重试"
+   - 手动重试或连接恢复时清零倒计时
+
+5. **NetworkStatus.vue 后端启动中脉冲点动画**:
+   - 新增 `.pulse-dot` CSS 类，8px 圆形脉冲动画（1.5s 周期）
+   - 前5次重试显示脉冲点 + "后端服务启动中，请稍候..."
+   - 5次以上显示 "无法连接到后端服务，请检查服务是否正常运行"
+
+6. **watch 监听 apiConnected 变化**:
+   - 从断开→连接时自动触发恢复提示和状态重置
+
+**关键文件入口**:
+- 前端网络状态组件: `frontend/src/components/NetworkStatus.vue`
+- 前端应用状态管理: `frontend/src/stores/app.ts`
+
+---
+
+### 84. Docker本地开发模式后端启动速度优化 ✅ (2026-05-07)
+
+**问题描述**: `docker-compose.local.yml` 中后端使用 `python:3.10-slim-bookworm` 基础镜像，每次启动都执行 `pip install -e .`，耗时3-5分钟
+
+**优化方案**: 使用预构建的 `Dockerfile.backend` 镜像替代运行时 pip install，同时保留代码热重载功能
+
+**修改的文件**:
+
+| 文件 | 修改内容 |
+|------|---------|
+| `docker-compose.local.yml` | backend 服务从 `image` 改为 `build` 方式；简化 command；缩短 start_period；移除 pip_cache volume |
+
+**具体改动**:
+
+1. **`image: python:3.10-slim-bookworm`** → **`build: context: . / dockerfile: Dockerfile.backend`** — 依赖在镜像构建时安装，启动时无需 pip install
+2. **command 简化** — 从 `bash -c "pip install... && uvicorn..."` 简化为直接 `python -m uvicorn ... --reload --reload-dir /app/app --reload-dir /app/tradingagents`
+3. **`start_period` 从 300s 缩短到 60s** — 不再需要等待 pip install
+4. **移除 `pip_cache` volume** — 依赖在镜像构建时安装，运行时不再需要 pip 缓存
+5. **保留 `volumes: - .:/app`** — 代码修改实时反映，热重载正常工作
+6. **保留所有 environment / env_file / extra_hosts / depends_on / networks / healthcheck / restart / logging 配置**
+
+**预期效果**: 后端启动时间从 3-5 分钟缩短到 10 秒以内（仅 uvicorn 启动时间）
+
+**关键文件入口**:
+- 本地开发编排: `docker-compose.local.yml`
+- 后端镜像构建: `Dockerfile.backend`
+- 生产环境编排: `docker-compose.yml`
+
+---
 
 ### 83. 厂家API测试429错误修复 ✅ (2026-05-07)
 
@@ -75,6 +219,56 @@
 - 前端网络状态: `frontend/src/components/NetworkStatus.vue`
 - 前端 API 检查: `frontend/src/stores/app.ts`
 - 部署脚本: `scripts/redeploy.bat`
+
+---
+
+### 82. Docker部署3项优化 — 启动加速+UI增强+健康检查 ✅ (2026-05-07)
+
+**优化1: 后端启动加速**
+- `docker-compose.local.yml` backend 从 `image: python:3.10-slim-bookworm` + 运行时 `pip install` 改为 `build: Dockerfile.backend`
+- 启动命令从 `bash -c "pip install... && uvicorn..."` 简化为直接 `python -m uvicorn --reload`
+- `start_period` 从 300s 缩短到 60s
+- **效果**: 后端启动时间从 3-5 分钟缩短到 ~15 秒
+
+**优化2: 前端连接状态 UI 增强**
+- `NetworkStatus.vue` 重试间隔: 前5次5s → 6-10次10s → 之后15s
+- 新增连接恢复绿色提示（3秒自动消失+动画）
+- 新增重试倒计时显示
+- 新增脉冲点动画（启动中状态）
+- `app.ts` 新增 `apiConnectTime` 和 `apiResponseTime` 字段
+
+**优化3: 健康检查端点增强**
+- `/api/health` 新增 `ready`（MongoDB+Redis都OK才true）、`uptime_seconds`、`components` 详细状态
+- 组件检查: MongoDB(`db.command('ping')`+延迟)、Redis(`ping`+延迟)、Scheduler(running状态)
+- `status` 从固定 `"ok"` 改为组件异常时 `"degraded"`
+- `main.py` 记录 `app.state.start_time`
+- 前端 `app.ts` 新增 `apiReady` 和 `apiComponents` 状态
+- `NetworkStatus.vue` 三层提示: 网络断开→后端不可达→后端启动中(组件状态)
+
+**优化4: 一键部署脚本更新**
+- Dev 模式不再跳过 build（因为 backend 改为 build 模式）
+- `curl` → `curl.exe`（修复 Windows PowerShell 兼容性）
+- 后端健康检查重试从 40次×5s 缩短到 20次×3s（启动加速后不需要等那么久）
+- 新增健康检查就绪状态展示
+- 更新帮助文本
+
+**验证结果**:
+- ✅ 后端启动 ~15 秒（之前 3-5 分钟）
+- ✅ 健康检查返回 `ready:true`, `uptime_seconds:15.8`, MongoDB延迟0.8ms, Redis延迟0.5ms
+- ✅ 前端代理正常，无 ECONNREFUSED 错误
+- ✅ 登录接口返回 JWT Token
+- ✅ 一键部署脚本 `redeploy.bat --skip-build` 运行成功
+
+**修改的文件**:
+
+| 文件 | 修改内容 |
+|------|---------|
+| `docker-compose.local.yml` | backend 改为 build 模式 + 简化启动命令 + 缩短 start_period |
+| `app/routers/health.py` | 增强健康检查：组件状态+延迟+就绪检查+运行时长 |
+| `app/main.py` | 记录启动时间 `app.state.start_time` |
+| `frontend/src/stores/app.ts` | 新增 apiReady/apiComponents/apiConnectTime/apiResponseTime |
+| `frontend/src/components/NetworkStatus.vue` | 重试策略+恢复提示+倒计时+脉冲动画+组件状态 |
+| `scripts/redeploy.bat` | Dev模式build+curl.exe兼容+缩短健康检查等待+就绪状态展示 |
 
 ---
 

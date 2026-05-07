@@ -49,11 +49,6 @@ if "%SKIP_BUILD%"=="1" (
 
 echo [2/6] Building Docker images
 echo --------------------------------------------------
-if "%MODE%"=="dev" (
-    echo   Dev mode uses base images with volume mounts, skipping build
-    echo.
-    goto :step3
-)
 docker compose -f %COMPOSE_FILE% build
 if errorlevel 1 (
     echo [FAIL] Image build failed
@@ -109,18 +104,23 @@ echo [5/6] Running health checks
 echo --------------------------------------------------
 
 set "BACKEND_OK=0"
-for /l %%r in (1,1,40) do (
+for /l %%r in (1,1,20) do (
     if "!BACKEND_OK!"=="0" (
-        curl -sf http://localhost:8000/api/health >nul 2>&1
+        curl.exe -sf http://localhost:8000/api/health >nul 2>&1
         if !errorlevel! equ 0 (
             set "BACKEND_OK=1"
         ) else (
-            timeout /t 5 /nobreak >nul 2>&1
+            timeout /t 3 /nobreak >nul 2>&1
         )
     )
 )
 if "!BACKEND_OK!"=="1" (
     echo   [OK] Backend API  http://localhost:8000
+    for /f "delims=" %%i in ('curl.exe -sf http://localhost:8000/api/health 2^>nul') do set "HEALTH_INFO=%%i"
+    echo !HEALTH_INFO! | findstr /C:"ready" >nul 2>&1
+    if !errorlevel! equ 0 (
+        echo   [OK] Backend ready, all components healthy
+    )
 ) else (
     echo   [WARN] Backend API not responding
 )
@@ -129,7 +129,7 @@ if "%MODE%"=="dev" (
     set "FRONTEND_OK=0"
     for /l %%r in (1,1,10) do (
         if "!FRONTEND_OK!"=="0" (
-            curl -sf http://localhost:5173 >nul 2>&1
+            curl.exe -sf http://localhost:5173 >nul 2>&1
             if !errorlevel! equ 0 (
                 set "FRONTEND_OK=1"
             ) else (
@@ -146,7 +146,7 @@ if "%MODE%"=="dev" (
     set "NGINX_OK=0"
     for /l %%r in (1,1,10) do (
         if "!NGINX_OK!"=="0" (
-            curl -sf http://localhost:80/health >nul 2>&1
+            curl.exe -sf http://localhost:80/health >nul 2>&1
             if !errorlevel! equ 0 (
                 set "NGINX_OK=1"
             ) else (
@@ -162,7 +162,7 @@ if "%MODE%"=="dev" (
 )
 
 echo   Testing login...
-curl -sf -X POST http://localhost:8000/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"admin123\"}" >nul 2>&1
+curl.exe -sf -X POST http://localhost:8000/api/auth/login -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"admin123\"}" >nul 2>&1
 if !errorlevel! equ 0 (
     echo   [OK] Login test passed
 ) else (
@@ -212,8 +212,8 @@ echo   --timeout SECS    Health check timeout in seconds (default: 120)
 echo   --help            Show this help message
 echo.
 echo Examples:
-echo   redeploy.bat                  Dev mode with volume mounts
+echo   redeploy.bat                  Dev mode (build + volume mounts)
 echo   redeploy.bat --prod           Prod mode with Dockerfile build
-echo   redeploy.bat --skip-build     Skip build step
+echo   redeploy.bat --skip-build     Skip build step (use cached images)
 echo.
 goto :eof
