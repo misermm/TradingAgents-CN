@@ -4,7 +4,352 @@
 
 ---
 
+## 当前状态概要
+
+**最近完成的改动**: 修复分析报告数据验证问题（6个用户故事全部完成）
+**下一步从哪接着做**: 运行完整分析验证修复效果，如仍有问题继续迭代
+
+### 本轮修复汇总 (2026-05-08)
+
+基于 `results/000002_分析报告_2026-05-08.json` 的分析，修复了6类核心问题：
+
+| # | 问题 | 修复方案 | 修改文件数 |
+|---|------|---------|-----------|
+| 1 | 大师量化评分全部"数据不足" | 新增 `prefetched_quant_data` 字段，结构化快照数据直接传入量化分析 | 4 |
+| 2 | A股新闻获取完全失败 | 新增 `get_stock_news_direct()` 直接调用东方财富新闻API | 3 |
+| 3 | A股情绪获取完全失败 | 新增3个直接API方法（千股千评/人气排名/新闻），添加降级链路 | 2 |
+| 4 | 基本面报告模糊估算 | 添加东方财富直接API为第五优先级数据源 | 1 |
+| 5 | 数据矛盾（PE/EPS/ROE等） | 新增 `validate_data_consistency()` + `apply_consistency_fixes()` | 3 |
+| 6 | 分析师忽略数据矛盾 | 基本面分析师提示词添加一致性要求 | 1 |
+
+**验证结果**: 59个测试全部通过 | 10个模块导入正常 | 新闻/情绪/量化数据获取正常
+
+**关键文件入口**:
+- 量化评分修复: `tradingagents/agents/masters/base_master.py`、`tradingagents/dataflows/china_fundamental_snapshot.py`
+- 新闻/情绪修复: `tradingagents/dataflows/providers/china/eastmoney_direct.py`、`tradingagents/dataflows/news/chinese_finance.py`
+- 数据一致性: `tradingagents/dataflows/china_fundamental_snapshot.py`（`validate_data_consistency`、`apply_consistency_fixes`）
+- 基本面优化: `tradingagents/dataflows/optimized_china_data.py`（`_parse_eastmoney_direct_financial_data`）
+
+---
+
 ## 最近完成的改动
+
+### 103. 综合修复分析报告数据验证问题 ✅ (2026-05-08)
+
+**问题描述**: 分析 `000002_分析报告_2026-05-08.json` 发现多个严重问题：
+1. Warren Buffett/Peter Lynch 量化评分全部"数据不足"（基本面0.5/4, 护城河0/2, 管理0/1）
+2. 新闻报告"实时新闻获取失败 - 000002"，所有新闻源失败
+3. 情绪报告"实时情绪获取失败 - 000002"，所有情绪源失败
+4. 财务数据矛盾：PE 8倍 vs 43倍、ROE 8.5% vs -3.13%、PB 0.8倍 vs 114倍
+5. 基本面报告使用模糊估算（"~2800亿元"）
+6. 大师报告明确指出"财务数据存在严重矛盾和质量问题"
+
+**修复方案**: 6个用户故事系统性修复，Ralph Loop迭代开发
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/dataflows/china_fundamental_snapshot.py` | 新增函数 | `snapshot_to_quant_text()` + `validate_data_consistency()` + `apply_consistency_fixes()` + 报告/量化输出集成 |
+| `tradingagents/agents/utils/agent_states.py` | 新增字段 | `prefetched_quant_data: Annotated[str, ...]` |
+| `tradingagents/graph/data_prefetch.py` | 新增函数 | `_get_china_quant_data()` 生成量化专用数据 |
+| `tradingagents/agents/masters/base_master.py` | 修改逻辑 | 量化分析优先使用 `prefetched_quant_data` + 一致性清洗 |
+| `tradingagents/dataflows/providers/china/eastmoney_direct.py` | 新增方法 | `get_stock_news_direct()` + `_fetch_stock_comment_direct()` + `_fetch_stock_hot_rank_direct()` + `_fetch_stock_news_direct()` |
+| `tradingagents/dataflows/news/realtime_news.py` | 修改逻辑 | 两处添加东方财富直接API降级 |
+| `tradingagents/tools/unified_news_tool.py` | 修改逻辑 | 一处添加东方财富直接API降级 |
+| `tradingagents/dataflows/news/chinese_finance.py` | 修改逻辑 | 4个方法添加东方财富直接API降级 |
+| `tradingagents/dataflows/optimized_china_data.py` | 新增方法 | `_parse_eastmoney_direct_financial_data()` + 第五优先级 + 部分指标降级 |
+| `tradingagents/agents/analysts/fundamentals_analyst.py` | 修改提示词 | 添加数据一致性要求 |
+
+**验证结果**:
+- ✅ 10个核心模块导入正常
+- ✅ 新闻获取: 000002成功获取10条新闻（东方财富直接API）
+- ✅ 量化文本: 21行结构化数据正确生成（ROE、net_margin、pe_ttm等）
+- ✅ 一致性验证: 正确检测3个矛盾（PE/EPS符号、ROE/净利率符号）
+- ✅ 一致性修正: PE值正确设为N/A（因EPS为负）
+- ✅ 59个单元测试全部通过
+- ✅ 2个预存失败与本次修改无关
+
+### 102. 数据源交叉验证和一致性检查 — 防止分析报告出现矛盾数据 ✅ (2026-05-08)
+
+**问题描述**: 分析报告中出现多种数据矛盾：
+1. PE显示8倍但EPS为负（矛盾：负EPS不可能有正PE）
+2. PB同时显示0.8倍和114倍
+3. ROE显示-3.13%但牛方分析师声称8.5%
+4. 现金流：牛方说"4连续季度正"但基本面报告说"负"
+
+**修复方案**: 在3个文件中添加数据一致性验证逻辑
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/dataflows/china_fundamental_snapshot.py` | 新增函数 | 添加 `validate_data_consistency()` + `apply_consistency_fixes()` + 报告/量化输出集成 |
+| `tradingagents/agents/masters/base_master.py` | 修改逻辑 | `_run_master_node` 添加一致性清洗 + `_generate_report_from_prefetched` 添加一致性警告 |
+| `tradingagents/agents/analysts/fundamentals_analyst.py` | 修改提示词 | 系统提示词添加数据一致性要求 |
+
+**详细改动**:
+
+1. **`validate_data_consistency(snapshot_data: dict) -> list`** — 独立验证函数，检测8类数据矛盾：
+   - `PE_vs_EPS_sign`: PE与EPS符号矛盾（负EPS不应有正PE）
+   - `PB_vs_price_and_bvps`: PB与 price/bvps 计算值偏差>50%
+   - `PB_abnormally_high`: PB异常高(>100)但计算值正常
+   - `PB_abnormally_high_near_zero_bvps`: PB异常高且每股净资产接近零
+   - `ROE_vs_net_margin_sign`: ROE与净利率符号不一致
+   - `ROE_vs_margin_and_leverage`: 净利率为正+高负债但ROE为负（可能负净资产）
+   - `cashflow_vs_profit_sign`: 经营现金流与净利润符号矛盾
+   - `fcf_vs_ocf_sign`: 自由现金流与经营现金流符号矛盾
+   - `EPS_vs_net_profit_sign`: EPS与净利润符号矛盾
+   - `liabilities_exceed_assets_but_positive_bvps`: 负债超资产但每股净资产为正
+
+2. **`apply_consistency_fixes(snapshot_data: dict) -> dict`** — 自动修正函数：
+   - `fix_value == "N/A"` → 设置 `status: "corrected_to_na"`
+   - `fix_value == "需验证"` → 设置 `status: "needs_verification"`
+   - `fix_value` 为数值 → 设置 `status: "corrected"` + 保留 `original_value`
+
+3. **快照报告集成** (`format_china_fundamental_snapshot_report`):
+   - 新增3种状态显示：`corrected_to_na`、`needs_verification`、`corrected`
+   - 报告末尾添加"⚠️ 数据一致性验证"部分，列出所有矛盾和建议修正
+   - 无矛盾时显示"✅ 数据一致性验证通过"
+
+4. **量化数据集成** (`snapshot_to_quant_text`):
+   - 支持新增状态字段输出（`[已修正]`、`[待验证]`标签）
+   - 量化文本末尾添加"数据一致性警告"注释
+
+5. **大师分析清洗** (`base_master.py`):
+   - `_run_master_node` 中调用量化分析前，先对基本面数据进行一致性验证
+   - 对矛盾数据自动修正（PE→N/A、PB→计算值等），修正后的数据传入量化分析
+   - `_generate_report_from_prefetched` 新增 `consistency_warnings` 参数
+   - 一致性警告注入到分析提示中，要求LLM在分析中标注矛盾
+
+6. **基本面分析师提示词** (`fundamentals_analyst.py`):
+   - 新增"🔍 数据一致性要求"部分
+   - 要求：EPS为负时PE必须标注N/A、PB异常高必须说明、ROE与净利率矛盾必须标注
+   - 禁止使用与快照数据矛盾的数据
+   - 新增"不允许忽略数据矛盾"禁止项
+
+**验证结果**:
+- ✅ 7个新增单元测试全部通过
+  - `test_validate_data_consistency_detects_positive_pe_with_negative_eps` ✅
+  - `test_validate_data_consistency_detects_abnormally_high_pb` ✅
+  - `test_validate_data_consistency_detects_roe_net_margin_sign_conflict` ✅
+  - `test_validate_data_consistency_detects_cashflow_profit_sign_conflict` ✅
+  - `test_validate_data_consistency_passes_for_consistent_data` ✅
+  - `test_apply_consistency_fixes_corrects_pe_to_na_when_eps_negative` ✅
+  - `test_format_report_includes_consistency_validation_section` ✅
+  - `test_format_report_shows_pass_when_no_issues` ✅
+- ✅ 29/31 完整测试套件通过（2个失败为预存问题，与本次修改无关）
+
+**关键文件入口**:
+- 数据一致性验证: `tradingagents/dataflows/china_fundamental_snapshot.py`（`validate_data_consistency`、`apply_consistency_fixes`）
+- 大师分析清洗: `tradingagents/agents/masters/base_master.py`（`_run_master_node`、`_generate_report_from_prefetched`）
+- 基本面分析师提示词: `tradingagents/agents/analysts/fundamentals_analyst.py`
+- 单元测试: `tests/unit/dataflows/test_china_fundamental_snapshot.py`
+
+### 101. 优化基本面报告生成逻辑，消除模糊估算值 ✅ (2026-05-08)
+
+**问题描述**: `optimized_china_data.py` 的 `_get_real_financial_metrics` 函数在所有数据源失败时，回退到 `_get_industry_default_metrics` 生成行业估算值（如"25倍(行业估算)"），导致报告出现模糊数据。项目已有 `EastMoneyDirectProvider`（eastmoney_direct.py）可直接调用东方财富API获取真实财务数据，但未被 `_get_real_financial_metrics` 使用。
+
+**修复方案**: 在 `_get_real_financial_metrics` 中添加 `EastMoneyDirectProvider` 作为第五优先级数据源，在 `_get_partial_metrics_from_realtime` 中添加东方财富直接API降级方案
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/dataflows/optimized_china_data.py` | 新增方法 | 添加 `_parse_eastmoney_direct_financial_data` 解析方法 |
+| `tradingagents/dataflows/optimized_china_data.py` | 修改逻辑 | `_get_real_financial_metrics` 添加第五优先级 |
+| `tradingagents/dataflows/optimized_china_data.py` | 修改逻辑 | `_get_partial_metrics_from_realtime` 添加东方财富降级 |
+
+**详细改动**:
+
+1. **`_get_real_financial_metrics` 添加第五优先级**:
+   - 在 BaoStock（第四优先级）之后，`return None` 之前，新增东方财富直接API作为第五优先级
+   - 调用 `EastMoneyDirectProvider.get_financial_data()` 获取财务数据
+   - 调用 `EastMoneyDirectProvider.get_stock_quotes()` 获取行情数据（PE/PB/市值）
+   - 数据源优先级: MongoDB缓存 → AKShare → Tushare → BaoStock → **东方财富直接API** → 部分实时指标 → 行业估算
+
+2. **新增 `_parse_eastmoney_direct_financial_data` 方法**:
+   - 解析 `get_financial_data()` 返回的 `latest` 字段
+   - 内部辅助函数 `_pct_val()`: 自动识别百分比格式（小数0.30→30.0%，百分比30.0→30.0%）
+   - 内部辅助函数 `_yi_val()`: 自动将元转换为亿元（≥1e8时除以1e8）
+   - 解析字段: EPS、ROE、毛利率、营收、营收增长、净利润、利润增长、扣非净利润、总资产、总负债、流动资产、流动负债、每股净资产、经营现金流、自由现金流、股息率
+   - 行情数据补充: PE_TTM、PE(动)、PB、总市值
+   - 派生指标计算: 资产负债率、流动比率、ROA、净利率、每股自由现金流
+   - 评分计算: 复用 `_calculate_fundamental_score`、`_calculate_valuation_score`、`_calculate_growth_score`、`_calculate_risk_level`
+   - 标记 `data_source: 'EastMoneyDirect'`
+
+3. **`_get_partial_metrics_from_realtime` 添加东方财富降级**:
+   - 优先使用东方财富直接API获取 PE/PB/市值 等实时指标
+   - 东方财富失败时降级到原有的 `calculate_realtime_pe_pb`
+   - 东方财富数据质量更高（fundamental_score=4 vs 原有3），标记 `data_source: 'EastMoneyDirect'`
+
+**验证结果**:
+- ✅ 语法检查通过
+- ✅ 模块导入成功，所有方法存在
+- ✅ 百分比形式输入（roe=30.0）正确解析: roe=30.0%, gross_margin=91.0%
+- ✅ 小数形式输入（roe=0.30）正确解析: roe=30.0%, gross_margin=91.0%
+- ✅ 金额转换正确: revenue=1500000000000 → 15000.00亿元
+- ✅ 行情数据补充正确: pe=25.0倍, pb=5.00倍, pe_ttm=30.0倍, total_mv=20000.00亿元
+- ✅ 派生指标计算正确: debt_ratio=40.0%, current_ratio=2.00, roa=25.0%, net_margin=33.3%
+- ✅ 现有测试不受影响（2个预存失败与本次修改无关）
+
+**关键文件入口**:
+- 基本面数据获取: `tradingagents/dataflows/optimized_china_data.py`（`_get_real_financial_metrics`、`_parse_eastmoney_direct_financial_data`、`_get_partial_metrics_from_realtime`）
+- 东方财富直接API: `tradingagents/dataflows/providers/china/eastmoney_direct.py`
+
+**已知问题与现状**:
+- 当所有5个数据源都失败时，仍会降级到行业估算（但概率大幅降低）
+- 东方财富直接API不需要API Key，但需要网络能访问东方财富服务器
+- `_calculate_growth_score` 目前缺少营收增长数据的评分逻辑（基础分6.0，仅按行业微调）
+
+### 100. 修复A股情绪数据获取完全失败问题 ✅ (2026-05-08)
+
+**问题描述**: A股情绪数据获取依赖 AKShare 的 `ak.stock_comment_em()` 和 `ak.stock_hot_rank_em()` 函数，这些函数经常因API变更或网络问题失败，失败后情绪数据全部为0，导致报告显示"实时情绪获取失败"。
+
+**根因分析**:
+1. 情绪数据获取链路中 AKShare 是唯一的数据源，无降级方案
+2. AKShare 的 `stock_comment_em` 和 `stock_hot_rank_em` 依赖东方财富网页接口，接口变更或网络波动即导致完全失败
+3. 项目已有 `eastmoney_direct.py` 直接调用东方财富API获取行情/财务数据，但没有情绪相关API
+4. 新闻获取也缺少直接API降级（`chinese_finance.py` 中的 `_get_finance_news_sentiment`）
+
+**修复方案**: 在 `eastmoney_direct.py` 中新增直接调用东方财富情绪API的方法，在 `chinese_finance.py` 中添加 AKShare → 直接API 降级逻辑
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/dataflows/providers/china/eastmoney_direct.py` | 新增方法 | 添加3个情绪相关直接API方法 |
+| `tradingagents/dataflows/news/chinese_finance.py` | 修改逻辑 | 4个方法添加东方财富直接API降级 |
+
+**详细改动**:
+
+1. **eastmoney_direct.py 新增3个方法**:
+   - `_fetch_stock_comment_direct(code)` — 直接调用东方财富千股千评API（替代 `ak.stock_comment_em()`）
+     - API: `datacenter-web.eastmoney.com/api/data/v1/get`
+     - reportName: RPT_DMSK_TS_STOCKNEW
+     - 使用 filter 参数按股票代码精确查询（pageSize=5），避免全量拉取
+     - 字段映射: TOTALSCORE→综合得分, RANK→目前排名, RANK_UP→上升, FOCUS→关注指数, ORG_PARTICIPATE→机构参与度, PRIME_COST→主力成本, CLOSE_PRICE→最新价, CHANGE_RATE→涨跌幅, TURNOVERRATE→换手率, PE_DYNAMIC→市盈率
+     - 返回格式与 AKShare 版本完全兼容
+   - `_fetch_stock_hot_rank_direct(code)` — 直接调用东方财富人气排名API（替代 `ak.stock_hot_rank_em()`）
+     - Step1: POST `emappdata.eastmoney.com/stockrank/getAllCurrentList` 获取TOP100排名
+     - Step2: GET `push2.eastmoney.com/api/qt/ulist.np/get` 获取行情数据
+     - 支持SZ/SH前缀代码匹配
+   - `_fetch_stock_news_direct(code, page_size)` — 直接调用东方财富新闻搜索API（替代 `ak.stock_news_em()`）
+     - API: `search-api-web.eastmoney.com/search/jsonp`
+     - 自动剥离JSONP回调包装
+     - 返回标准化的新闻列表（title/content/source/publish_time/url）
+
+2. **chinese_finance.py 降级逻辑**:
+   - `_get_eastmoney_direct_provider()` — 懒加载 EastMoneyDirectProvider 实例
+   - `_get_stock_forum_sentiment()` — AKShare失败/不可用/未找到时，降级到 `_get_stock_forum_sentiment_direct()`
+   - `_get_stock_forum_sentiment_direct()` — 调用 `_fetch_stock_comment_direct()` 获取千股千评
+   - `_get_stock_hot_rank()` — AKShare失败/不可用/未找到时，降级到 `_get_stock_hot_rank_direct()`
+   - `_get_stock_hot_rank_direct()` — 调用 `_fetch_stock_hot_rank_direct()` 获取人气排名
+   - `_get_finance_news_sentiment()` — AKShare+AKShareProvider都失败后，降级到 `_get_finance_news_direct()`
+   - `_get_finance_news_direct()` — 调用 `_fetch_stock_news_direct()` 获取新闻
+   - `_get_company_chinese_name()` — AKShare失败后，降级到 `_fetch_stock_comment_direct()` 获取名称
+
+**降级链路**:
+- 千股千评: AKShare `stock_comment_em()` → 东方财富直接API `_fetch_stock_comment_direct()`
+- 人气排名: AKShare `stock_hot_rank_em()` → 东方财富直接API `_fetch_stock_hot_rank_direct()`
+- 个股新闻: AKShare `stock_news_em()` → AKShareProvider → 东方财富直接API `_fetch_stock_news_direct()`
+- 公司名称: AKShare `stock_comment_em()` → 东方财富直接API `_fetch_stock_comment_direct()`
+
+**验证结果**:
+- ✅ 千股千评: 600519（贵州茅台）成功获取，综合得分77.3，排名176，关注指数94，机构参与度56%
+- ✅ 千股千评: 000001（平安银行）成功获取，综合得分68.4，排名1538
+- ✅ 人气排名: 600519不在TOP100时正确返回 `in_top100: False`
+- ✅ 个股新闻: 600519成功获取5条新闻，包含标题/内容/来源/时间/链接
+- ✅ 完整集成: 综合情绪"非常积极"（评分0.43，置信度高），报告生成正常
+- ✅ 语法检查: 两个文件全部通过
+
+**关键文件入口**:
+- 东方财富直接API: `tradingagents/dataflows/providers/china/eastmoney_direct.py`（新增3个 `_fetch_*_direct` 方法）
+- 情绪数据聚合: `tradingagents/dataflows/news/chinese_finance.py`（新增4个 `_*_direct` 降级方法）
+
+**问题描述**: A股新闻获取依赖 AKShare 的 `ak.stock_news_em()` 函数，该函数经常因API变更或网络问题失败，失败后所有新闻源都不可用，导致报告显示"实时新闻获取失败"。
+
+**根因分析**:
+1. A股新闻获取链路中 AKShare 是唯一的数据源，无降级方案
+2. AKShare 的 `stock_news_em` 依赖东方财富网页接口，接口变更或网络波动即导致完全失败
+3. 项目已有 `eastmoney_direct.py` 直接调用东方财富API获取行情/财务数据，但没有新闻API
+
+**修复方案**: 在 `eastmoney_direct.py` 中新增直接调用东方财富新闻搜索API的方法，作为AKShare的降级方案
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/dataflows/providers/china/eastmoney_direct.py` | 新增方法 | 添加 `get_stock_news_direct()` 方法，直接调用东方财富搜索API获取个股新闻 |
+| `tradingagents/dataflows/news/realtime_news.py` | 修改逻辑 | 在 `_get_chinese_finance_news` 和 `get_realtime_stock_news` 中添加东方财富直接API降级 |
+| `tradingagents/tools/unified_news_tool.py` | 修改逻辑 | 在 `_get_a_share_news` 中添加东方财富直接API降级 |
+
+**详细改动**:
+1. **eastmoney_direct.py**:
+   - 新增 `NEWS_SEARCH_URL` 常量（东方财富搜索API地址）
+   - 新增 `_build_news_search_param()` 构建搜索参数JSON
+   - 新增 `_strip_jsonp()` 剥离JSONP回调包装
+   - 新增 `_fetch_stock_news()` 同步获取新闻（供ResilientHttpClient调用）
+   - 新增 `get_stock_news_direct()` 公开方法，返回与AKShare `stock_news_em` 列名一致的DataFrame
+   - 返回列名：新闻标题、新闻内容、文章来源、发布时间、新闻链接
+   - 使用 `ResilientHttpClient` 包装请求，提供重试/超时/熔断能力
+   - 使用 `curl_cffi` 模拟浏览器指纹（如可用）
+
+2. **realtime_news.py**:
+   - `_get_chinese_finance_news()`: AKShare失败后、RSS之前，添加东方财富直接API降级（步骤1.5）
+   - `get_realtime_stock_news()`: AKShare `get_stock_news_em` 失败后，添加东方财富直接API降级（步骤2.5）
+
+3. **unified_news_tool.py**:
+   - `_get_a_share_news()`: 在东方财富实时新闻和Google新闻之间，添加东方财富直接API降级（优先级1.5）
+
+**降级链路**:
+- A股新闻：数据库缓存 → AKShare(东方财富) → **东方财富直接API** → Google新闻 → OpenAI全球新闻
+- 东方财富直接API绕过AKShare中间层，直接调用东方财富搜索API
+
+**验证结果**:
+- 600519（贵州茅台）：成功获取5条新闻，包含标题/内容/来源/时间/链接
+- 000001（平安银行）：成功获取3条新闻
+- DataFrame列名与AKShare `stock_news_em` 完全一致
+- 语法检查：三个文件全部通过
+
+### 98. 修复大师量化评分"数据不足"问题 ✅ (2026-05-08)
+
+**问题描述**: 巴菲特/林奇量化评分（`quant_buffett.py` / `quant_lynch.py`）全部显示"数据不足"，无法正常评分。
+
+**根因分析**:
+1. `base_master.py` 的 `_run_master_node()` 调用 `quant_analyzer(raw_data_str)` 传入叙述性文本（含 markdown、注释、中文标签）
+2. `quantitative_base.py` 的 `extract_financial_data()` 从叙述性文本中提取关键值不可靠
+3. 导致 `quant_buffett.py` 和 `quant_lynch.py` 无法获取 ROE、net_margin 等关键字段
+
+**修复方案**: 新增量化分析专用数据通道，将结构化快照数据转换为干净的 key:value 格式文本，绕过叙述性文本解析
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/dataflows/china_fundamental_snapshot.py` | 新增函数 | 添加 `snapshot_to_quant_text()` + `_QUANT_NAME_MAP` + `_QUANT_PERCENT_FIELDS` |
+| `tradingagents/agents/utils/agent_states.py` | 新增字段 | 添加 `prefetched_quant_data` 字段 |
+| `tradingagents/graph/data_prefetch.py` | 新增函数 | 添加 `_get_china_quant_data()` 生成量化数据，存储到 state |
+| `tradingagents/agents/masters/base_master.py` | 修改逻辑 | 量化评分优先使用 `prefetched_quant_data`，数据质量检查仍用叙述性文本 |
+
+**详细改动**:
+1. **china_fundamental_snapshot.py**: 定义 `_QUANT_NAME_MAP`（快照字段→标准量化字段名映射）、`_QUANT_PERCENT_FIELDS`（百分比字段集合）、`snapshot_to_quant_text()` 函数将快照转为 "key: value\n" 格式
+2. **agent_states.py**: 添加 `prefetched_quant_data: Annotated[str, "Pre-fetched structured quantitative data for quant analyzers"]`
+3. **data_prefetch.py**: 新增 `_get_china_quant_data()` 函数，调用 `collect_china_free_source_payloads` → `build_china_fundamental_snapshot` → `snapshot_to_quant_text` 生成量化数据
+4. **base_master.py**: `quant_analyzer()` 优先使用 `prefetched_quant_data`，为空时回退到 `prefetched_fundamentals_data`；`evaluate_master_data_requirements()` 仍使用叙述性文本
+
+**关键设计决策**:
+- 百分比值转换为小数（如 -3.13% → -0.0313），abs(value)>1 时除以100
+- 金额值保持原始数值（亿元单位）
+- `pe_ttm` 同时输出为 `pe_ttm` 和 `pe_ratio`（兼容不同量化分析器）
+- `net_profit` 同时输出为 `net_income` 和 `net_profit`
+- 数据质量检查仍使用叙述性文本（包含中文标签，便于匹配定性字段）
+
+**验证结果**:
+- 11项百分比/数值转换验证全部 PASS
+- Buffett 评分：10.0/16（之前"数据不足"），3个子分析全部 OK
+- Lynch 评分：6/15（之前"数据不足"），4个子分析全部 OK
+- 空快照/缺失字段回退验证 PASS
 
 ### 97. 本地LM Studio/Ollama模型无需API Key即可使用 ✅ (2026-05-08)
 

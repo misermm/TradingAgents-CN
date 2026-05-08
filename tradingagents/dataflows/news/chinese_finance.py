@@ -64,11 +64,22 @@ class ChineseFinanceDataAggregator:
                 'timestamp': datetime.now().isoformat()
             }
 
+    def _get_eastmoney_direct_provider(self):
+        try:
+            from tradingagents.dataflows.providers.china.eastmoney_direct import EastMoneyDirectProvider
+            if not hasattr(self, '_em_direct_provider') or self._em_direct_provider is None:
+                self._em_direct_provider = EastMoneyDirectProvider()
+            return self._em_direct_provider
+        except Exception as e:
+            logger.warning(f"EastMoneyDirectProvider unavailable: {e}")
+            return None
+
     def _get_stock_forum_sentiment(self, ticker: str, days: int) -> Dict:
         try:
             ak = self._get_akshare()
             if ak is None:
-                return {'sentiment_score': 0, 'confidence': 0, 'data_source': 'unavailable'}
+                logger.info("AKShare不可用，尝试东方财富直接API获取千股千评")
+                return self._get_stock_forum_sentiment_direct(ticker)
 
             code = self._normalize_code(ticker)
 
@@ -81,12 +92,13 @@ class ChineseFinanceDataAggregator:
                     self._comment_cache = df
                     self._comment_cache_time = time.time()
                 except Exception as e:
-                    logger.warning(f"stock_comment_em failed: {e}")
-                    return {'sentiment_score': 0, 'confidence': 0, 'data_source': 'failed'}
+                    logger.warning(f"stock_comment_em failed: {e}, 降级到直接API")
+                    return self._get_stock_forum_sentiment_direct(ticker)
 
             row = df[df['代码'] == code]
             if row.empty:
-                return {'sentiment_score': 0, 'confidence': 0, 'data_source': 'not_found'}
+                logger.info(f"AKShare千股千评未找到{code}，尝试直接API")
+                return self._get_stock_forum_sentiment_direct(ticker)
 
             r = row.iloc[0]
             score = float(r.get('综合得分', 0)) if pd.notna(r.get('综合得分')) else 0
@@ -138,14 +150,34 @@ class ChineseFinanceDataAggregator:
             }
 
         except Exception as e:
-            logger.error(f"_get_stock_forum_sentiment failed: {e}")
+            logger.error(f"_get_stock_forum_sentiment failed: {e}, 降级到直接API")
+            return self._get_stock_forum_sentiment_direct(ticker)
+
+    def _get_stock_forum_sentiment_direct(self, ticker: str) -> Dict:
+        try:
+            provider = self._get_eastmoney_direct_provider()
+            if provider is None:
+                return {'sentiment_score': 0, 'confidence': 0, 'data_source': 'unavailable'}
+
+            code = self._normalize_code(ticker)
+            result = provider._fetch_stock_comment_direct(code)
+
+            if result is not None:
+                logger.info(f"✅ 东方财富直接API获取千股千评成功: {code}")
+                return result
+
+            return {'sentiment_score': 0, 'confidence': 0, 'data_source': 'failed'}
+
+        except Exception as e:
+            logger.error(f"_get_stock_forum_sentiment_direct failed: {e}")
             return {'sentiment_score': 0, 'confidence': 0, 'error': str(e)}
 
     def _get_stock_hot_rank(self, ticker: str) -> Dict:
         try:
             ak = self._get_akshare()
             if ak is None:
-                return {'sentiment_score': 0, 'confidence': 0, 'data_source': 'unavailable'}
+                logger.info("AKShare不可用，尝试东方财富直接API获取人气排名")
+                return self._get_stock_hot_rank_direct(ticker)
 
             code = self._normalize_code(ticker)
 
@@ -158,8 +190,8 @@ class ChineseFinanceDataAggregator:
                     self._hot_rank_cache = df
                     self._hot_rank_cache_time = time.time()
                 except Exception as e:
-                    logger.warning(f"stock_hot_rank_em failed: {e}")
-                    return {'sentiment_score': 0, 'confidence': 0, 'data_source': 'failed'}
+                    logger.warning(f"stock_hot_rank_em failed: {e}, 降级到直接API")
+                    return self._get_stock_hot_rank_direct(ticker)
 
             hot_code_variants = [code, f"SZ{code}", f"SH{code}"]
             row = df[df['代码'].isin(hot_code_variants)]
@@ -167,12 +199,7 @@ class ChineseFinanceDataAggregator:
                 row = df[df['代码'] == code]
 
             if row.empty:
-                return {
-                    'in_top100': False,
-                    'sentiment_score': 0,
-                    'confidence': 0.3,
-                    'data_source': 'eastmoney_hot_rank'
-                }
+                return self._get_stock_hot_rank_direct(ticker)
 
             r = row.iloc[0]
             rank = int(r.get('当前排名', 0)) if pd.notna(r.get('当前排名')) else 0
@@ -210,48 +237,48 @@ class ChineseFinanceDataAggregator:
             }
 
         except Exception as e:
-            logger.error(f"_get_stock_hot_rank failed: {e}")
+            logger.error(f"_get_stock_hot_rank failed: {e}, 降级到直接API")
+            return self._get_stock_hot_rank_direct(ticker)
+
+    def _get_stock_hot_rank_direct(self, ticker: str) -> Dict:
+        try:
+            provider = self._get_eastmoney_direct_provider()
+            if provider is None:
+                return {'sentiment_score': 0, 'confidence': 0, 'data_source': 'unavailable'}
+
+            code = self._normalize_code(ticker)
+            result = provider._fetch_stock_hot_rank_direct(code)
+
+            if result is not None:
+                logger.info(f"✅ 东方财富直接API获取人气排名成功: {code}")
+                return result
+
+            return {
+                'in_top100': False,
+                'sentiment_score': 0,
+                'confidence': 0.3,
+                'data_source': 'eastmoney_hot_rank_direct'
+            }
+
+        except Exception as e:
+            logger.error(f"_get_stock_hot_rank_direct failed: {e}")
             return {'sentiment_score': 0, 'confidence': 0, 'error': str(e)}
 
     def _get_finance_news_sentiment(self, ticker: str, days: int) -> Dict:
         try:
             ak = self._get_akshare()
-            if ak is None:
-                return {'sentiment_score': 0, 'confidence': 0, 'news_count': 0}
-
             code = self._normalize_code(ticker)
 
             news_items = []
-            try:
+            if ak is not None:
                 try:
-                    pd.options.future.infer_string = False
-                except Exception:
-                    pass
-                news_df = ak.stock_news_em(symbol=code)
-                if news_df is not None and not news_df.empty:
-                    for _, row in news_df.head(20).iterrows():
-                        title = str(row.get('新闻标题', '') or row.get('标题', ''))
-                        content = str(row.get('新闻内容', '') or row.get('内容', ''))
-                        source = str(row.get('文章来源', '') or row.get('来源', ''))
-                        pub_time = str(row.get('发布时间', '') or row.get('时间', ''))
-                        url = str(row.get('新闻链接', '') or row.get('链接', ''))
-                        news_items.append({
-                            'title': title,
-                            'content': content[:500],
-                            'source': source,
-                            'publish_time': pub_time,
-                            'url': url
-                        })
-            except Exception as e:
-                logger.warning(f"stock_news_em failed for {code}: {e}")
-
-            if not news_items:
-                try:
-                    from tradingagents.dataflows.providers.china.akshare import AKShareProvider
-                    provider = AKShareProvider()
-                    fallback_df = provider.get_stock_news_sync(symbol=code, limit=15)
-                    if fallback_df is not None and not fallback_df.empty:
-                        for _, row in fallback_df.head(15).iterrows():
+                    try:
+                        pd.options.future.infer_string = False
+                    except Exception:
+                        pass
+                    news_df = ak.stock_news_em(symbol=code)
+                    if news_df is not None and not news_df.empty:
+                        for _, row in news_df.head(20).iterrows():
                             title = str(row.get('新闻标题', '') or row.get('标题', ''))
                             content = str(row.get('新闻内容', '') or row.get('内容', ''))
                             source = str(row.get('文章来源', '') or row.get('来源', ''))
@@ -264,8 +291,34 @@ class ChineseFinanceDataAggregator:
                                 'publish_time': pub_time,
                                 'url': url
                             })
-                except Exception as e2:
-                    logger.warning(f"AKShareProvider fallback also failed for {code}: {e2}")
+                except Exception as e:
+                    logger.warning(f"stock_news_em failed for {code}: {e}")
+
+                if not news_items:
+                    try:
+                        from tradingagents.dataflows.providers.china.akshare import AKShareProvider
+                        provider = AKShareProvider()
+                        fallback_df = provider.get_stock_news_sync(symbol=code, limit=15)
+                        if fallback_df is not None and not fallback_df.empty:
+                            for _, row in fallback_df.head(15).iterrows():
+                                title = str(row.get('新闻标题', '') or row.get('标题', ''))
+                                content = str(row.get('新闻内容', '') or row.get('内容', ''))
+                                source = str(row.get('文章来源', '') or row.get('来源', ''))
+                                pub_time = str(row.get('发布时间', '') or row.get('时间', ''))
+                                url = str(row.get('新闻链接', '') or row.get('链接', ''))
+                                news_items.append({
+                                    'title': title,
+                                    'content': content[:500],
+                                    'source': source,
+                                    'publish_time': pub_time,
+                                    'url': url
+                                })
+                    except Exception as e2:
+                        logger.warning(f"AKShareProvider fallback also failed for {code}: {e2}")
+
+            if not news_items:
+                logger.info(f"AKShare新闻获取失败，尝试东方财富直接API获取新闻: {code}")
+                news_items = self._get_finance_news_direct(code)
 
             if not news_items:
                 return {'sentiment_score': 0, 'confidence': 0, 'news_count': 0}
@@ -306,30 +359,55 @@ class ChineseFinanceDataAggregator:
             logger.error(f"_get_finance_news_sentiment failed: {e}")
             return {'error': str(e), 'sentiment_score': 0, 'confidence': 0, 'news_count': 0}
 
+    def _get_finance_news_direct(self, code: str) -> List[Dict]:
+        try:
+            provider = self._get_eastmoney_direct_provider()
+            if provider is None:
+                return []
+
+            result = provider._fetch_stock_news_direct(code, page_size=20)
+
+            if result is not None and len(result) > 0:
+                logger.info(f"✅ 东方财富直接API获取新闻成功: {code}, 共{len(result)}条")
+                return result
+
+            return []
+
+        except Exception as e:
+            logger.error(f"_get_finance_news_direct failed: {e}")
+            return []
+
     def _get_company_chinese_name(self, ticker: str) -> Optional[str]:
         try:
             ak = self._get_akshare()
-            if ak is None:
-                return None
-
             code = self._normalize_code(ticker)
 
-            now = time.time()
-            if self._comment_cache is not None and self._comment_cache_time and (now - self._comment_cache_time) < self._cache_ttl:
-                df = self._comment_cache
-            else:
-                try:
-                    df = ak.stock_comment_em()
-                    self._comment_cache = df
-                    self._comment_cache_time = time.time()
-                except Exception:
-                    return None
+            if ak is not None:
+                now = time.time()
+                if self._comment_cache is not None and self._comment_cache_time and (now - self._comment_cache_time) < self._cache_ttl:
+                    df = self._comment_cache
+                else:
+                    try:
+                        df = ak.stock_comment_em()
+                        self._comment_cache = df
+                        self._comment_cache_time = time.time()
+                    except Exception:
+                        df = None
 
-            row = df[df['代码'] == code]
-            if not row.empty:
-                name = str(row.iloc[0].get('名称', ''))
-                if name and name != 'nan':
-                    return name
+                if df is not None:
+                    row = df[df['代码'] == code]
+                    if not row.empty:
+                        name = str(row.iloc[0].get('名称', ''))
+                        if name and name != 'nan':
+                            return name
+
+            provider = self._get_eastmoney_direct_provider()
+            if provider is not None:
+                result = provider._fetch_stock_comment_direct(code)
+                if result is not None:
+                    name = result.get('name', '')
+                    if name and name != 'nan':
+                        return name
 
             return None
 

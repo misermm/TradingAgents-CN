@@ -386,6 +386,70 @@ class RealtimeNewsAggregator:
             except Exception as ak_e:
                 logger.error(f"[中文财经新闻] 获取东方财富新闻失败: {ak_e}")
 
+            # 1.5 AKShare失败后，尝试东方财富直接API降级
+            if not news_items:
+                try:
+                    logger.info(f"[中文财经新闻] AKShare未返回新闻，尝试东方财富直接API降级")
+                    from tradingagents.dataflows.providers.china.eastmoney_direct import EastMoneyDirectProvider
+
+                    em_provider = EastMoneyDirectProvider()
+                    if '.' in ticker and any(suffix in ticker for suffix in ['.US', '.N', '.O', '.NYSE', '.NASDAQ']):
+                        logger.info(f"[中文财经新闻] 检测到美股代码 {ticker}，跳过东方财富直接API")
+                    else:
+                        clean_ticker_em = ticker.replace('.SH', '').replace('.SZ', '').replace('.SS', '')\
+                                        .replace('.HK', '').replace('.XSHE', '').replace('.XSHG', '')
+
+                        em_start_time = datetime.now(ZoneInfo(get_timezone_name()))
+                        news_df = em_provider.get_stock_news_direct(symbol=clean_ticker_em, page_size=10)
+
+                        if news_df is not None and not news_df.empty:
+                            logger.info(f"[中文财经新闻] 东方财富直接API返回 {len(news_df)} 条新闻数据，开始处理")
+                            processed_count = 0
+                            skipped_count = 0
+
+                            for _, row in news_df.iterrows():
+                                try:
+                                    time_str = row.get('发布时间', '') or row.get('时间', '')
+                                    if time_str:
+                                        try:
+                                            publish_time = datetime.strptime(str(time_str), '%Y-%m-%d %H:%M:%S').replace(tzinfo=ZoneInfo(get_timezone_name()))
+                                        except Exception:
+                                            try:
+                                                publish_time = datetime.strptime(str(time_str), '%Y-%m-%d').replace(tzinfo=ZoneInfo(get_timezone_name()))
+                                            except Exception:
+                                                publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+                                    else:
+                                        publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+
+                                    if publish_time < datetime.now(ZoneInfo(get_timezone_name())) - timedelta(hours=hours_back):
+                                        skipped_count += 1
+                                        continue
+
+                                    title = row.get('新闻标题', '') or row.get('标题', '')
+                                    content = row.get('新闻内容', '') or row.get('内容', '')
+                                    urgency = self._assess_news_urgency(title, content)
+
+                                    news_items.append(NewsItem(
+                                        title=title,
+                                        content=content,
+                                        source=row.get('文章来源', '') or row.get('来源', '') or '东方财富',
+                                        publish_time=publish_time,
+                                        url=row.get('新闻链接', '') or row.get('链接', ''),
+                                        urgency=urgency,
+                                        relevance_score=self._calculate_relevance(title, ticker)
+                                    ))
+                                    processed_count += 1
+                                except Exception as item_e:
+                                    logger.error(f"[中文财经新闻] 处理东方财富直接API新闻项目失败: {item_e}")
+                                    continue
+
+                            em_time = (datetime.now(ZoneInfo(get_timezone_name())) - em_start_time).total_seconds()
+                            logger.info(f"[中文财经新闻] 东方财富直接API新闻处理完成，成功: {processed_count}条，跳过: {skipped_count}条，耗时: {em_time:.2f}秒")
+                        else:
+                            logger.info(f"[中文财经新闻] 东方财富直接API未返回新闻数据")
+                except Exception as em_e:
+                    logger.error(f"[中文财经新闻] 东方财富直接API降级失败: {em_e}")
+
             # 2. 财联社RSS (如果可用)
             logger.info(f"[中文财经新闻] 开始获取财联社RSS新闻")
             rss_start_time = datetime.now(ZoneInfo(get_timezone_name()))
@@ -837,6 +901,44 @@ def get_realtime_stock_news(ticker: str, curr_date: str, hours_back: int = 6) ->
     else:
         logger.info(f"[新闻分析] ========== 跳过A股东方财富新闻获取 ==========")
         logger.info(f"[新闻分析] 股票类型为 {stock_type}，不是A股，跳过东方财富新闻源")
+
+    if is_china_stock:
+        # A股所有AKShare路径都失败后，尝试东方财富直接API降级
+        try:
+            logger.info(f"[新闻分析] ========== 步骤2.5: 东方财富直接API降级 ==========")
+            from tradingagents.dataflows.providers.china.eastmoney_direct import EastMoneyDirectProvider
+
+            em_provider = EastMoneyDirectProvider()
+            clean_ticker = ticker.replace('.SH', '').replace('.SZ', '').replace('.SS', '')\
+                            .replace('.XSHE', '').replace('.XSHG', '')
+
+            start_time = datetime.now(ZoneInfo(get_timezone_name()))
+            news_df = em_provider.get_stock_news_direct(symbol=clean_ticker, page_size=10)
+            time_taken = (datetime.now(ZoneInfo(get_timezone_name())) - start_time).total_seconds()
+
+            if news_df is not None and not news_df.empty:
+                news_count = len(news_df)
+                logger.info(f"[新闻分析] 东方财富直接API获取成功: {news_count} 条新闻，耗时 {time_taken:.2f} 秒")
+
+                report = f"# {ticker} 东方财富新闻报告\n\n"
+                report += f"📅 生成时间: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y-%m-%d %H:%M:%S')}\n"
+                report += f"📊 新闻总数: {news_count}条\n"
+                report += f"🕒 获取耗时: {time_taken:.2f}秒\n\n"
+
+                for _, row in news_df.iterrows():
+                    report += f"### {row.get('新闻标题', '') or row.get('标题', '')}\n"
+                    report += f"📅 {row.get('发布时间', '') or row.get('时间', '')}\n"
+                    report += f"🔗 {row.get('新闻链接', '') or row.get('链接', '')}\n\n"
+                    content = row.get('新闻内容', '') or row.get('内容', '') or '无内容'
+                    report += f"{content}\n\n"
+
+                total_time_taken = (datetime.now(ZoneInfo(get_timezone_name())) - start_total_time).total_seconds()
+                logger.info(f"[新闻分析] 东方财富直接API降级成功，总耗时 {total_time_taken:.2f} 秒")
+                return report
+            else:
+                logger.warning(f"[新闻分析] 东方财富直接API未获取到 {ticker} 的新闻，耗时 {time_taken:.2f} 秒")
+        except Exception as e:
+            logger.error(f"[新闻分析] 东方财富直接API降级失败: {e}")
 
     if is_china_stock:
         total_time_taken = (datetime.now(ZoneInfo(get_timezone_name())) - start_total_time).total_seconds()

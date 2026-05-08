@@ -337,6 +337,39 @@ class UnifiedNewsAnalyzer:
         except Exception as e:
             logger.warning(f"[统一新闻工具] 东方财富新闻获取失败: {e}")
         
+        # 优先级1.5: 东方财富直接API降级（绕过AKShare）
+        try:
+            logger.info(f"[统一新闻工具] 尝试东方财富直接API获取新闻...")
+            from tradingagents.dataflows.providers.china.eastmoney_direct import EastMoneyDirectProvider
+
+            em_provider = EastMoneyDirectProvider()
+            clean_code = stock_code.replace('.SH', '').replace('.SZ', '').replace('.SS', '')\
+                                   .replace('.XSHE', '').replace('.XSHG', '')
+            news_df = em_provider.get_stock_news_direct(symbol=clean_code, page_size=10)
+
+            if news_df is not None and not news_df.empty:
+                news_count = len(news_df)
+                logger.info(f"[统一新闻工具] ✅ 东方财富直接API获取成功: {news_count} 条新闻")
+
+                report = f"# {stock_code} 东方财富新闻报告\n\n"
+                report += f"📅 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                report += f"📊 新闻总数: {news_count}条\n\n"
+
+                for _, row in news_df.iterrows():
+                    title = row.get('新闻标题', '') or row.get('标题', '')
+                    report += f"### {title}\n"
+                    report += f"📅 {row.get('发布时间', '') or row.get('时间', '')}\n"
+                    report += f"🔗 {row.get('新闻链接', '') or row.get('链接', '')}\n\n"
+                    content = row.get('新闻内容', '') or row.get('内容', '')
+                    if content:
+                        report += f"{content[:500]}\n\n" if len(str(content)) > 500 else f"{content}\n\n"
+
+                return self._format_news_result(report, "东方财富直接API", model_info)
+            else:
+                logger.warning(f"[统一新闻工具] ⚠️ 东方财富直接API未返回新闻数据")
+        except Exception as e:
+            logger.warning(f"[统一新闻工具] 东方财富直接API获取失败: {e}")
+        
         # 优先级2: Google新闻（中文搜索）
         try:
             if hasattr(self.toolkit, 'get_google_news'):

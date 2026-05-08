@@ -11,6 +11,8 @@
 """
 
 import logging
+import re
+import json
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Union
 
@@ -82,6 +84,11 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
         "http://push2.eastmoney.com/api/qt/clist/get"
         "?fs=m:90+t:2&fields=f2,f3,f4,f8,f12,f14,f104,f105,f128,f136,f140"
         "&pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3"
+    )
+
+    # 个股新闻搜索API（东方财富搜索接口，JSONP格式）
+    NEWS_SEARCH_URL = (
+        "https://search-api-web.eastmoney.com/search/jsonp"
     )
 
     # 东方财富请求头（模拟浏览器）
@@ -780,6 +787,463 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
 
         except Exception as e:
             self.logger.error(f"❌ 东方财富获取行业数据异常: {e}")
+            return None
+
+    # ==================== 个股新闻数据 ====================
+
+    def _build_news_search_param(self, keyword: str, page_index: int = 1, page_size: int = 10) -> str:
+        param = {
+            "uid": "",
+            "keyword": keyword,
+            "type": ["cmsArticleWebOld"],
+            "client": "web",
+            "clientType": "web",
+            "clientVersion": "curr",
+            "param": {
+                "cmsArticleWebOld": {
+                    "searchScope": "default",
+                    "sort": "default",
+                    "pageIndex": page_index,
+                    "pageSize": page_size,
+                    "preTag": "",
+                    "postTag": "",
+                }
+            },
+        }
+        return json.dumps(param, ensure_ascii=False)
+
+    def _strip_jsonp(self, text: str) -> str:
+        m = re.search(r"\((\{.*\})\)", text, re.DOTALL)
+        if m:
+            return m.group(1)
+        return text
+
+    def _fetch_stock_news(self, symbol: str, page_size: int = 10) -> Optional[pd.DataFrame]:
+        try:
+            from urllib.parse import quote
+
+            symbol = str(symbol).strip().zfill(6)
+            param_str = self._build_news_search_param(symbol, page_size=page_size)
+            encoded_param = quote(param_str, safe='')
+            url = f"{self.NEWS_SEARCH_URL}?cb=jQuery&param={encoded_param}"
+
+            resp = self._http_get(url)
+            raw_text = resp.text
+
+            json_str = self._strip_jsonp(raw_text)
+            data = json.loads(json_str)
+
+            if not data:
+                return None
+
+            result = data.get("result", {})
+            article_data = result.get("cmsArticleWebOld", [])
+
+            if isinstance(article_data, dict):
+                items = article_data.get("list", [])
+            elif isinstance(article_data, list):
+                items = article_data
+            else:
+                items = []
+
+            if not items:
+                return None
+
+            rows = []
+            for item in items:
+                title = item.get("title", "")
+                title = re.sub(r"<[^>]+>", "", title)
+
+                content = item.get("content", "")
+                content = re.sub(r"<[^>]+>", "", content)
+
+                source = item.get("mediaName", "") or item.get("source", "") or "东方财富"
+                publish_time = item.get("date", "") or item.get("showTime", "")
+                news_url = item.get("url", "") or item.get("docUrl", "")
+
+                rows.append({
+                    "新闻标题": title,
+                    "新闻内容": content,
+                    "文章来源": source,
+                    "发布时间": publish_time,
+                    "新闻链接": news_url,
+                })
+
+            return pd.DataFrame(rows)
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ 东方财富直接获取个股新闻失败 {symbol}: {e}")
+            return None
+
+    def get_stock_news_direct(self, symbol: str, page_size: int = 10) -> Optional[pd.DataFrame]:
+        if self._requests is None:
+            self.logger.warning("⚠️ HTTP客户端未初始化，无法获取新闻")
+            return None
+
+        try:
+            result = self._http_client.call(
+                self._fetch_stock_news, symbol, page_size
+            )
+
+            if result.success and result.data is not None and not result.data.empty:
+                self.logger.info(
+                    f"✅ 东方财富直接获取个股新闻成功: {symbol} 共{len(result.data)}条"
+                )
+                return result.data
+            else:
+                self.logger.warning(
+                    f"⚠️ 东方财富直接获取个股新闻失败: {symbol} - {result.error}"
+                )
+                return None
+
+        except Exception as e:
+            self.logger.error(f"❌ 东方财富直接获取个股新闻异常: {symbol} - {e}")
+            return None
+
+    # ==================== 情绪数据（千股千评/人气排名/个股新闻） ====================
+
+    COMMENT_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+    HOT_RANK_URL = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList"
+    HOT_RANK_QUOTE_URL = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+    NEWS_SEARCH_URL = "https://search-api-web.eastmoney.com/search/jsonp"
+
+    COMMENT_TOKEN = "894050c76af8597a853f5b408b759f5d"
+
+    def _fetch_stock_comment_direct(self, code: str) -> Optional[Dict[str, Any]]:
+        """
+        直接调用东方财富千股千评API（替代 ak.stock_comment_em()）
+
+        API: datacenter-web.eastmoney.com/api/data/v1/get
+        reportName: RPT_DMSK_TS_STOCKNEW
+
+        Args:
+            code: 股票代码（如 600519）
+
+        Returns:
+            千股千评数据字典，失败返回None
+        """
+        params = {
+            "sortColumns": "SECURITY_CODE",
+            "sortTypes": "1",
+            "pageSize": "5",
+            "pageNumber": "1",
+            "reportName": "RPT_DMSK_TS_STOCKNEW",
+            "quoteColumns": (
+                "f2~01~SECURITY_CODE~CLOSE_PRICE,"
+                "f8~01~SECURITY_CODE~TURNOVERRATE,"
+                "f3~01~SECURITY_CODE~CHANGE_RATE,"
+                "f9~01~SECURITY_CODE~PE_DYNAMIC"
+            ),
+            "columns": "ALL",
+            "filter": f'(SECURITY_CODE="{code}")',
+            "token": self.COMMENT_TOKEN,
+        }
+
+        try:
+            resp = self._http_get(self.COMMENT_URL, params=params)
+            data = resp.json()
+
+            if not data or (str(data.get("code")) != "0" and data.get("code") != 0):
+                return None
+
+            result_data = data.get("result", {})
+            items = result_data.get("data", [])
+
+            if not items:
+                return None
+
+            item = items[0]
+
+            latest_price = self._safe_float(item.get("CLOSE_PRICE"))
+            change_pct = self._safe_float(item.get("CHANGE_RATE"))
+            turnover = self._safe_float(item.get("TURNOVERRATE"))
+            pe = self._safe_float(item.get("PE_DYNAMIC"))
+            main_cost = self._safe_float(item.get("PRIME_COST"))
+            institution = self._safe_float(item.get("ORG_PARTICIPATE"))
+            score = self._safe_float(item.get("TOTALSCORE"))
+            rank = self._safe_float(item.get("RANK"))
+            rank_change = self._safe_float(item.get("RANK_UP"))
+            attention = self._safe_float(item.get("FOCUS"))
+            name = str(item.get("SECURITY_NAME_ABBR", ""))
+
+            if score is None:
+                score = 50.0
+            if rank is None:
+                rank = 0
+            if rank_change is None:
+                rank_change = 0
+            if attention is None:
+                attention = 0
+            if institution is None:
+                institution = 0
+
+            normalized_score = (score - 50) / 50 if score != 0 else 0
+            normalized_score = max(-1.0, min(1.0, normalized_score))
+
+            confidence = 0.5
+            if attention > 80:
+                confidence += 0.2
+            elif attention > 60:
+                confidence += 0.1
+            if institution > 0.4:
+                confidence += 0.15
+            if turnover is not None and turnover > 1:
+                confidence += 0.15
+            confidence = min(confidence, 1.0)
+
+            price_vs_cost = 0
+            if main_cost and main_cost > 0 and latest_price and latest_price > 0:
+                price_vs_cost = (latest_price - main_cost) / main_cost
+
+            return {
+                "sentiment_score": normalized_score,
+                "confidence": confidence,
+                "name": name,
+                "score": score,
+                "rank": int(rank),
+                "rank_change": int(rank_change),
+                "attention_index": attention,
+                "institution_participation": institution,
+                "main_cost": main_cost or 0,
+                "latest_price": latest_price or 0,
+                "price_vs_main_cost": round(price_vs_cost, 4),
+                "change_pct": change_pct or 0,
+                "turnover_rate": turnover or 0,
+                "pe_ratio": pe or 0,
+                "data_source": "eastmoney_comment_direct",
+            }
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ 东方财富直接获取千股千评失败 {code}: {e}")
+            return None
+
+    def _fetch_stock_hot_rank_direct(self, code: str) -> Optional[Dict[str, Any]]:
+        """
+        直接调用东方财富人气排名API（替代 ak.stock_hot_rank_em()）
+
+        Step1: POST emappdata.eastmoney.com/stockrank/getAllCurrentList
+        Step2: GET push2.eastmoney.com/api/qt/ulist.np/get
+
+        Args:
+            code: 股票代码（如 600519）
+
+        Returns:
+            人气排名数据字典，失败返回None
+        """
+        try:
+            payload = {
+                "appId": "appId01",
+                "globalId": "786e4c21-70dc-435a-93bb-38",
+                "marketType": "",
+                "pageNo": 1,
+                "pageSize": 100,
+            }
+
+            if self._use_curl_cffi:
+                resp = self._requests.post(
+                    self.HOT_RANK_URL,
+                    json=payload,
+                    headers=self.HEADERS,
+                    impersonate=self.CURL_CFFI_IMPERSONATE,
+                    timeout=15,
+                )
+            else:
+                resp = self._requests.post(
+                    self.HOT_RANK_URL,
+                    json=payload,
+                    headers=self.HEADERS,
+                    timeout=15,
+                )
+
+            data = resp.json()
+            rank_items = data.get("data", [])
+
+            if not rank_items:
+                return None
+
+            code_upper = code.upper()
+            target_variants = [f"SZ{code_upper}", f"SH{code_upper}", code, code_upper]
+
+            matched_rank = None
+            matched_sc = None
+            for item in rank_items:
+                sc = item.get("sc", "")
+                if sc in target_variants:
+                    matched_rank = item.get("rk")
+                    matched_sc = sc
+                    break
+
+            if matched_rank is None:
+                return {
+                    "in_top100": False,
+                    "sentiment_score": 0,
+                    "confidence": 0.3,
+                    "data_source": "eastmoney_hot_rank_direct",
+                }
+
+            secid = "0." + code if "SZ" in (matched_sc or "") else "1." + code
+
+            params = {
+                "ut": "f057cbcbce2a86e2866ab8877db1d059",
+                "fltt": "2",
+                "invt": "2",
+                "fields": "f14,f3,f12,f2",
+                "secids": secid,
+            }
+
+            resp2 = self._http_get(self.HOT_RANK_QUOTE_URL, params=params)
+            data2 = resp2.json()
+
+            name = ""
+            change_pct = 0
+            latest_price = 0
+
+            diff = data2.get("data", {}).get("diff", [])
+            if diff:
+                quote = diff[0] if isinstance(diff, list) else diff
+                name = str(quote.get("f14", ""))
+                change_pct = self._safe_float(quote.get("f3")) or 0
+                latest_price = self._safe_float(quote.get("f2")) or 0
+
+            rank_int = int(matched_rank)
+            hot_score = (101 - rank_int) / 100 if rank_int > 0 else 0
+            hot_score = max(0, min(1.0, hot_score))
+
+            sentiment_from_rank = 0
+            if change_pct > 5:
+                sentiment_from_rank = 0.5
+            elif change_pct > 2:
+                sentiment_from_rank = 0.3
+            elif change_pct > 0:
+                sentiment_from_rank = 0.1
+            elif change_pct < -5:
+                sentiment_from_rank = -0.5
+            elif change_pct < -2:
+                sentiment_from_rank = -0.3
+            elif change_pct < 0:
+                sentiment_from_rank = -0.1
+
+            confidence = 0.6 if rank_int > 0 else 0.3
+
+            return {
+                "in_top100": True,
+                "rank": rank_int,
+                "name": name,
+                "latest_price": latest_price,
+                "change_pct": change_pct,
+                "hot_score": hot_score,
+                "sentiment_score": sentiment_from_rank,
+                "confidence": confidence,
+                "data_source": "eastmoney_hot_rank_direct",
+            }
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ 东方财富直接获取人气排名失败 {code}: {e}")
+            return None
+
+    def _fetch_stock_news_direct(self, code: str, page_size: int = 20) -> Optional[List[Dict[str, Any]]]:
+        """
+        直接调用东方财富个股新闻搜索API（替代 ak.stock_news_em()）
+
+        API: search-api-web.eastmoney.com/search/jsonp
+
+        Args:
+            code: 股票代码（如 600519）
+            page_size: 返回新闻数量
+
+        Returns:
+            新闻列表，失败返回None
+        """
+        import json as _json
+
+        inner_param = {
+            "uid": "",
+            "keyword": code,
+            "type": ["cmsArticleWebOld"],
+            "client": "web",
+            "clientType": "web",
+            "clientVersion": "curr",
+            "param": {
+                "cmsArticleWebOld": {
+                    "searchScope": "default",
+                    "sort": "default",
+                    "pageIndex": 1,
+                    "pageSize": page_size,
+                    "preTag": "<em>",
+                    "postTag": "</em>",
+                }
+            },
+        }
+
+        cb_name = "jQuery_callback"
+        params = {
+            "cb": cb_name,
+            "param": _json.dumps(inner_param, ensure_ascii=False),
+            "_": str(int(datetime.now().timestamp() * 1000)),
+        }
+
+        news_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Referer": f"https://so.eastmoney.com/news/s?keyword={code}",
+            "Accept": "*/*",
+        }
+
+        try:
+            if self._use_curl_cffi:
+                resp = self._requests.get(
+                    self.NEWS_SEARCH_URL,
+                    params=params,
+                    headers=news_headers,
+                    impersonate=self.CURL_CFFI_IMPERSONATE,
+                    timeout=15,
+                )
+            else:
+                resp = self._requests.get(
+                    self.NEWS_SEARCH_URL,
+                    params=params,
+                    headers=news_headers,
+                    timeout=15,
+                )
+
+            text = resp.text
+
+            prefix = cb_name + "("
+            if text.startswith(prefix):
+                text = text[len(prefix):]
+            if text.endswith(")"):
+                text = text[:-1]
+
+            data = _json.loads(text)
+
+            articles = data.get("result", {}).get("cmsArticleWebOld", [])
+            if not articles:
+                return None
+
+            news_list = []
+            for article in articles:
+                title = str(article.get("title", ""))
+                content = str(article.get("content", ""))
+                source = str(article.get("mediaName", ""))
+                pub_time = str(article.get("date", ""))
+                article_code = str(article.get("code", ""))
+                url = f"http://finance.eastmoney.com/a/{article_code}.html" if article_code else ""
+
+                news_list.append({
+                    "title": title,
+                    "content": content[:500],
+                    "source": source,
+                    "publish_time": pub_time,
+                    "url": url,
+                })
+
+            return news_list
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ 东方财富直接获取个股新闻失败 {code}: {e}")
             return None
 
     # ==================== 基类抽象方法实现 ====================

@@ -3,6 +3,8 @@ from tradingagents.dataflows.china_fundamental_snapshot import (
     build_china_fundamental_snapshot,
     collect_china_free_source_payloads,
     format_china_fundamental_snapshot_report,
+    validate_data_consistency,
+    apply_consistency_fixes,
 )
 from tradingagents.agents.masters.quantitative_base import extract_financial_data
 
@@ -667,3 +669,178 @@ def test_collect_free_source_payloads_appends_announcement_signals(monkeypatch):
     assert "akshare" in [payload["source"] for payload in payloads]
     assert snapshot["fields"]["dividend_events"]["value"] == 1
     assert snapshot["fields"]["buyback_events"]["value"] == 1
+
+
+def test_validate_data_consistency_detects_positive_pe_with_negative_eps():
+    snapshot = build_china_fundamental_snapshot(
+        "000001",
+        [
+            {
+                "source": "eastmoney",
+                "data": {
+                    "eps": -0.5,
+                    "pe": 8.0,
+                    "pe_ttm": 7.5,
+                    "net_profit": -100,
+                },
+            }
+        ],
+    )
+
+    issues = validate_data_consistency(snapshot)
+    pe_issues = [i for i in issues if i["rule"] == "PE_vs_EPS_sign"]
+    assert len(pe_issues) >= 1
+    assert any("pe" in i["fields"] for i in pe_issues)
+    assert any("pe_ttm" in i["fields"] for i in pe_issues)
+    for issue in pe_issues:
+        assert issue["suggested_fix"].get("pe") == "N/A" or issue["suggested_fix"].get("pe_ttm") == "N/A"
+
+
+def test_validate_data_consistency_detects_abnormally_high_pb():
+    snapshot = build_china_fundamental_snapshot(
+        "000001",
+        [
+            {
+                "source": "eastmoney",
+                "data": {
+                    "pb": 114.0,
+                    "book_value_per_share": 0.005,
+                    "price": 10.0,
+                },
+            }
+        ],
+    )
+
+    issues = validate_data_consistency(snapshot)
+    pb_issues = [i for i in issues if "PB" in i["rule"]]
+    assert len(pb_issues) >= 1
+
+
+def test_validate_data_consistency_detects_roe_net_margin_sign_conflict():
+    snapshot = build_china_fundamental_snapshot(
+        "000001",
+        [
+            {
+                "source": "eastmoney",
+                "data": {
+                    "roe": -3.13,
+                    "net_margin": 5.2,
+                    "net_profit": 50,
+                    "revenue": 1000,
+                },
+            }
+        ],
+    )
+
+    issues = validate_data_consistency(snapshot)
+    roe_issues = [i for i in issues if i["rule"] == "ROE_vs_net_margin_sign"]
+    assert len(roe_issues) == 1
+    assert "roe" in roe_issues[0]["suggested_fix"]
+
+
+def test_validate_data_consistency_detects_cashflow_profit_sign_conflict():
+    snapshot = build_china_fundamental_snapshot(
+        "000001",
+        [
+            {
+                "source": "eastmoney",
+                "data": {
+                    "operating_cash_flow": -200,
+                    "net_profit": 100,
+                },
+            }
+        ],
+    )
+
+    issues = validate_data_consistency(snapshot)
+    cf_issues = [i for i in issues if i["rule"] == "cashflow_vs_profit_sign"]
+    assert len(cf_issues) == 1
+
+
+def test_validate_data_consistency_passes_for_consistent_data():
+    snapshot = build_china_fundamental_snapshot(
+        "000001",
+        [
+            {
+                "source": "eastmoney",
+                "data": {
+                    "eps": 0.5,
+                    "pe_ttm": 8.6,
+                    "pb": 0.72,
+                    "book_value_per_share": 17.0,
+                    "price": 12.24,
+                    "roe": 11.2,
+                    "net_margin": 12.0,
+                    "net_profit": 120,
+                    "revenue": 1000,
+                    "operating_cash_flow": 180,
+                },
+            }
+        ],
+    )
+
+    issues = validate_data_consistency(snapshot)
+    assert len(issues) == 0
+
+
+def test_apply_consistency_fixes_corrects_pe_to_na_when_eps_negative():
+    snapshot = build_china_fundamental_snapshot(
+        "000001",
+        [
+            {
+                "source": "eastmoney",
+                "data": {
+                    "eps": -0.5,
+                    "pe": 8.0,
+                    "pe_ttm": 7.5,
+                },
+            }
+        ],
+    )
+
+    fixed = apply_consistency_fixes(snapshot)
+    assert fixed["fields"]["pe"]["status"] == "corrected_to_na"
+    assert fixed["fields"]["pe"]["value"] is None
+    assert "consistency_issues" in fixed
+
+
+def test_format_report_includes_consistency_validation_section():
+    snapshot = build_china_fundamental_snapshot(
+        "000001",
+        [
+            {
+                "source": "eastmoney",
+                "data": {
+                    "eps": -0.5,
+                    "pe": 8.0,
+                },
+            }
+        ],
+    )
+
+    report = format_china_fundamental_snapshot_report(snapshot)
+    assert "数据一致性验证" in report
+
+
+def test_format_report_shows_pass_when_no_issues():
+    snapshot = build_china_fundamental_snapshot(
+        "000001",
+        [
+            {
+                "source": "eastmoney",
+                "data": {
+                    "eps": 0.5,
+                    "pe_ttm": 8.6,
+                    "roe": 11.2,
+                    "net_margin": 12.0,
+                    "net_profit": 120,
+                    "revenue": 1000,
+                    "operating_cash_flow": 180,
+                },
+            }
+        ],
+    )
+
+    report = format_china_fundamental_snapshot_report(snapshot)
+    assert "数据一致性验证" in report
+    assert "通过" in report

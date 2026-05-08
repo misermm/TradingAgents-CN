@@ -425,10 +425,16 @@ def _generate_report_from_prefetched(
     quant_context: str,
     currency_info: str,
     market_info: Dict[str, Any],
+    consistency_warnings: Optional[List[str]] = None,
 ) -> str:
     data_section = f"## 真实财务数据\n\n{prefetched_data[:8000]}\n"
     if quant_context:
         data_section += f"\n## 量化评分参考\n{quant_context}\n"
+    if consistency_warnings:
+        data_section += "\n## ⚠️ 数据一致性警告\n以下数据存在矛盾，请特别注意并在分析中标注：\n"
+        for w in consistency_warnings:
+            data_section += f"- {w}\n"
+        data_section += "\n要求：对于上述矛盾数据，你必须在分析中明确指出矛盾之处，不得使用矛盾数据中的任何一方作为唯一依据。\n"
     analysis_prompt = (
         f"作为投资大师{name_cn}（{name_en}），基于以下真实数据，按照你的投资哲学对{company_name}"
         f"（股票代码：{ticker}，{market_info['market_name']}）进行分析。\n\n"
@@ -513,9 +519,36 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
         current_data_quality: Optional[Dict[str, Any]] = None
         raw_data_str = prefetched_data
 
+        consistency_warnings: List[str] = []
+        try:
+            from tradingagents.dataflows.china_fundamental_snapshot import validate_data_consistency
+
+            snapshot_data = state.get("fundamental_snapshot")
+            if isinstance(snapshot_data, dict) and snapshot_data.get("fields"):
+                issues = validate_data_consistency(snapshot_data)
+                if issues:
+                    for issue in issues:
+                        fix_parts = [f"{k}→{v}" for k, v in issue.get("suggested_fix", {}).items()]
+                        fix_text = f" 建议修正: {', '.join(fix_parts)}" if fix_parts else ""
+                        consistency_warnings.append(f"[{issue['rule']}] {issue['description']}{fix_text}")
+                        suggested_fix = issue.get("suggested_fix", {})
+                        for fname, fix_val in suggested_fix.items():
+                            if fix_val == "N/A":
+                                pattern = rf"(?m)^({re.escape(fname)}\s*[:：]\s*)(.+)$"
+                                raw_data_str = re.sub(pattern, rf"\1N/A(已修正)", raw_data_str)
+                            elif isinstance(fix_val, (int, float)):
+                                pattern = rf"(?m)^({re.escape(fname)}\s*[:：]\s*)(.+)$"
+                                raw_data_str = re.sub(pattern, rf"\1{fix_val}(已修正)", raw_data_str)
+                    logger.info(f"{log_tag} 数据一致性检查发现 {len(issues)} 项问题，已应用修正")
+        except Exception as exc:
+            logger.debug(f"{log_tag} 数据一致性检查跳过: {exc}")
+
+        prefetched_quant = state.get("prefetched_quant_data", "") or ""
+
         if quant_analyzer:
             try:
-                if not raw_data_str:
+                quant_input = prefetched_quant if prefetched_quant else raw_data_str
+                if not quant_input:
                     unified_tool = tools_list[0] if tools_list else None
                     if unified_tool:
                         raw_data = unified_tool.invoke(
@@ -526,15 +559,16 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
                                 "curr_date": current_date,
                             }
                         )
-                        raw_data_str = str(raw_data) if raw_data else ""
-                if raw_data_str:
-                    quant_result = quant_analyzer(raw_data_str)
+                        quant_input = str(raw_data) if raw_data else ""
+                if quant_input:
+                    quant_result = quant_analyzer(quant_input)
                     quant_context = quant_result.get("formatted_summary", "")
             except Exception as exc:
                 logger.warning(f"{log_tag} 量化评分计算失败(非致命): {exc}")
 
-        if raw_data_str:
-            current_data_quality = evaluate_master_data_requirements(master_id, raw_data_str)
+        data_quality_input = raw_data_str
+        if data_quality_input:
+            current_data_quality = evaluate_master_data_requirements(master_id, data_quality_input)
             quant_result = apply_quantitative_quality_guard(quant_result, current_data_quality)
             if quant_result:
                 quant_context = quant_result.get("formatted_summary", "")
@@ -569,6 +603,7 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
                     quant_context,
                     currency_info,
                     market_info,
+                    consistency_warnings=consistency_warnings,
                 )
             except Exception as e:
                 logger.error(f"{log_tag} 生成报告失败: {type(e).__name__}: {str(e)[:200]}")

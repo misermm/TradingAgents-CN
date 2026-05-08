@@ -878,7 +878,66 @@ class OptimizedChinaDataProvider:
         return self._get_industry_default_metrics(symbol, price_value)
 
     def _get_partial_metrics_from_realtime(self, symbol: str, price_value: float) -> dict:
-        """从实时指标获取部分数据（PE/PB等）"""
+        """从实时指标获取部分数据（PE/PB等）- 优先使用东方财富直接API，降级到realtime_metrics"""
+        try:
+            from .providers.china.eastmoney_direct import EastMoneyDirectProvider
+            import asyncio
+
+            em_provider = EastMoneyDirectProvider()
+            loop = asyncio.new_event_loop()
+            try:
+                quote_data = loop.run_until_complete(em_provider.get_stock_quotes(symbol))
+                if quote_data:
+                    metrics = {}
+                    pe_ttm = quote_data.get('pe_ttm')
+                    if pe_ttm is not None:
+                        try:
+                            metrics['pe'] = f"{float(pe_ttm):.1f}倍"
+                        except (ValueError, TypeError):
+                            pass
+                    pe_dynamic = quote_data.get('pe_dynamic')
+                    if pe_dynamic is not None and 'pe' not in metrics:
+                        try:
+                            metrics['pe'] = f"{float(pe_dynamic):.1f}倍"
+                        except (ValueError, TypeError):
+                            pass
+                    pb = quote_data.get('pb')
+                    if pb is not None:
+                        try:
+                            metrics['pb'] = f"{float(pb):.2f}倍"
+                        except (ValueError, TypeError):
+                            pass
+                    total_mv = quote_data.get('total_mv')
+                    if total_mv is not None:
+                        try:
+                            mv_val = float(total_mv)
+                            if abs(mv_val) >= 1e8:
+                                metrics['total_mv'] = f"{mv_val / 1e8:.2f}亿元"
+                            else:
+                                metrics['total_mv'] = f"{mv_val:.2f}元"
+                        except (ValueError, TypeError):
+                            pass
+
+                    if metrics.get('pe') and metrics['pe'] != 'N/A':
+                        try:
+                            pe_val = float(str(metrics['pe']).replace('倍', '').replace(',', ''))
+                            if pe_val > 0:
+                                metrics['roe'] = f"{min(100 / pe_val, 50):.1f}%"
+                        except Exception:
+                            pass
+
+                    if metrics:
+                        metrics['fundamental_score'] = 4
+                        metrics['risk_level'] = '中'
+                        metrics['data_quality'] = 'partial'
+                        metrics['data_source'] = 'EastMoneyDirect'
+                        logger.info(f"✅ 从东方财富直接API获取部分实时指标: {symbol}")
+                        return metrics
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.debug(f"东方财富直接API获取实时指标失败: {e}")
+
         try:
             from tradingagents.dataflows.realtime_metrics import calculate_realtime_pe_pb
             result = calculate_realtime_pe_pb(symbol)
@@ -1077,6 +1136,30 @@ class OptimizedChinaDataProvider:
 
         except Exception as e:
             logger.debug(f"获取{symbol}真实财务数据失败: {e}")
+
+        # 第五优先级：使用东方财富直接API
+        try:
+            logger.info(f"🔄 使用东方财富直接API获取{symbol}财务数据")
+            from .providers.china.eastmoney_direct import EastMoneyDirectProvider
+            import asyncio
+
+            em_provider = EastMoneyDirectProvider()
+            loop = asyncio.new_event_loop()
+            try:
+                financial_data = loop.run_until_complete(em_provider.get_financial_data(symbol))
+                if financial_data and financial_data.get('latest'):
+                    quote_data = loop.run_until_complete(em_provider.get_stock_quotes(symbol))
+                    metrics = self._parse_eastmoney_direct_financial_data(financial_data, quote_data, price_value)
+                    if metrics:
+                        logger.info(f"✅ 东方财富直接API财务数据获取成功: {symbol}")
+                        return metrics
+                else:
+                    logger.debug(f"东方财富直接API未获取到{symbol}财务数据")
+            finally:
+                loop.close()
+
+        except Exception as e:
+            logger.debug(f"获取{symbol}东方财富直接API财务数据失败: {e}")
 
         return None
 
@@ -2451,6 +2534,259 @@ class OptimizedChinaDataProvider:
 
         except Exception as e:
             logger.error(f"解析财务数据失败: {e}")
+            return None
+
+    def _parse_eastmoney_direct_financial_data(self, financial_data: dict, quote_data: dict, price_value: float) -> dict:
+        """解析东方财富直接API财务数据为指标"""
+        try:
+            latest = financial_data.get('latest', {})
+            if not latest:
+                logger.warning("⚠️ 东方财富直接API财务数据latest为空")
+                return None
+
+            metrics = {}
+
+            def _pct_val(raw):
+                if raw is None:
+                    return None
+                try:
+                    v = float(raw)
+                    if abs(v) <= 1:
+                        v = v * 100
+                    return v
+                except (ValueError, TypeError):
+                    return None
+
+            def _yi_val(raw):
+                if raw is None:
+                    return None
+                try:
+                    v = float(raw)
+                    if abs(v) >= 1e8:
+                        return v / 1e8
+                    return v
+                except (ValueError, TypeError):
+                    return None
+
+            basic_eps = latest.get('basic_eps')
+            if basic_eps is not None:
+                try:
+                    metrics['eps'] = f"{float(basic_eps):.2f}元"
+                except (ValueError, TypeError):
+                    metrics['eps'] = "N/A"
+            else:
+                metrics['eps'] = "N/A"
+
+            roe_raw = latest.get('roe')
+            roe_val = _pct_val(roe_raw)
+            metrics['roe'] = f"{roe_val:.1f}%" if roe_val is not None else "N/A"
+
+            gross_margin_raw = latest.get('gross_margin')
+            gm_val = _pct_val(gross_margin_raw)
+            metrics['gross_margin'] = f"{gm_val:.1f}%" if gm_val is not None else "N/A"
+
+            revenue_raw = latest.get('revenue')
+            rev_yi = _yi_val(revenue_raw)
+            metrics['revenue'] = f"{rev_yi:.2f}亿元" if rev_yi is not None else "N/A"
+
+            revenue_yoy_raw = latest.get('revenue_yoy')
+            rev_yoy_val = _pct_val(revenue_yoy_raw)
+            metrics['revenue_growth'] = f"{rev_yoy_val:.1f}%" if rev_yoy_val is not None else "N/A"
+
+            net_profit_raw = latest.get('net_profit')
+            np_yi = _yi_val(net_profit_raw)
+            metrics['net_profit'] = f"{np_yi:.2f}亿元" if np_yi is not None else "N/A"
+
+            net_profit_yoy_raw = latest.get('net_profit_yoy')
+            npy_val = _pct_val(net_profit_yoy_raw)
+            metrics['profit_growth'] = f"{npy_val:.1f}%" if npy_val is not None else "N/A"
+
+            deducted_net_profit_raw = latest.get('deducted_net_profit')
+            dnp_yi = _yi_val(deducted_net_profit_raw)
+            metrics['deducted_net_profit'] = f"{dnp_yi:.2f}亿元" if dnp_yi is not None else "N/A"
+
+            total_assets_raw = latest.get('total_assets')
+            ta_yi = _yi_val(total_assets_raw)
+            metrics['total_assets'] = f"{ta_yi:.2f}亿元" if ta_yi is not None else "N/A"
+
+            total_liabilities_raw = latest.get('total_liabilities')
+            tl_yi = _yi_val(total_liabilities_raw)
+            metrics['total_liabilities'] = f"{tl_yi:.2f}亿元" if tl_yi is not None else "N/A"
+
+            current_assets_raw = latest.get('current_assets')
+            ca_yi = _yi_val(current_assets_raw)
+            metrics['current_assets'] = f"{ca_yi:.2f}亿元" if ca_yi is not None else "N/A"
+
+            current_liabilities_raw = latest.get('current_liabilities')
+            cl_yi = _yi_val(current_liabilities_raw)
+            metrics['current_liabilities'] = f"{cl_yi:.2f}亿元" if cl_yi is not None else "N/A"
+
+            bvps_raw = latest.get('bvps')
+            if bvps_raw is not None:
+                try:
+                    metrics['book_value_per_share'] = f"{float(bvps_raw):.2f}元"
+                except (ValueError, TypeError):
+                    metrics['book_value_per_share'] = "N/A"
+            else:
+                metrics['book_value_per_share'] = "N/A"
+
+            ocf_raw = latest.get('operating_cash_flow')
+            ocf_yi = _yi_val(ocf_raw)
+            metrics['operating_cash_flow'] = f"{ocf_yi:.2f}亿元" if ocf_yi is not None else "N/A"
+
+            fcf_raw = latest.get('free_cash_flow')
+            fcf_yi = _yi_val(fcf_raw)
+            metrics['free_cash_flow'] = f"{fcf_yi:.2f}亿元" if fcf_yi is not None else "N/A"
+
+            dividend_yield_raw = latest.get('dividend_yield')
+            dy_val = _pct_val(dividend_yield_raw)
+            metrics['dividend_yield'] = f"{dy_val:.1f}%" if dy_val is not None else "N/A"
+
+            if quote_data:
+                pe_ttm = quote_data.get('pe_ttm')
+                if pe_ttm is not None:
+                    try:
+                        metrics['pe_ttm'] = f"{float(pe_ttm):.1f}倍"
+                    except (ValueError, TypeError):
+                        metrics['pe_ttm'] = "N/A"
+                else:
+                    metrics['pe_ttm'] = "N/A"
+
+                pe_dynamic = quote_data.get('pe_dynamic')
+                if pe_dynamic is not None:
+                    try:
+                        metrics['pe'] = f"{float(pe_dynamic):.1f}倍"
+                    except (ValueError, TypeError):
+                        metrics['pe'] = "N/A"
+                else:
+                    metrics['pe'] = "N/A"
+
+                pb = quote_data.get('pb')
+                if pb is not None:
+                    try:
+                        metrics['pb'] = f"{float(pb):.2f}倍"
+                    except (ValueError, TypeError):
+                        metrics['pb'] = "N/A"
+                else:
+                    metrics['pb'] = "N/A"
+
+                total_mv = quote_data.get('total_mv')
+                if total_mv is not None:
+                    try:
+                        mv_val = float(total_mv)
+                        if abs(mv_val) >= 1e8:
+                            metrics['total_mv'] = f"{mv_val / 1e8:.2f}亿元"
+                        else:
+                            metrics['total_mv'] = f"{mv_val:.2f}元"
+                    except (ValueError, TypeError):
+                        metrics['total_mv'] = "N/A"
+                else:
+                    metrics['total_mv'] = "N/A"
+            else:
+                if basic_eps is not None and price_value and price_value > 0:
+                    try:
+                        eps_val = float(basic_eps)
+                        if eps_val > 0:
+                            metrics['pe'] = f"{price_value / eps_val:.1f}倍"
+                        else:
+                            metrics['pe'] = "N/A（亏损）"
+                    except (ValueError, TypeError):
+                        metrics['pe'] = "N/A"
+                else:
+                    metrics['pe'] = "N/A"
+
+                if bvps_raw is not None and price_value and price_value > 0:
+                    try:
+                        bvps_val = float(bvps_raw)
+                        if bvps_val > 0:
+                            metrics['pb'] = f"{price_value / bvps_val:.2f}倍"
+                        else:
+                            metrics['pb'] = "N/A"
+                    except (ValueError, TypeError):
+                        metrics['pb'] = "N/A"
+                else:
+                    metrics['pb'] = "N/A"
+
+                metrics['pe_ttm'] = "N/A"
+                metrics['total_mv'] = "N/A"
+
+            if total_assets_raw is not None and total_liabilities_raw is not None:
+                try:
+                    ta = float(total_assets_raw)
+                    tl = float(total_liabilities_raw)
+                    if ta > 0:
+                        metrics['debt_ratio'] = f"{tl / ta * 100:.1f}%"
+                except (ValueError, TypeError):
+                    pass
+            if 'debt_ratio' not in metrics:
+                metrics['debt_ratio'] = "N/A"
+
+            if current_assets_raw is not None and current_liabilities_raw is not None:
+                try:
+                    ca = float(current_assets_raw)
+                    cl = float(current_liabilities_raw)
+                    if cl > 0:
+                        metrics['current_ratio'] = f"{ca / cl:.2f}"
+                except (ValueError, TypeError):
+                    pass
+            if 'current_ratio' not in metrics:
+                metrics['current_ratio'] = "N/A"
+
+            if total_assets_raw is not None and net_profit_raw is not None:
+                try:
+                    ta = float(total_assets_raw)
+                    np_val = float(net_profit_raw)
+                    if ta > 0:
+                        metrics['roa'] = f"{np_val / ta * 100:.1f}%"
+                except (ValueError, TypeError):
+                    pass
+            if 'roa' not in metrics:
+                metrics['roa'] = "N/A"
+
+            if revenue_raw is not None and net_profit_raw is not None:
+                try:
+                    rev = float(revenue_raw)
+                    np_val = float(net_profit_raw)
+                    if rev > 0:
+                        metrics['net_margin'] = f"{np_val / rev * 100:.1f}%"
+                except (ValueError, TypeError):
+                    pass
+            if 'net_margin' not in metrics:
+                metrics['net_margin'] = "N/A"
+
+            if fcf_raw is not None and basic_eps is not None and net_profit_raw is not None:
+                try:
+                    fcf_val = float(fcf_raw)
+                    eps_val = float(basic_eps)
+                    np_val = float(net_profit_raw)
+                    if abs(eps_val) > 0 and np_val > 0:
+                        shares = np_val / eps_val
+                        if shares > 0:
+                            metrics['free_cash_flow_per_share'] = f"{fcf_val / shares:.2f}元"
+                except (ValueError, TypeError, ZeroDivisionError):
+                    pass
+            if 'free_cash_flow_per_share' not in metrics:
+                metrics['free_cash_flow_per_share'] = "N/A"
+
+            stock_info = {'industry': ''}
+            fundamental_score = self._calculate_fundamental_score(metrics, stock_info)
+            valuation_score = self._calculate_valuation_score(metrics)
+            growth_score = self._calculate_growth_score(metrics, stock_info)
+            risk_level = self._calculate_risk_level(metrics, stock_info)
+
+            metrics.update({
+                'fundamental_score': fundamental_score,
+                'valuation_score': valuation_score,
+                'growth_score': growth_score,
+                'risk_level': risk_level,
+                'data_source': 'EastMoneyDirect',
+            })
+
+            logger.info(f"✅ 东方财富直接API财务数据解析成功，包含 {len(metrics)} 个指标")
+            return metrics
+
+        except Exception as e:
+            logger.error(f"❌ 解析东方财富直接API财务数据失败: {e}")
             return None
 
     def _parse_baostock_financial_data(self, financial_data: dict, stock_info: dict, price_value: float) -> dict:

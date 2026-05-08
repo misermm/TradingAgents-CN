@@ -727,7 +727,85 @@ def _to_baostock_code(symbol: str) -> str:
     return f"sz.{s}"
 
 
-def _collect_akshare_direct_payload(symbol: str, updated_at: str) -> Optional[Dict[str, Any]]:
+def _collect_baostock_payload(symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    从BaoStock获取核心财务数据，作为主要数据源。
+    """
+    try:
+        import baostock as bs
+        lg = bs.login()
+        if lg.error_code != '0':
+            logger.warning(f"BaoStock login failed: {lg.error_msg}")
+            return None
+
+        data: Dict[str, Any] = {}
+        bs_code = _to_baostock_code(symbol)
+        year = datetime.now().year
+        
+        # 优先获取最新季报/年报
+        for y in range(year, year - 3, -1):
+            for q in [4, 3, 2, 1]:
+                # 查询利润表
+                rs_profit = bs.query_profit_data(code=bs_code, year=y, quarter=q)
+                if rs_profit.error_code == '0' and rs_profit.next():
+                    profit_data = rs_profit.get_row_data()
+                    field_map = dict(zip(rs_profit.fields, profit_data))
+                    _set_if_valid(data, "net_profit", _akshare_safe_float(field_map.get("netProfit"))) # 归母净利润
+                    _set_if_valid(data, "eps", _akshare_safe_float(field_map.get("epsTTM")))
+                    _set_if_valid(data, "revenue", _akshare_safe_float(field_map.get("MBRevenue"))) # 营业总收入
+                    _set_if_valid(data, "roe", _akshare_safe_float(field_map.get("roeAvg"))) # 使用加权ROE
+                    _set_if_valid(data, "net_margin", _akshare_safe_float(field_map.get("npMargin")))
+                    _set_if_valid(data, "gross_margin", _akshare_safe_float(field_map.get("gpMargin")))
+                    data["report_period"] = f"{y}Q{q}"
+
+                # 查询资产负债表
+                rs_balance = bs.query_balance_data(code=bs_code, year=y, quarter=q)
+                if rs_balance.error_code == '0' and rs_balance.next():
+                    balance_data = rs_balance.get_row_data()
+                    field_map = dict(zip(rs_balance.fields, balance_data))
+                    _set_if_valid(data, "debt_ratio", _akshare_safe_float(field_map.get("liabilityToAsset")))
+                    _set_if_valid(data, "current_ratio", _akshare_safe_float(field_map.get("currentRatio")))
+                    _set_if_valid(data, "total_assets", _akshare_safe_float(field_map.get("totalAssets")))
+                    _set_if_valid(data, "total_liabilities", _akshare_safe_float(field_map.get("totalLiability")))
+                    _set_if_valid(data, "book_value_per_share", _akshare_safe_float(field_map.get("surplusPerShare")))
+
+                # 查询成长能力
+                rs_growth = bs.query_growth_data(code=bs_code, year=y, quarter=q)
+                if rs_growth.error_code == '0' and rs_growth.next():
+                    growth_data = rs_growth.get_row_data()
+                    field_map = dict(zip(rs_growth.fields, growth_data))
+                    _set_if_valid(data, "revenue_yoy", _akshare_safe_float(field_map.get("YOYEquity")))
+                    _set_if_valid(data, "net_profit_yoy", _akshare_safe_float(field_map.get("YOYNI")))
+
+                # 查询现金流量表
+                rs_cash = bs.query_cash_flow_data(code=bs_code, year=y, quarter=q)
+                if rs_cash.error_code == '0' and rs_cash.next():
+                    cash_data = rs_cash.get_row_data()
+                    field_map = dict(zip(rs_cash.fields, cash_data))
+                    _set_if_valid(data, "operating_cash_flow", _akshare_safe_float(field_map.get("CFO")))
+
+                if data: # 如果获取到任何数据，就以此为准，不再查询更早的季度
+                    bs.logout()
+                    logger.info(f"BaoStock fetch for {symbol} successful for period {y}Q{q}. Fields: {list(data.keys())}")
+                    return {
+                        "source": "baostock_direct",
+                        "data": data,
+                        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "report_period": data.get("report_period"),
+                    }
+        
+        bs.logout()
+        logger.warning(f"BaoStock could not find any recent financial data for {symbol}")
+        return None
+    except Exception as e:
+        logger.error(f"BaoStock payload collection failed for {symbol}: {e}")
+        return None
+
+def _collect_akshare_direct_payload(symbol: str, updated_at: str, existing_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    从AKShare获取财务指标作为BaoStock的补充。
+    只填充BaoStock未能提供的数据。
+    """
     try:
         import akshare as ak
     except ImportError:
@@ -735,128 +813,56 @@ def _collect_akshare_direct_payload(symbol: str, updated_at: str) -> Optional[Di
         return None
 
     data: Dict[str, Any] = {}
-
+    
     try:
+        # 使用东方财富的财务指标，字段更全
         df = ak.stock_financial_analysis_indicator(symbol=symbol, start_year=str(datetime.now().year - 1))
         if df is not None and not df.empty:
+            # 获取最新的一行数据 (通常是最新季度)
             row = df.iloc[0]
-            _set_if_valid(data, "eps", _akshare_safe_float(row.get("摊薄每股收益(元)") or row.get("加权每股收益(元)")))
-            _set_if_valid(data, "book_value_per_share", _akshare_safe_float(row.get("每股净资产_调整前(元)") or row.get("每股净资产_调整后(元)")))
-            _set_if_valid(data, "bvps", _akshare_safe_float(row.get("每股净资产_调整前(元)") or row.get("每股净资产_调整后(元)")))
-            roe_val = _akshare_safe_float(row.get("加权净资产收益率(%)") or row.get("净资产收益率(%)"))
-            if roe_val is not None:
-                data["roe"] = roe_val
-            _set_if_valid(data, "gross_margin", _akshare_safe_float(row.get("销售毛利率(%)")))
-            _set_if_valid(data, "net_margin", _akshare_safe_float(row.get("销售净利率(%)")))
-            _set_if_valid(data, "total_assets", _akshare_safe_float(row.get("总资产(元)")))
-            debt_ratio_val = _akshare_safe_float(row.get("资产负债率(%)"))
-            if debt_ratio_val is not None:
-                data["debt_ratio"] = debt_ratio_val
-            _set_if_valid(data, "current_ratio", _akshare_safe_float(row.get("流动比率")))
-            ocf_per_share = _akshare_safe_float(row.get("每股经营性现金流(元)"))
-            if ocf_per_share is not None:
-                data["operating_cash_flow_per_share"] = ocf_per_share
-            _set_if_valid(data, "net_profit", _akshare_safe_float(row.get("扣除非经常性损益后的净利润(元)")))
+            
+            # 定义字段映射和优先级，优先使用BaoStock的数据
+            field_map = {
+                "eps": ["摊薄每股收益(元)", "加权每股收益(元)"],
+                "book_value_per_share": ["每股净资产_调整前(元)", "每股净资产_调整后(元)"],
+                "roe": ["加权净资产收益率(%)", "净资产收益率(%)"],
+                "gross_margin": ["销售毛利率(%)"],
+                "net_margin": ["销售净利率(%)"],
+                "debt_ratio": ["资产负债率(%)"],
+                "current_ratio": ["流动比率"],
+                "operating_cash_flow_per_share": ["每股经营性现金流(元)"],
+                # 注意：这里的净利润是“扣非净利润”，仅在BaoStock完全失败时作为参考
+                "deducted_net_profit": ["扣除非经常性损益后的净利润(元)"],
+            }
+
+            for field, ak_names in field_map.items():
+                if field not in existing_data: # 只填充缺失值
+                    for ak_name in ak_names:
+                        value = _akshare_safe_float(row.get(ak_name))
+                        if value is not None:
+                            _set_if_valid(data, field, value)
+                            break # 找到一个有效值就跳出
+
+            # 补充总资产等BaoStock可能缺失的字段
+            if "total_assets" not in existing_data:
+                 _set_if_valid(data, "total_assets", _akshare_safe_float(row.get("总资产(元)")))
+
             report_date = row.get("日期")
             if report_date is not None:
                 data["report_period"] = str(report_date)
-            logger.info(f"akshare_direct: stock_financial_analysis_indicator OK, {len([k for k in ('eps','book_value_per_share','roe','gross_margin','net_margin','total_assets','debt_ratio') if k in data])} fields")
+
+            logger.info(f"akshare_direct: Supplemented {len(data)} fields for {symbol}.")
     except Exception as e:
         logger.warning(f"akshare_direct: stock_financial_analysis_indicator failed: {e}")
 
-    try:
-        import baostock as bs
-        lg = bs.login()
-        if lg.error_code == '0':
-            bs_code = _to_baostock_code(symbol)
-            year = datetime.now().year
-            for quarter in [4, 3, 2, 1]:
-                for y in [year, year - 1]:
-                    rs = bs.query_profit_data(code=bs_code, year=y, quarter=quarter)
-                    rows_data = []
-                    while (rs.error_code == '0') and rs.next():
-                        rows_data.append(rs.get_row_data())
-                    if rows_data:
-                        profit_row = rows_data[0]
-                        profit_fields = rs.fields
-                        field_map = dict(zip(profit_fields, profit_row))
-                        _set_if_valid(data, "net_profit", _akshare_safe_float(field_map.get("netProfit")))
-                        _set_if_valid(data, "eps", _akshare_safe_float(field_map.get("epsTTM")))
-                        _set_if_valid(data, "revenue", _akshare_safe_float(field_map.get("MBRevenue")))
-                        _set_if_valid(data, "roe", _akshare_safe_float(field_map.get("roeAvg")))
-                        _set_if_valid(data, "net_margin", _akshare_safe_float(field_map.get("npMargin")))
-                        _set_if_valid(data, "gross_margin", _akshare_safe_float(field_map.get("gpMargin")))
-                        break
-                else:
-                    continue
-                break
-
-            for quarter in [4, 3, 2, 1]:
-                for y in [year, year - 1]:
-                    rs = bs.query_balance_data(code=bs_code, year=y, quarter=quarter)
-                    rows_data = []
-                    while (rs.error_code == '0') and rs.next():
-                        rows_data.append(rs.get_row_data())
-                    if rows_data:
-                        balance_row = rows_data[0]
-                        balance_fields = rs.fields
-                        field_map = dict(zip(balance_fields, balance_row))
-                        _set_if_valid(data, "debt_ratio", _akshare_safe_float(field_map.get("liabilityToAsset")))
-                        _set_if_valid(data, "current_ratio", _akshare_safe_float(field_map.get("currentRatio")))
-                        break
-                else:
-                    continue
-                break
-
-            for quarter in [4, 3, 2, 1]:
-                for y in [year, year - 1]:
-                    rs = bs.query_growth_data(code=bs_code, year=y, quarter=quarter)
-                    rows_data = []
-                    while (rs.error_code == '0') and rs.next():
-                        rows_data.append(rs.get_row_data())
-                    if rows_data:
-                        growth_row = rows_data[0]
-                        growth_fields = rs.fields
-                        field_map = dict(zip(growth_fields, growth_row))
-                        _set_if_valid(data, "revenue_yoy", _akshare_safe_float(field_map.get("YOYEquity")))
-                        _set_if_valid(data, "net_profit_yoy", _akshare_safe_float(field_map.get("YOYNI")))
-                        break
-                else:
-                    continue
-                break
-
-            bs.logout()
-            logger.info(f"akshare_direct: baostock OK, {len([k for k in ('net_profit','eps','revenue','roe','debt_ratio') if k in data])} fields")
-    except Exception as e:
-        logger.warning(f"akshare_direct: baostock failed: {e}")
-
-    if data.get("total_assets") and data.get("debt_ratio"):
-        debt_ratio_decimal = data["debt_ratio"]
-        if debt_ratio_decimal and debt_ratio_decimal < 1:
-            debt_ratio_decimal = debt_ratio_decimal * 100
-            data["debt_ratio"] = debt_ratio_decimal
-        if debt_ratio_decimal and debt_ratio_decimal > 0:
-            data["total_liabilities"] = data["total_assets"] * (debt_ratio_decimal / 100)
-
-    if data.get("total_assets") and not data.get("total_liabilities"):
-        pass
-
-    if data.get("book_value_per_share") and data.get("total_assets") and not data.get("total_liabilities"):
-        pass
-
     if not data:
-        logger.warning(f"akshare_direct: {symbol} all sources failed")
         return None
-
-    report_period = data.pop("report_period", None)
-
-    logger.info(f"akshare_direct: {symbol} done, {len(data)} fields: {list(data.keys())}")
 
     return {
         "source": "akshare_direct",
         "data": data,
         "updated_at": updated_at,
-        "report_period": report_period,
+        "report_period": data.get("report_period"),
     }
 
 
@@ -956,10 +962,31 @@ def collect_china_free_source_payloads(symbol: str) -> List[Dict[str, Any]]:
                     present_required.add(field_name)
 
     required_coverage = len(present_required) / len(required_fields) if required_fields else 1.0
-    if required_coverage < 0.75:
+    # 无论覆盖率如何，都优先尝试BaoStock获取更准确的财务报表数据
+    baostock_payload = _collect_baostock_payload(symbol)
+    if baostock_payload:
+        payloads.insert(0, baostock_payload) # 插入到最前面，确保最高优先级
+        # 更新已存在字段，以便akshare补充逻辑正确工作
+        flattened_baostock = _flatten_mapping(baostock_payload.get("data", {}))
+        for field_name in required_fields:
+            if field_name in present_required:
+                continue
+            spec = FIELD_SPECS[field_name]
+            raw_value = _extract_field(flattened_baostock, spec["aliases"])
+            if _value_status(raw_value) == "present":
+                present_required.add(field_name)
+        required_coverage = len(present_required) / len(required_fields) if required_fields else 1.0
+
+    if required_coverage < 0.85: # 提高覆盖率要求
         missing_fields = [name for name in required_fields if name not in present_required]
-        logger.info(f"{symbol} 必需字段覆盖率 {required_coverage:.0%} < 75%，缺失: {missing_fields}，启用 akshare_direct 兜底")
-        direct_payload = _collect_akshare_direct_payload(symbol, updated_at)
+        logger.info(f"{symbol} 必需字段覆盖率 {required_coverage:.0%} < 85%，缺失: {missing_fields}，启用 akshare_direct 兜底")
+        
+        # 获取所有已存在的数据，传给akshare补充函数
+        all_existing_data = {}
+        for p in payloads:
+            all_existing_data.update(p.get("data", {}))
+
+        direct_payload = _collect_akshare_direct_payload(symbol, updated_at, all_existing_data)
         if direct_payload:
             payloads.append(direct_payload)
             logger.info(f"{symbol} akshare_direct 兜底数据已添加，字段: {list(direct_payload.get('data', {}).keys())}")
@@ -1272,6 +1299,215 @@ def _apply_derived_fields(fields: Dict[str, Dict[str, Any]]) -> None:
         _set_derived_field(fields, "net_margin", net_profit / revenue * 100, ["net_profit", "revenue"])
 
 
+def validate_data_consistency(snapshot_data: dict) -> list:
+    inconsistencies = []
+    fields = snapshot_data.get("fields", {})
+
+    def _num(name: str) -> Optional[float]:
+        return _numeric_field_value(fields, name)
+
+    def _val(name: str) -> Any:
+        f = fields.get(name, {})
+        return f.get("value") if f.get("status") in ("present", "conflict") else None
+
+    def _status(name: str) -> str:
+        return fields.get(name, {}).get("status", "missing")
+
+    eps = _num("eps")
+    pe = _num("pe")
+    pe_ttm = _num("pe_ttm")
+    if eps is not None and eps < 0:
+        for pe_name, pe_val in [("pe", pe), ("pe_ttm", pe_ttm)]:
+            if pe_val is not None and pe_val > 0:
+                inconsistencies.append({
+                    "rule": "PE_vs_EPS_sign",
+                    "fields": [pe_name, "eps"],
+                    "description": f"EPS为负({eps:.4g})但{FIELD_SPECS[pe_name]['label']}为正({pe_val:.4g})，负EPS不可能有正PE",
+                    "conflict_values": {pe_name: pe_val, "eps": eps},
+                    "suggested_fix": {pe_name: "N/A"},
+                })
+
+    if eps is not None and eps > 0:
+        for pe_name, pe_val in [("pe", pe), ("pe_ttm", pe_ttm)]:
+            if pe_val is not None and pe_val < 0:
+                inconsistencies.append({
+                    "rule": "PE_vs_EPS_sign",
+                    "fields": [pe_name, "eps"],
+                    "description": f"EPS为正({eps:.4g})但{FIELD_SPECS[pe_name]['label']}为负({pe_val:.4g})，正EPS不应有负PE",
+                    "conflict_values": {pe_name: pe_val, "eps": eps},
+                    "suggested_fix": {pe_name: "N/A"},
+                })
+
+    pb = _num("pb")
+    book_value_per_share = _num("book_value_per_share")
+    price = _num("price")
+    if pb is not None and book_value_per_share is not None and price is not None and book_value_per_share != 0:
+        expected_pb = price / book_value_per_share
+        if abs(expected_pb) > 0.01:
+            deviation = abs(pb - expected_pb) / abs(expected_pb)
+            if deviation > 0.5:
+                inconsistencies.append({
+                    "rule": "PB_vs_price_and_bvps",
+                    "fields": ["pb", "price", "book_value_per_share"],
+                    "description": f"PB({pb:.4g})与 price/bvps 计算值({expected_pb:.4g})偏差{deviation:.0%}，可能数据错误",
+                    "conflict_values": {"pb": pb, "price": price, "book_value_per_share": book_value_per_share, "expected_pb": round(expected_pb, 4)},
+                    "suggested_fix": {"pb": round(expected_pb, 4)},
+                })
+
+    if pb is not None and pb > 100:
+        if book_value_per_share is not None and book_value_per_share != 0 and price is not None:
+            expected_pb = price / book_value_per_share
+            if expected_pb < 50:
+                inconsistencies.append({
+                    "rule": "PB_abnormally_high",
+                    "fields": ["pb", "price", "book_value_per_share"],
+                    "description": f"PB异常高({pb:.4g})，但 price/bvps 计算值为{expected_pb:.4g}，可能计算错误",
+                    "conflict_values": {"pb": pb, "expected_pb": round(expected_pb, 4)},
+                    "suggested_fix": {"pb": round(expected_pb, 4)},
+                })
+        elif book_value_per_share is not None and abs(book_value_per_share) < 0.01:
+            inconsistencies.append({
+                "rule": "PB_abnormally_high_near_zero_bvps",
+                "fields": ["pb", "book_value_per_share"],
+                "description": f"PB异常高({pb:.4g})，每股净资产接近零({book_value_per_share:.4g})，PB无实际参考意义",
+                "conflict_values": {"pb": pb, "book_value_per_share": book_value_per_share},
+                "suggested_fix": {"pb": "N/A"},
+            })
+
+    roe = _num("roe")
+    net_margin = _num("net_margin")
+    debt_ratio = _num("debt_ratio")
+    if roe is not None and net_margin is not None:
+        if roe < 0 and net_margin > 0:
+            inconsistencies.append({
+                "rule": "ROE_vs_net_margin_sign",
+                "fields": ["roe", "net_margin"],
+                "description": f"ROE为负({roe:.4g}%)但净利率为正({net_margin:.4g}%)，可能存在巨额净资产负值或数据矛盾",
+                "conflict_values": {"roe": roe, "net_margin": net_margin},
+                "suggested_fix": {"roe": "需验证"},
+            })
+        elif roe > 0 and net_margin < 0:
+            inconsistencies.append({
+                "rule": "ROE_vs_net_margin_sign",
+                "fields": ["roe", "net_margin"],
+                "description": f"ROE为正({roe:.4g}%)但净利率为负({net_margin:.4g}%)，可能存在负净资产导致ROE失真或数据矛盾",
+                "conflict_values": {"roe": roe, "net_margin": net_margin},
+                "suggested_fix": {"roe": "需验证"},
+            })
+
+    if roe is not None and debt_ratio is not None and net_margin is not None:
+        if net_margin > 0 and debt_ratio > 80 and roe < 0:
+            inconsistencies.append({
+                "rule": "ROE_vs_margin_and_leverage",
+                "fields": ["roe", "net_margin", "debt_ratio"],
+                "description": f"净利率为正({net_margin:.4g}%)且资产负债率{debt_ratio:.4g}%但ROE为负({roe:.4g}%)，可能净资产为负导致ROE失真",
+                "conflict_values": {"roe": roe, "net_margin": net_margin, "debt_ratio": debt_ratio},
+                "suggested_fix": {"roe": "需验证，可能因负净资产失真"},
+            })
+
+    operating_cash_flow = _num("operating_cash_flow")
+    free_cash_flow = _num("free_cash_flow")
+    net_profit_val = _num("net_profit")
+    if operating_cash_flow is not None and net_profit_val is not None:
+        if operating_cash_flow < 0 and net_profit_val > 0:
+            inconsistencies.append({
+                "rule": "cashflow_vs_profit_sign",
+                "fields": ["operating_cash_flow", "net_profit"],
+                "description": f"经营现金流为负({operating_cash_flow:.4g})但净利润为正({net_profit_val:.4g})，盈利质量存疑",
+                "conflict_values": {"operating_cash_flow": operating_cash_flow, "net_profit": net_profit_val},
+                "suggested_fix": {},
+            })
+        if operating_cash_flow > 0 and net_profit_val < 0:
+            inconsistencies.append({
+                "rule": "cashflow_vs_profit_sign",
+                "fields": ["operating_cash_flow", "net_profit"],
+                "description": f"经营现金流为正({operating_cash_flow:.4g})但净利润为负({net_profit_val:.4g})，可能存在非现金损失",
+                "conflict_values": {"operating_cash_flow": operating_cash_flow, "net_profit": net_profit_val},
+                "suggested_fix": {},
+            })
+
+    if free_cash_flow is not None and operating_cash_flow is not None:
+        if free_cash_flow > 0 and operating_cash_flow < 0:
+            inconsistencies.append({
+                "rule": "fcf_vs_ocf_sign",
+                "fields": ["free_cash_flow", "operating_cash_flow"],
+                "description": f"自由现金流为正({free_cash_flow:.4g})但经营现金流为负({operating_cash_flow:.4g})，数据矛盾",
+                "conflict_values": {"free_cash_flow": free_cash_flow, "operating_cash_flow": operating_cash_flow},
+                "suggested_fix": {"free_cash_flow": "需验证"},
+            })
+
+    net_profit_raw = _val("net_profit")
+    if net_profit_raw is not None and eps is not None:
+        try:
+            np_val = float(net_profit_raw) if not isinstance(net_profit_raw, (int, float)) else net_profit_raw
+            if np_val > 0 and eps < 0:
+                inconsistencies.append({
+                    "rule": "EPS_vs_net_profit_sign",
+                    "fields": ["eps", "net_profit"],
+                    "description": f"净利润为正({np_val:.4g})但EPS为负({eps:.4g})，数据矛盾",
+                    "conflict_values": {"eps": eps, "net_profit": np_val},
+                    "suggested_fix": {"eps": "需验证"},
+                })
+            elif np_val < 0 and eps > 0:
+                inconsistencies.append({
+                    "rule": "EPS_vs_net_profit_sign",
+                    "fields": ["eps", "net_profit"],
+                    "description": f"净利润为负({np_val:.4g})但EPS为正({eps:.4g})，数据矛盾",
+                    "conflict_values": {"eps": eps, "net_profit": np_val},
+                    "suggested_fix": {"eps": "需验证"},
+                })
+        except (ValueError, TypeError):
+            pass
+
+    total_assets = _num("total_assets")
+    total_liabilities = _num("total_liabilities")
+    if total_assets is not None and total_liabilities is not None:
+        if total_liabilities > total_assets:
+            if book_value_per_share is not None and book_value_per_share > 0:
+                inconsistencies.append({
+                    "rule": "liabilities_exceed_assets_but_positive_bvps",
+                    "fields": ["total_assets", "total_liabilities", "book_value_per_share"],
+                    "description": f"总负债({total_liabilities:.4g})超过总资产({total_assets:.4g})，但每股净资产为正({book_value_per_share:.4g})，数据矛盾",
+                    "conflict_values": {"total_assets": total_assets, "total_liabilities": total_liabilities, "book_value_per_share": book_value_per_share},
+                    "suggested_fix": {"book_value_per_share": "需验证"},
+                })
+
+    return inconsistencies
+
+
+def apply_consistency_fixes(snapshot_data: dict) -> dict:
+    inconsistencies = validate_data_consistency(snapshot_data)
+    if not inconsistencies:
+        return snapshot_data
+
+    fields = snapshot_data.get("fields", {})
+    fixed_snapshot = dict(snapshot_data)
+    fixed_fields = {k: dict(v) for k, v in fields.items()}
+    fixed_snapshot["fields"] = fixed_fields
+
+    for issue in inconsistencies:
+        suggested_fix = issue.get("suggested_fix", {})
+        for field_name, fix_value in suggested_fix.items():
+            if field_name not in fixed_fields:
+                continue
+            field = fixed_fields[field_name]
+            if fix_value == "N/A":
+                field["value"] = None
+                field["status"] = "corrected_to_na"
+                field["correction_reason"] = issue["description"]
+            elif fix_value == "需验证" or (isinstance(fix_value, str) and "需验证" in fix_value):
+                field["status"] = "needs_verification"
+                field["verification_reason"] = issue["description"]
+            elif isinstance(fix_value, (int, float)):
+                field["value"] = fix_value
+                field["status"] = "corrected"
+                field["original_value"] = field.get("value")
+                field["correction_reason"] = issue["description"]
+
+    fixed_snapshot["consistency_issues"] = inconsistencies
+    return fixed_snapshot
+
+
 def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[str, Any]]) -> Dict[str, Any]:
     fields: Dict[str, Dict[str, Any]] = {}
     all_candidates: Dict[str, List[Dict[str, Any]]] = {}
@@ -1459,6 +1695,12 @@ def format_china_fundamental_snapshot_report(snapshot: Mapping[str, Any]) -> str
             conflict_values = field.get("conflict_values", {})
             parts = [f"{src}={_format_field_value(field_name, val)}" for src, val in conflict_values.items()]
             lines.append(f"{field_name}: ⚠️矛盾({', '.join(parts)})  # 数据来源: conflict")
+        elif field.get("status") == "corrected_to_na":
+            lines.append(f"{field_name}: N/A(已修正)  # 修正原因: {field.get('correction_reason', '')}")
+        elif field.get("status") == "needs_verification":
+            lines.append(f"{field_name}: {_format_field_value(field_name, field.get('value'))}⚠️待验证  # 验证原因: {field.get('verification_reason', '')}")
+        elif field.get("status") == "corrected":
+            lines.append(f"{field_name}: {_format_field_value(field_name, field.get('value'))}(已修正)  # 修正原因: {field.get('correction_reason', '')}")
         elif field.get("status") == "present":
             lines.append(f"{field_name}: {_format_field_value(field_name, field.get('value'))}  # 数据来源: {field.get('source')} | {metadata}")
         elif field.get("status") == "estimated":
@@ -1472,4 +1714,139 @@ def format_china_fundamental_snapshot_report(snapshot: Mapping[str, Any]) -> str
         lines.append(f"估算字段: {', '.join(quality['estimated_fields'])}")
     if conflict_fields_list:
         lines.append(f"矛盾字段: {', '.join(conflict_fields_list)}")
+
+    consistency_issues = snapshot.get("consistency_issues", [])
+    if not consistency_issues:
+        consistency_issues = validate_data_consistency(dict(snapshot))
+
+    if consistency_issues:
+        lines.extend(["", "### ⚠️ 数据一致性验证"])
+        lines.append(f"发现 {len(consistency_issues)} 项数据一致性问题：")
+        for i, issue in enumerate(consistency_issues, 1):
+            conflict_parts = [f"{k}={v}" for k, v in issue.get("conflict_values", {}).items()]
+            fix_parts = [f"{k}→{v}" for k, v in issue.get("suggested_fix", {}).items()]
+            lines.append(f"  {i}. [{issue['rule']}] {issue['description']}")
+            if conflict_parts:
+                lines.append(f"     冲突值: {', '.join(conflict_parts)}")
+            if fix_parts:
+                lines.append(f"     建议修正: {', '.join(fix_parts)}")
+    else:
+        lines.extend(["", "### ✅ 数据一致性验证", "所有关键字段数据一致性检查通过，未发现矛盾。"])
+
+    return "\n".join(lines)
+
+
+_QUANT_NAME_MAP: Dict[str, List[str]] = {
+    "roe": ["ROE"],
+    "roa": ["roa"],
+    "roic": ["roic"],
+    "net_margin": ["net_margin"],
+    "gross_margin": ["gross_margin"],
+    "debt_ratio": ["debt_ratio"],
+    "pe_ttm": ["pe_ttm", "pe_ratio"],
+    "pb": ["pb"],
+    "free_cash_flow": ["free_cash_flow"],
+    "operating_cash_flow": ["operating_cash_flow"],
+    "revenue_yoy": ["revenue_growth"],
+    "net_profit_yoy": ["eps_growth"],
+    "dividend_yield": ["dividend_yield"],
+    "current_ratio": ["current_ratio"],
+    "net_profit": ["net_income", "net_profit"],
+    "revenue": ["revenue"],
+    "total_assets": ["total_assets"],
+    "total_liabilities": ["total_liabilities"],
+    "current_assets": ["current_assets"],
+    "current_liabilities": ["current_liabilities"],
+    "capital_expenditure": ["capital_expenditure"],
+    "book_value_per_share": ["book_value_per_share"],
+    "eps": ["eps", "EPS"],
+    "accounts_receivable": ["accounts_receivable"],
+    "inventory": ["inventory"],
+    "goodwill": ["goodwill"],
+    "total_mv": ["market_cap"],
+    "pledge_ratio": ["pledge_ratio"],
+    "cashflow_to_profit_ratio": ["cashflow_to_profit_ratio"],
+    "insider_increase_events": ["insider_increase_events"],
+    "insider_decrease_events": ["insider_decrease_events"],
+    "regulatory_penalty_severity": ["regulatory_penalty_severity"],
+    "goodwill_impairment_amount_max": ["goodwill_impairment_amount_max"],
+    "earnings_guidance_change_pct_min": ["earnings_guidance_change_pct_min"],
+    "earnings_guidance_change_pct_max": ["earnings_guidance_change_pct_max"],
+    "earnings_guidance_revenue_change_pct_min": ["earnings_guidance_revenue_change_pct_min"],
+    "earnings_guidance_revenue_change_pct_max": ["earnings_guidance_revenue_change_pct_max"],
+    "earnings_positive_events": ["earnings_positive_events"],
+    "earnings_negative_events": ["earnings_negative_events"],
+    "contract_liabilities_to_revenue_change": ["contract_liabilities_to_revenue_change"],
+    "contract_assets_to_revenue_change": ["contract_assets_to_revenue_change"],
+    "accounts_payable_to_revenue_change": ["accounts_payable_to_revenue_change"],
+    "roe_trend": ["roe_trend"],
+    "gross_margin_trend": ["gross_margin_trend"],
+    "free_cash_flow_trend": ["free_cash_flow_trend"],
+    "debt_ratio_trend": ["debt_ratio_trend"],
+    "current_ratio_trend": ["current_ratio_trend"],
+    "deducted_net_profit_trend": ["deducted_net_profit_trend"],
+    "deducted_net_profit": ["deducted_net_profit"],
+    "dividend_cash_per_10_shares": ["dividend_cash_per_10_shares"],
+    "buyback_amount_min": ["buyback_amount_min"],
+    "buyback_amount_max": ["buyback_amount_max"],
+    "earnings_guidance_net_profit_min": ["earnings_guidance_net_profit_min"],
+    "earnings_guidance_net_profit_max": ["earnings_guidance_net_profit_max"],
+    "pe": ["pe_ratio"],
+    "price": ["price"],
+}
+
+_QUANT_PERCENT_FIELDS = {
+    "roe", "roa", "roic", "gross_margin", "net_margin", "debt_ratio",
+    "dividend_yield", "revenue_yoy", "net_profit_yoy", "pledge_ratio",
+    "earnings_guidance_change_pct_min", "earnings_guidance_change_pct_max",
+    "earnings_guidance_revenue_change_pct_min", "earnings_guidance_revenue_change_pct_max",
+}
+
+
+def snapshot_to_quant_text(snapshot: Mapping[str, Any]) -> str:
+    fields = snapshot.get("fields", {})
+    if not fields:
+        return ""
+
+    lines: List[str] = []
+    output_names: set = set()
+
+    for snapshot_name, quant_names in _QUANT_NAME_MAP.items():
+        field = fields.get(snapshot_name)
+        if not field or field.get("status") not in ("present", "conflict", "corrected", "needs_verification"):
+            continue
+
+        value = field.get("value")
+        if value is None:
+            continue
+
+        if snapshot_name in _QUANT_PERCENT_FIELDS and isinstance(value, (int, float)):
+            if abs(value) > 1:
+                value = value / 100.0
+
+        if isinstance(value, float):
+            formatted = f"{value:g}"
+        else:
+            formatted = str(value)
+
+        status_tag = ""
+        if field.get("status") == "corrected":
+            status_tag = " [已修正]"
+        elif field.get("status") == "needs_verification":
+            status_tag = " [待验证]"
+
+        for quant_name in quant_names:
+            if quant_name not in output_names:
+                lines.append(f"{quant_name}: {formatted}{status_tag}")
+                output_names.add(quant_name)
+
+    consistency_issues = snapshot.get("consistency_issues", [])
+    if consistency_issues:
+        lines.append("")
+        lines.append("# 数据一致性警告:")
+        for issue in consistency_issues:
+            fix_parts = [f"{k}→{v}" for k, v in issue.get("suggested_fix", {}).items()]
+            fix_text = f" 建议修正: {', '.join(fix_parts)}" if fix_parts else ""
+            lines.append(f"# - [{issue['rule']}] {issue['description']}{fix_text}")
+
     return "\n".join(lines)
