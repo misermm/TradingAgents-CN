@@ -103,11 +103,16 @@ class OpenAICompatibleBase(ChatOpenAI):
                 api_key = None
 
             if not api_key:
-                logger.error(f"❌ [{provider_name}初始化] API Key 检查失败，即将抛出异常")
-                raise ValueError(
-                    f"{provider_name} API密钥未找到。"
-                    f"请在 Web 界面配置 API Key (设置 -> 大模型厂家) 或设置 {api_key_env_var} 环境变量。"
-                )
+                from tradingagents.llm_clients.provider_keys import is_local_provider, placeholder_api_key
+                if is_local_provider(provider_name):
+                    api_key = placeholder_api_key(provider_name)
+                    logger.info(f"✅ [{provider_name}初始化] 本地模型，使用占位API Key")
+                else:
+                    logger.error(f"❌ [{provider_name}初始化] API Key 检查失败，即将抛出异常")
+                    raise ValueError(
+                        f"{provider_name} API密钥未找到。"
+                        f"请在 Web 界面配置 API Key (设置 -> 大模型厂家) 或设置 {api_key_env_var} 环境变量。"
+                    )
         else:
             logger.info(f"✅ [{provider_name}初始化] 使用传入的 API Key（来自数据库配置），长度: {len(api_key)}")
         

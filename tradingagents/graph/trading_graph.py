@@ -8,7 +8,7 @@ from typing import Dict, Any, Tuple, List, Optional
 import time
 
 from tradingagents.llm_clients import create_llm_client
-from tradingagents.llm_clients.provider_keys import env_key_for_provider, normalize_provider_key
+from tradingagents.llm_clients.provider_keys import env_key_for_provider, normalize_provider_key, is_local_provider, placeholder_api_key
 
 from langgraph.prebuilt import ToolNode
 
@@ -97,6 +97,9 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
                 env_key = env_key_for_provider(normalized_provider)
                 if env_key:
                     api_key = os.getenv(env_key)
+
+        if not api_key and is_local_provider(normalized_provider):
+            api_key = placeholder_api_key(normalized_provider)
 
         factory_provider = "openai" if normalized_provider == "siliconflow" else normalized_provider
         client = create_llm_client(
@@ -325,6 +328,8 @@ class TradingAgentsGraph:
                 api_key = os.getenv('AIHUBMIX_API_KEY')
                 if not api_key:
                     raise ValueError("使用AiHubMix需要设置AIHUBMIX_API_KEY环境变量")
+            elif is_local_provider(provider):
+                api_key = placeholder_api_key(provider)
 
             self.deep_thinking_llm, self.quick_thinking_llm = _create_provider_pair(
                 provider=provider,

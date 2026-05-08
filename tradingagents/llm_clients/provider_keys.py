@@ -31,6 +31,23 @@ _CANONICAL_ALIASES = {
     "glm": ["zhipu", "智谱", "智谱ai"],
 }
 
+_LOCAL_PROVIDERS = {"lmstudio", "ollama", "custom_openai"}
+
+_LOCAL_PROVIDER_PLACEHOLDER_KEYS = {
+    "lmstudio": "lm-studio",
+    "ollama": "ollama",
+    "custom_openai": "custom-openai",
+}
+
+
+def is_local_provider(provider: str) -> bool:
+    return normalize_provider_key(provider) in _LOCAL_PROVIDERS
+
+
+def placeholder_api_key(provider: str) -> str:
+    key = normalize_provider_key(provider)
+    return _LOCAL_PROVIDER_PLACEHOLDER_KEYS.get(key, "not-needed")
+
 
 def normalize_provider_key(provider: str) -> str:
     if provider is None:

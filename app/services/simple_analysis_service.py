@@ -680,8 +680,14 @@ class SimpleAnalysisService:
             try:
                 provider_info = get_provider_and_url_by_model_sync(model_name)
                 api_key = provider_info.get("api_key")
+                provider_key = provider_info.get("provider", provider)
 
-                if not api_key:
+                from tradingagents.llm_clients.provider_keys import is_local_provider, placeholder_api_key
+                if is_local_provider(provider_key):
+                    if not api_key:
+                        api_key = placeholder_api_key(provider_key)
+                    logger.info(f"✅ [LLM预检查] {label}（{model_name}）为本地模型，跳过API Key检查")
+                elif not api_key:
                     return f"当前{label}（{model_name}）未配置API Key，请在设置中配置后再试"
 
                 llm = ChatOpenAI(

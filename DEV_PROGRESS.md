@@ -6,6 +6,35 @@
 
 ## 最近完成的改动
 
+### 97. 本地LM Studio/Ollama模型无需API Key即可使用 ✅ (2026-05-08)
+
+**问题描述**: 使用本地 LM Studio 模型（如 qwen3.5-9b-claude-4.6-highiq-instruct）时，系统提示"未配置API Key，请在设置中配置后再试"，但本地模型不需要 API Key。
+
+**根因分析**:
+1. `simple_analysis_service.py:684` — LLM预检查对所有模型强制要求 API Key，包括本地模型
+2. `openai_compatible_base.py:105` — 适配器初始化时对无 API Key 抛出 ValueError
+3. `trading_graph.py:88-99` — 创建 LLM 实例时未为本地模型提供占位 API Key
+4. 缺少统一的"本地模型识别"机制，各处独立判断
+
+**修复方案**: 添加 `is_local_provider()` / `placeholder_api_key()` 工具函数，在 API Key 检查处跳过本地模型
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/llm_clients/provider_keys.py` | 新增函数 | 添加 `is_local_provider()`, `placeholder_api_key()`, `_LOCAL_PROVIDERS` 常量 |
+| `app/services/simple_analysis_service.py` | 修改 | LLM预检查跳过本地模型API Key验证，使用占位Key |
+| `tradingagents/llm_adapters/openai_compatible_base.py` | 修改 | 适配器初始化对本地模型使用占位Key而非抛出异常 |
+| `tradingagents/graph/trading_graph.py` | 修改 | 创建LLM实例和__init__中为本地模型提供占位Key |
+
+**详细改动**:
+1. **provider_keys.py**: 定义 `_LOCAL_PROVIDERS = {"lmstudio", "ollama", "custom_openai"}`，`is_local_provider()` 判断是否为本地模型，`placeholder_api_key()` 返回占位Key（如 "lm-studio"）
+2. **simple_analysis_service.py**: LLM预检查中，对本地模型跳过 `if not api_key` 检查，使用 `placeholder_api_key()` 作为 ChatOpenAI 的 api_key 参数
+3. **openai_compatible_base.py**: 初始化时对本地模型使用占位Key，不再抛出 ValueError
+4. **trading_graph.py**: `_create_llm()` 和 `__init__` 中为本地模型自动填充占位Key
+
+**验证结果**: 所有修改文件 py_compile 通过
+
 ### 96. Round 3 逻辑Bug全面排查与修复 — 股票分析准确性优化 ✅ (2026-05-08)
 
 **问题描述**: Ralph Loop 第三轮迭代，聚焦股票分析核心逻辑Bug，共发现并修复16个Bug。
