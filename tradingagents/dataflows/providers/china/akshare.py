@@ -851,15 +851,15 @@ class AKShareProvider(BaseStockDataProvider):
                             "code": matched_code,
                             "symbol": matched_code,
                             "name": quotes_data.get("name", f"股票{matched_code}"),
-                            "price": float(quotes_data.get("price", 0)),
-                            "change": float(quotes_data.get("change", 0)),
-                            "change_percent": float(quotes_data.get("change_percent", 0)),
-                            "volume": int(quotes_data.get("volume", 0)),
-                            "amount": float(quotes_data.get("amount", 0)),
-                            "open_price": float(quotes_data.get("open", 0)),
-                            "high_price": float(quotes_data.get("high", 0)),
-                            "low_price": float(quotes_data.get("low", 0)),
-                            "pre_close": float(quotes_data.get("pre_close", 0)),
+                            "price": quotes_data.get("price") or 0.0,
+                            "change": quotes_data.get("change") or 0.0,
+                            "change_percent": quotes_data.get("change_percent") or 0.0,
+                            "volume": quotes_data.get("volume") or 0,
+                            "amount": quotes_data.get("amount") or 0.0,
+                            "open_price": quotes_data.get("open") or 0.0,
+                            "high_price": quotes_data.get("high") or 0.0,
+                            "low_price": quotes_data.get("low") or 0.0,
+                            "pre_close": quotes_data.get("pre_close") or 0.0,
                             # 🔥 新增：财务指标字段
                             "turnover_rate": quotes_data.get("turnover_rate"),  # 换手率（%）
                             "volume_ratio": quotes_data.get("volume_ratio"),  # 量比
@@ -1194,7 +1194,7 @@ class AKShareProvider(BaseStockDataProvider):
         }
         ocf = result.get("operating_cash_flow")
         capex = result.get("capital_expenditure")
-        if ocf and capex:
+        if ocf is not None and capex is not None:
             result["free_cash_flow"] = ocf - abs(capex)
         return result
 
@@ -1205,8 +1205,10 @@ class AKShareProvider(BaseStockDataProvider):
             "dividend_yield": self._safe_float(row.get("dv_ratio", row.get("股息率", None))),
             "total_mv": self._safe_float(row.get("total_mv", row.get("总市值", None))),
         }
-        if result.get("dividend_yield") and result["dividend_yield"] > 1:
-            result["dividend_yield"] = result["dividend_yield"] / 100
+        dy = result.get("dividend_yield")
+        if dy and dy != 0.0:
+            if dy > 1:
+                result["dividend_yield"] = dy / 100
         return result
 
     def _parse_financial_analysis_row(self, row: pd.Series) -> Dict[str, Any]:
@@ -1222,14 +1224,13 @@ class AKShareProvider(BaseStockDataProvider):
         }
         return result
 
-    def _safe_float(self, value: Any) -> float:
-        """安全转换为浮点数"""
+    def _safe_float(self, value: Any) -> Optional[float]:
         try:
-            if pd.isna(value) or value is None:
-                return 0.0
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return None
             return float(value)
         except (ValueError, TypeError):
-            return 0.0
+            return None
     
     def _safe_int(self, value: Any) -> int:
         """安全转换为整数"""
@@ -1455,7 +1456,7 @@ class AKShareProvider(BaseStockDataProvider):
                     cf_row = cash_flow_df.iloc[0]
                     cf_fields = self._parse_cash_flow_row(cf_row)
                     for k, v in cf_fields.items():
-                        if v and (not financial_data.get('latest') or not financial_data['latest'].get(k)):
+                        if v is not None and (not financial_data.get('latest') or k not in financial_data['latest']):
                             if 'latest' not in financial_data:
                                 financial_data['latest'] = {}
                             financial_data['latest'][k] = v
@@ -1464,7 +1465,7 @@ class AKShareProvider(BaseStockDataProvider):
                             if i < len(financial_data['periods']):
                                 cf_p = self._parse_cash_flow_row(row)
                                 for k, v in cf_p.items():
-                                    if v and not financial_data['periods'][i].get(k):
+                                    if v is not None and k not in financial_data['periods'][i]:
                                         financial_data['periods'][i][k] = v
                     logger.debug(f"✅ {code}现金流量表关键字段提取成功")
                 except Exception as e:
@@ -1481,7 +1482,7 @@ class AKShareProvider(BaseStockDataProvider):
                     lg_row = indicator_lg_df.iloc[0]
                     lg_fields = self._parse_indicator_lg_row(lg_row)
                     for k, v in lg_fields.items():
-                        if v and (not financial_data.get('latest') or not financial_data['latest'].get(k)):
+                        if v is not None and (not financial_data.get('latest') or k not in financial_data['latest']):
                             if 'latest' not in financial_data:
                                 financial_data['latest'] = {}
                             financial_data['latest'][k] = v
@@ -1500,7 +1501,7 @@ class AKShareProvider(BaseStockDataProvider):
                     latest_analysis = analysis_df.iloc[0]
                     fa_fields = self._parse_financial_analysis_row(latest_analysis)
                     for k, v in fa_fields.items():
-                        if v and (not financial_data.get('latest') or not financial_data['latest'].get(k)):
+                        if v is not None and (not financial_data.get('latest') or k not in financial_data['latest']):
                             if 'latest' not in financial_data:
                                 financial_data['latest'] = {}
                             financial_data['latest'][k] = v
@@ -1508,7 +1509,7 @@ class AKShareProvider(BaseStockDataProvider):
                         for i in range(min(len(analysis_df) - 1, len(financial_data['periods']))):
                             fa_p = self._parse_financial_analysis_row(analysis_df.iloc[i + 1])
                             for k, v in fa_p.items():
-                                if v and not financial_data['periods'][i].get(k):
+                                if v is not None and k not in financial_data['periods'][i]:
                                     financial_data['periods'][i][k] = v
                     logger.debug(f"✅ {code}从 stock_financial_analysis_indicator 补充指标成功")
             except Exception as e:

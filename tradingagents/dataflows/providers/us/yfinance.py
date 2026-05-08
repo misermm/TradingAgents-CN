@@ -146,14 +146,21 @@ class YFinanceUtils:
         ticker = symbol
         recommendations = ticker.recommendations
         if recommendations.empty:
-            return None, 0  # No recommendations available
+            return None, 0
 
-        # Assuming 'period' column exists and needs to be excluded
-        row_0 = recommendations.iloc[0, 1:]  # Exclude 'period' column if necessary
+        if recommendations.shape[1] > 1:
+            row_0 = recommendations.iloc[0, 1:]
+        else:
+            row_0 = recommendations.iloc[0]
 
-        # Find the maximum voting result
+        if row_0.empty:
+            return None, 0
+
         max_votes = row_0.max()
         majority_voting_result = row_0[row_0 == max_votes].index.tolist()
+
+        if not majority_voting_result:
+            return None, 0
 
         return majority_voting_result[0], max_votes
 

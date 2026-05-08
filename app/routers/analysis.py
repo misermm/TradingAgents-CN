@@ -173,17 +173,18 @@ async def get_task_status_new(
                     "task_id": task_id,
                     "status": status,
                     "progress": progress,
-                    "message": f"任务{status}中...",
+                    "message": task_result.get("message", f"任务{status}中..."),
                     "current_step": status,
                     "start_time": start_time,
                     "end_time": task_result.get("completed_at"),
                     "elapsed_time": elapsed_time,
-                    "remaining_time": 0,  # 无法准确估算
+                    "remaining_time": 0,
                     "estimated_total_time": 0,
                     "symbol": task_result.get("symbol") or task_result.get("stock_code"),
-                    "stock_code": task_result.get("symbol") or task_result.get("stock_code"),  # 兼容字段
+                    "stock_code": task_result.get("symbol") or task_result.get("stock_code"),
                     "stock_symbol": task_result.get("symbol") or task_result.get("stock_code"),
-                    "source": "mongodb_tasks"  # 标记数据来源
+                    "error_message": task_result.get("error_message") or task_result.get("last_error"),
+                    "source": "mongodb_tasks"
                 }
 
                 return {

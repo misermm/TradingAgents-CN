@@ -148,6 +148,15 @@ class ImprovedHKStockProvider:
 
         self.last_request_time = time.time()
 
+    @staticmethod
+    def _safe_float(value, default=None):
+        try:
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return default
+            return float(value)
+        except (ValueError, TypeError):
+            return default
+
     def _normalize_hk_symbol(self, symbol: str) -> str:
         """标准化港股代码"""
         # 移除.HK后缀
@@ -332,40 +341,34 @@ class ImprovedHKStockProvider:
 
             # 提取关键指标
             indicators = {
-                # 基本信息
                 'report_date': str(latest.get('REPORT_DATE', '')),
                 'fiscal_year': str(latest.get('FISCAL_YEAR', '')),
 
-                # 每股指标
-                'eps_basic': float(latest.get('BASIC_EPS', 0)) if pd.notna(latest.get('BASIC_EPS')) else None,
-                'eps_diluted': float(latest.get('DILUTED_EPS', 0)) if pd.notna(latest.get('DILUTED_EPS')) else None,
-                'eps_ttm': float(latest.get('EPS_TTM', 0)) if pd.notna(latest.get('EPS_TTM')) else None,
-                'bps': float(latest.get('BPS', 0)) if pd.notna(latest.get('BPS')) else None,
-                'per_netcash_operate': float(latest.get('PER_NETCASH_OPERATE', 0)) if pd.notna(latest.get('PER_NETCASH_OPERATE')) else None,
+                'eps_basic': self._safe_float(latest.get('BASIC_EPS')),
+                'eps_diluted': self._safe_float(latest.get('DILUTED_EPS')),
+                'eps_ttm': self._safe_float(latest.get('EPS_TTM')),
+                'bps': self._safe_float(latest.get('BPS')),
+                'per_netcash_operate': self._safe_float(latest.get('PER_NETCASH_OPERATE')),
 
-                # 盈利能力指标
-                'roe_avg': float(latest.get('ROE_AVG', 0)) if pd.notna(latest.get('ROE_AVG')) else None,
-                'roe_yearly': float(latest.get('ROE_YEARLY', 0)) if pd.notna(latest.get('ROE_YEARLY')) else None,
-                'roa': float(latest.get('ROA', 0)) if pd.notna(latest.get('ROA')) else None,
-                'roic_yearly': float(latest.get('ROIC_YEARLY', 0)) if pd.notna(latest.get('ROIC_YEARLY')) else None,
-                'net_profit_ratio': float(latest.get('NET_PROFIT_RATIO', 0)) if pd.notna(latest.get('NET_PROFIT_RATIO')) else None,
-                'gross_profit_ratio': float(latest.get('GROSS_PROFIT_RATIO', 0)) if pd.notna(latest.get('GROSS_PROFIT_RATIO')) else None,
+                'roe_avg': self._safe_float(latest.get('ROE_AVG')),
+                'roe_yearly': self._safe_float(latest.get('ROE_YEARLY')),
+                'roa': self._safe_float(latest.get('ROA')),
+                'roic_yearly': self._safe_float(latest.get('ROIC_YEARLY')),
+                'net_profit_ratio': self._safe_float(latest.get('NET_PROFIT_RATIO')),
+                'gross_profit_ratio': self._safe_float(latest.get('GROSS_PROFIT_RATIO')),
 
-                # 营收指标
-                'operate_income': float(latest.get('OPERATE_INCOME', 0)) if pd.notna(latest.get('OPERATE_INCOME')) else None,
-                'operate_income_yoy': float(latest.get('OPERATE_INCOME_YOY', 0)) if pd.notna(latest.get('OPERATE_INCOME_YOY')) else None,
-                'operate_income_qoq': float(latest.get('OPERATE_INCOME_QOQ', 0)) if pd.notna(latest.get('OPERATE_INCOME_QOQ')) else None,
-                'gross_profit': float(latest.get('GROSS_PROFIT', 0)) if pd.notna(latest.get('GROSS_PROFIT')) else None,
-                'gross_profit_yoy': float(latest.get('GROSS_PROFIT_YOY', 0)) if pd.notna(latest.get('GROSS_PROFIT_YOY')) else None,
-                'holder_profit': float(latest.get('HOLDER_PROFIT', 0)) if pd.notna(latest.get('HOLDER_PROFIT')) else None,
-                'holder_profit_yoy': float(latest.get('HOLDER_PROFIT_YOY', 0)) if pd.notna(latest.get('HOLDER_PROFIT_YOY')) else None,
+                'operate_income': self._safe_float(latest.get('OPERATE_INCOME')),
+                'operate_income_yoy': self._safe_float(latest.get('OPERATE_INCOME_YOY')),
+                'operate_income_qoq': self._safe_float(latest.get('OPERATE_INCOME_QOQ')),
+                'gross_profit': self._safe_float(latest.get('GROSS_PROFIT')),
+                'gross_profit_yoy': self._safe_float(latest.get('GROSS_PROFIT_YOY')),
+                'holder_profit': self._safe_float(latest.get('HOLDER_PROFIT')),
+                'holder_profit_yoy': self._safe_float(latest.get('HOLDER_PROFIT_YOY')),
 
-                # 偿债能力指标
-                'debt_asset_ratio': float(latest.get('DEBT_ASSET_RATIO', 0)) if pd.notna(latest.get('DEBT_ASSET_RATIO')) else None,
-                'current_ratio': float(latest.get('CURRENT_RATIO', 0)) if pd.notna(latest.get('CURRENT_RATIO')) else None,
+                'debt_asset_ratio': self._safe_float(latest.get('DEBT_ASSET_RATIO')),
+                'current_ratio': self._safe_float(latest.get('CURRENT_RATIO')),
 
-                # 现金流指标
-                'ocf_sales': float(latest.get('OCF_SALES', 0)) if pd.notna(latest.get('OCF_SALES')) else None,
+                'ocf_sales': self._safe_float(latest.get('OCF_SALES')),
 
                 # 数据源
                 'source': 'akshare_eastmoney',

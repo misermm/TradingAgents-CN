@@ -1053,15 +1053,17 @@ class SimpleAnalysisService:
                         all_reports_degraded = True
 
                 if all_reports_degraded:
+                    degraded_error_msg = "分析失败: 当前模型不可用，请更换模型后重试"
                     await self.memory_manager.update_task_status(
                         task_id=task_id,
                         status=TaskStatus.FAILED,
                         progress=100,
-                        message=f"分析失败: 当前模型不可用，请更换模型后重试",
+                        message=degraded_error_msg,
                         current_step="failed_llm_unavailable",
-                        result_data=result
+                        result_data=result,
+                        error_message=degraded_error_msg,
                     )
-                    await self._update_task_status(task_id, AnalysisStatus.FAILED, 100)
+                    await self._update_task_status(task_id, AnalysisStatus.FAILED, 100, degraded_error_msg)
                 else:
                     await self.memory_manager.update_task_status(
                         task_id=task_id,
@@ -1351,10 +1353,11 @@ class SimpleAnalysisService:
                             progress=0,
                             message=llm_check_error,
                             current_step="llm_unavailable",
+                            error_message=llm_check_error,
                         )
                     )
                     _loop.run_until_complete(
-                        self._update_task_status(task_id, AnalysisStatus.FAILED, 0)
+                        self._update_task_status(task_id, AnalysisStatus.FAILED, 0, llm_check_error)
                     )
                 finally:
                     _loop.close()
@@ -2579,9 +2582,8 @@ class SimpleAnalysisService:
         progress: int,
         error_message: str = None
     ):
-        """更新任务状态"""
+        """更新任务状态（兼容异步和同步上下文）"""
         try:
-            db = get_mongo_db()
             update_data = {
                 "status": status,
                 "progress": progress,
@@ -2594,12 +2596,31 @@ class SimpleAnalysisService:
                 update_data["completed_at"] = datetime.now(timezone.utc)
             elif status == AnalysisStatus.FAILED:
                 update_data["last_error"] = error_message
+                update_data["error_message"] = error_message
                 update_data["completed_at"] = datetime.now(timezone.utc)
 
-            await db.analysis_tasks.update_one(
-                {"task_id": task_id},
-                {"$set": update_data}
-            )
+            try:
+                db = get_mongo_db()
+                await db.analysis_tasks.update_one(
+                    {"task_id": task_id},
+                    {"$set": update_data}
+                )
+            except RuntimeError as re:
+                if "attached to a different loop" in str(re) or "Event loop is closed" in str(re):
+                    from app.core.database import get_mongo_db_sync
+                    sync_db = get_mongo_db_sync()
+                    mongo_compatible = {}
+                    for k, v in update_data.items():
+                        if isinstance(v, AnalysisStatus):
+                            mongo_compatible[k] = v.value if hasattr(v, 'value') else str(v)
+                        else:
+                            mongo_compatible[k] = v
+                    sync_db.analysis_tasks.update_one(
+                        {"task_id": task_id},
+                        {"$set": mongo_compatible}
+                    )
+                else:
+                    raise
 
             logger.debug(f"📊 任务状态已更新: {task_id} -> {status} ({progress}%)")
 

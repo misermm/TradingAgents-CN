@@ -33,6 +33,8 @@ def calculate_ttm(quarterly_values: List[float]) -> Optional[float]:
     valid = [v for v in quarterly_values[:4] if v is not None]
     if not valid:
         return None
+    if len(valid) < 4:
+        logger.warning(f"⚠️ TTM计算数据不足4个季度（仅{len(valid)}个），结果可能不准确")
     return sum(valid)
 
 
@@ -55,7 +57,11 @@ def _cumulative_to_single(cumulative_values: List[float]) -> List[float]:
             single.append(val)
         elif cumulative_values[i - 1] is not None:
             diff = val - cumulative_values[i - 1]
-            single.append(diff if diff >= 0 else val)
+            if diff >= 0:
+                single.append(diff)
+            else:
+                logger.debug(f"⚠️ 累计值减少（可能年报重述）：当前={val}, 上期={cumulative_values[i-1]}，使用当前累计值")
+                single.append(val)
         else:
             single.append(val)
     return single

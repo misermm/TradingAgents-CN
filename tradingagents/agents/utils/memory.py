@@ -444,6 +444,9 @@ class FinancialSituationMemory:
                                     model=self.fallback_embedding,
                                     input=text
                                 )
+                                if not response.data or len(response.data) == 0:
+                                    logger.warning(f"⚠️ OpenAI降级embedding返回空数据")
+                                    return [0.0] * 1024
                                 embedding = response.data[0].embedding
                                 logger.info(f"✅ OpenAI降级成功，维度: {len(embedding)}")
                                 return embedding
@@ -473,6 +476,9 @@ class FinancialSituationMemory:
                                 model=self.fallback_embedding,
                                 input=text
                             )
+                            if not response.data or len(response.data) == 0:
+                                logger.warning(f"⚠️ OpenAI降级embedding返回空数据")
+                                return [0.0] * 1024
                             embedding = response.data[0].embedding
                             logger.info(f"✅ OpenAI降级成功，维度: {len(embedding)}")
                             return embedding
@@ -510,6 +516,9 @@ class FinancialSituationMemory:
                     model=self.embedding,
                     input=text
                 )
+                if not response.data or len(response.data) == 0:
+                    logger.warning(f"⚠️ {self.llm_provider} embedding返回空数据")
+                    return [0.0] * 1024
                 embedding = response.data[0].embedding
                 logger.debug(f"✅ {self.llm_provider} embedding成功，维度: {len(embedding)}")
                 return embedding

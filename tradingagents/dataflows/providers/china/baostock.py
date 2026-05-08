@@ -674,17 +674,20 @@ class BaoStockProvider(BaseStockDataProvider):
                     return {}
                 
                 latest_row = data_list[-1]
+                close_val = self._safe_float(latest_row[5])
+                preclose_val = self._safe_float(latest_row[6])
+                change_val = (close_val - preclose_val) if (close_val is not None and preclose_val is not None) else None
                 return {
                     "name": f"股票{code}",
                     "open": self._safe_float(latest_row[2]),
                     "high": self._safe_float(latest_row[3]),
                     "low": self._safe_float(latest_row[4]),
-                    "close": self._safe_float(latest_row[5]),
-                    "preclose": self._safe_float(latest_row[6]),
+                    "close": close_val,
+                    "preclose": preclose_val,
                     "volume": self._safe_int(latest_row[7]),
                     "amount": self._safe_float(latest_row[8]),
                     "change_percent": self._safe_float(latest_row[9]),
-                    "change": self._safe_float(latest_row[5]) - self._safe_float(latest_row[6])
+                    "change": change_val
                 }
             
             return await asyncio.to_thread(lambda: pool.execute(fetch_latest_kline))
@@ -780,14 +783,13 @@ class BaoStockProvider(BaseStockDataProvider):
                 "timezone": "Asia/Shanghai"
             }
     
-    def _safe_float(self, value: Any) -> float:
-        """安全转换为浮点数"""
+    def _safe_float(self, value: Any) -> Optional[float]:
         try:
             if value is None or value == '' or value == 'None':
-                return 0.0
+                return None
             return float(value)
         except (ValueError, TypeError):
-            return 0.0
+            return None
     
     def _safe_int(self, value: Any) -> int:
         """安全转换为整数"""

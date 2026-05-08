@@ -6,6 +6,89 @@
 
 ## 最近完成的改动
 
+### 96. Round 3 逻辑Bug全面排查与修复 — 股票分析准确性优化 ✅ (2026-05-08)
+
+**问题描述**: Ralph Loop 第三轮迭代，聚焦股票分析核心逻辑Bug，共发现并修复16个Bug。
+
+**修复的Bug列表**:
+
+| Bug# | 文件 | 问题 | 严重度 |
+|------|------|------|--------|
+| #18 | akshare.py | FCF计算跳过负值OCF（`if ocf and capex` → `if ocf is not None and capex is not None`） | 高 |
+| #19 | akshare.py | dividend_yield百分比转换遗漏<1%值 | 高 |
+| #20 | improved_hk.py | 25+处裸float()调用无try-except → 统一使用_safe_float | 高 |
+| #21 | memory.py | embedding API返回空数据时IndexError崩溃 | 高 |
+| #22 | yfinance.py | 分析师推荐DataFrame仅1列时IndexError | 中 |
+| #23 | ttm_calculator.py | TTM计算不足4季度无警告，结果可能不准确 | 中 |
+| #24 | ttm_calculator.py | 累计值减少（年报重述）无日志，难以排查 | 低 |
+| #25 | openai_compatible_base.py | _estimate_output_tokens空generations崩溃 | 中 |
+| #26 | akshare.py | `_safe_float`返回0.0而非None，FCF计算误用0.0 | 高 |
+| #27 | akshare.py | 行情数据裸float()调用，None值时ValueError崩溃 | 高 |
+| #28 | baostock.py | `_safe_float`返回0.0而非None + 减法None-None崩溃 | 高 |
+| #29 | eastmoney_direct.py | dividend_yield百分比转换遗漏<1%值 | 中 |
+| #30 | unified_dataframe.py | 市值标准化跳过大公司（cap.max()>=1e10不转换） | 高 |
+| #31 | akshare.py | 数据合并跳过0.0值（`if v` → `if v is not None`） | 高 |
+| #32 | akshare.py | 数据合并覆盖0.0值（`not dict.get(k)` → `k not in dict`） | 高 |
+| #33 | eastmoney_direct.py | 现金流字段合并跳过0.0值 | 中 |
+
+**关键发现**:
+1. Python真值判断陷阱：`if value:` 对0.0和负值返回False，导致合法金融数据被跳过
+2. `_safe_float`不一致：akshare/baostock返回0.0，eastmoney/sina返回None，导致下游逻辑混乱
+3. 数据合并逻辑：`not dict.get(key)` 对0.0值返回True，导致合法值被覆盖
+4. 市值标准化：`elif cap.max() < 1e10` 条件跳过大市值公司（如茅台2万亿）
+
+**修改的文件**:
+- `tradingagents/dataflows/providers/china/akshare.py` — Bug#18,19,26,27,31,32
+- `tradingagents/dataflows/providers/hk/improved_hk.py` — Bug#20
+- `tradingagents/agents/utils/memory.py` — Bug#21
+- `tradingagents/dataflows/providers/us/yfinance.py` — Bug#22
+- `tradingagents/dataflows/providers/china/ttm_calculator.py` — Bug#23,24
+- `tradingagents/llm_adapters/openai_compatible_base.py` — Bug#25
+- `tradingagents/dataflows/providers/china/baostock.py` — Bug#28
+- `tradingagents/dataflows/providers/china/eastmoney_direct.py` — Bug#29,33
+- `tradingagents/dataflows/unified_dataframe.py` — Bug#30
+
+**验证结果**: 所有修改文件py_compile通过
+
+### 95. 单股分析"分析过程中发生错误"修复 — error_message缺失 + 事件循环冲突 ✅ (2026-05-08)
+
+**问题描述**: 单股分析失败时，前端显示"分析过程中发生错误"而非具体错误原因。
+
+**根因分析**:
+1. LLM预检查失败和全降级检测失败时，`update_task_status` 只传了 `message`，未传 `error_message`
+2. 前端在任务 `failed` 时读取 `error_message` 字段，为 null 则显示默认的"分析过程中发生错误"
+3. `_update_task_status`（MongoDB更新）使用异步Motor客户端，但在线程池中通过 `asyncio.new_event_loop()` 调用时，Motor的Future绑定了不同的事件循环，导致 `RuntimeError: got Future attached to a different loop`
+4. MongoDB回退查询的 `status_data` 也缺少 `error_message` 字段
+
+**修复方案**: 补全 error_message 传递链 + 兼容事件循环冲突
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `app/services/simple_analysis_service.py` | 修改 | LLM预检查和全降级检测时补传 error_message；_update_task_status 兼容事件循环冲突 |
+| `app/routers/analysis.py` | 修改 | MongoDB回退查询时返回 error_message 字段 |
+
+**详细改动**:
+
+1. **error_message 补全**:
+   - LLM预检查失败：`memory_manager.update_task_status` 添加 `error_message=llm_check_error`
+   - 全降级检测：`memory_manager.update_task_status` 添加 `error_message=degraded_error_msg`
+   - `_update_task_status`：FAILED 时同时写入 `last_error` 和 `error_message` 字段
+
+2. **事件循环冲突修复**:
+   - `_update_task_status` 先尝试异步 Motor 客户端
+   - 若捕获 `RuntimeError("attached to a different loop")`，自动降级到 `get_mongo_db_sync()` 同步客户端
+
+3. **MongoDB回退查询**:
+   - `status_data` 添加 `error_message` 字段，从 `error_message` 或 `last_error` 取值
+   - `message` 字段改为从 MongoDB 读取实际消息，而非硬编码
+
+**验证结果**:
+- ✅ 任务失败时 `error_message` 正确返回（如"当前快速/深度模型调用已达速率限制"）
+- ✅ 前端显示具体错误信息而非默认的"分析过程中发生错误"
+- ✅ 不再出现 `attached to a different loop` 错误
+
 ### 94. 单股分析"服务器内部错误"修复 — datetime时区相减报错 ✅ (2026-05-08)
 
 **问题描述**: 单股分析勾选大师等分析师后，点击分析按钮，前端报错"服务器内部错误，请稍后重试"。

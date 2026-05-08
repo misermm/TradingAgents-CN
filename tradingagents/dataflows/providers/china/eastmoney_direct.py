@@ -602,8 +602,9 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
 
             latest = items[0]
             dividend_yield = self._safe_float(latest.get("DIVIDEND_YIELD"))
-            if dividend_yield is not None and dividend_yield > 1:
-                dividend_yield = dividend_yield / 100
+            if dividend_yield is not None and dividend_yield != 0.0:
+                if dividend_yield > 1:
+                    dividend_yield = dividend_yield / 100
 
             return {
                 "symbol": latest.get("SECURITY_CODE", code),
@@ -672,7 +673,7 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
                         rd_key = rd[:10] if rd else ""
                         matched_cf = cf_map.get(rd_key)
                         for field in cf_fields:
-                            if not period.get(field):
+                            if field not in period or period[field] is None:
                                 period[field] = matched_cf.get(field) if matched_cf else None
 
                 div_result = self._http_client.call(
@@ -687,7 +688,7 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
 
                 latest = financial_list[0] if financial_list else {}
                 for k, v in dividend_fields.items():
-                    if v is not None and not latest.get(k):
+                    if v is not None and k not in latest:
                         latest[k] = v
 
                 summary = {

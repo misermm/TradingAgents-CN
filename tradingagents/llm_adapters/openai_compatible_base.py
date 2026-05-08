@@ -224,6 +224,8 @@ class ChatDeepSeekOpenAI(OpenAICompatibleBase):
         return max(1, total_chars // 2)
 
     def _estimate_output_tokens(self, result: ChatResult) -> int:
+        if not result or not result.generations:
+            return 1
         total_chars = 0
         for generation in result.generations:
             if hasattr(generation, 'message') and hasattr(generation.message, 'content'):

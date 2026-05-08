@@ -123,14 +123,14 @@ def standardize_units(df: pd.DataFrame, market: str = "cn") -> pd.DataFrame:
             cap = out["market_cap"]
             if cap.max() < 1e6:
                 out["market_cap"] = cap * WAN_TO_YI / 1e8
-            elif cap.max() < 1e10:
+            else:
                 out["market_cap"] = cap / 1e8
 
         if "circulating_market_cap" in out.columns:
             cap = out["circulating_market_cap"]
             if cap.max() < 1e6:
                 out["circulating_market_cap"] = cap * WAN_TO_YI / 1e8
-            elif cap.max() < 1e10:
+            else:
                 out["circulating_market_cap"] = cap / 1e8
 
     return out
