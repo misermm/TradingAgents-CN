@@ -6,10 +6,21 @@
 import asyncio
 import uuid
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import sys
+
+
+def _ensure_utc(dt):
+    """确保 datetime 对象是 UTC 时区感知的，避免 offset-naive/offset-aware 相减报错"""
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    return dt
 
 # 添加项目根目录到路径
 project_root = Path(__file__).parent.parent.parent
@@ -646,6 +657,61 @@ class SimpleAnalysisService:
             logger.warning(f"⚠️ 生成新的用户ID: {new_object_id}")
             return PyObjectId(new_object_id)
 
+    def _check_llm_availability(
+        self,
+        quick_model: str, quick_provider: str, quick_backend_url: str,
+        deep_model: str, deep_provider: str, deep_backend_url: str,
+    ) -> Optional[str]:
+        """LLM可用性预检查 — 发送最小请求检测模型是否可用
+
+        Returns:
+            None if available, error message string if not available
+        """
+        from langchain_openai import ChatOpenAI
+
+        models_to_check = []
+        if quick_model == deep_model and quick_provider == deep_provider:
+            models_to_check.append((quick_model, quick_provider, quick_backend_url, "快速/深度模型"))
+        else:
+            models_to_check.append((quick_model, quick_provider, quick_backend_url, "快速模型"))
+            models_to_check.append((deep_model, deep_provider, deep_backend_url, "深度模型"))
+
+        for model_name, provider, backend_url, label in models_to_check:
+            try:
+                provider_info = get_provider_and_url_by_model_sync(model_name)
+                api_key = provider_info.get("api_key")
+
+                if not api_key:
+                    return f"当前{label}（{model_name}）未配置API Key，请在设置中配置后再试"
+
+                llm = ChatOpenAI(
+                    model=model_name,
+                    api_key=api_key,
+                    base_url=backend_url,
+                    max_tokens=5,
+                    temperature=0,
+                    request_timeout=15,
+                )
+                llm.invoke("Hi")
+                logger.info(f"✅ [LLM预检查] {label}（{model_name}）可用")
+
+            except Exception as e:
+                err_type = type(e).__name__
+                err_msg = str(e)[:200]
+
+                if "RateLimit" in err_type or "429" in err_msg:
+                    return f"当前{label}（{model_name}）调用已达速率限制，请稍后重试或更换模型"
+                elif "Authentication" in err_type or "401" in err_msg or "Unauthorized" in err_msg:
+                    return f"当前{label}（{model_name}）API Key无效，请检查配置或更换模型"
+                elif "Insufficient" in err_msg or "402" in err_msg or "quota" in err_msg.lower():
+                    return f"当前{label}（{model_name}）API余额不足，请充值或更换模型"
+                elif "Connection" in err_type or "Timeout" in err_type:
+                    return f"当前{label}（{model_name}）连接失败，请检查网络或代理设置"
+                else:
+                    return f"当前{label}（{model_name}）不可用（{err_type}），请更换模型后重试"
+
+        return None
+
     def _get_trading_graph(self, config: Dict[str, Any]) -> TradingAgentsGraph:
         """获取或创建TradingAgents实例
 
@@ -908,6 +974,11 @@ class SimpleAnalysisService:
             # 执行实际的分析
             result = await self._execute_analysis_sync(task_id, user_id, request, progress_tracker)
 
+            # 🔍 检查是否在预检查阶段就失败了（如LLM不可用）
+            if isinstance(result, dict) and result.get("status") == "failed":
+                logger.warning(f"⚠️ [分析预检] 任务 {task_id} 在预检查阶段失败: {result.get('error', '未知错误')}")
+                return
+
             # 标记进度跟踪器完成（在线程中执行）
             await asyncio.to_thread(progress_tracker.mark_completed)
 
@@ -968,15 +1039,39 @@ class SimpleAnalysisService:
                 warning_msg = "; ".join(warning_parts)
                 logger.warning(f"⚠️ [分析完整性] 任务 {task_id}: {warning_msg}")
 
-                await self.memory_manager.update_task_status(
-                    task_id=task_id,
-                    status=TaskStatus.COMPLETED,
-                    progress=100,
-                    message=f"分析完成（部分内容缺失）: {warning_msg}",
-                    current_step="completed_with_warnings",
-                    result_data=result
-                )
-                await self._update_task_status(task_id, AnalysisStatus.COMPLETED, 100)
+                all_reports_degraded = False
+                if isinstance(state, dict) and rate_limited:
+                    valid_report_count = 0
+                    total_report_count = 0
+                    for analyst_key, (report_key, _) in report_checks.items():
+                        if analyst_key in selected_analysts:
+                            total_report_count += 1
+                            rv = state.get(report_key, "")
+                            if rv and "速率限制" not in str(rv) and "RateLimit" not in str(rv) and "LLM调用失败" not in str(rv) and len(str(rv).strip()) > 100:
+                                valid_report_count += 1
+                    if total_report_count > 0 and valid_report_count == 0:
+                        all_reports_degraded = True
+
+                if all_reports_degraded:
+                    await self.memory_manager.update_task_status(
+                        task_id=task_id,
+                        status=TaskStatus.FAILED,
+                        progress=100,
+                        message=f"分析失败: 当前模型不可用，请更换模型后重试",
+                        current_step="failed_llm_unavailable",
+                        result_data=result
+                    )
+                    await self._update_task_status(task_id, AnalysisStatus.FAILED, 100)
+                else:
+                    await self.memory_manager.update_task_status(
+                        task_id=task_id,
+                        status=TaskStatus.COMPLETED,
+                        progress=100,
+                        message=f"分析完成（部分内容缺失）: {warning_msg}",
+                        current_step="completed_with_warnings",
+                        result_data=result
+                    )
+                    await self._update_task_status(task_id, AnalysisStatus.COMPLETED, 100)
             else:
                 await self.memory_manager.update_task_status(
                     task_id=task_id,
@@ -1232,6 +1327,45 @@ class SimpleAnalysisService:
             logger.info(f"🔍 [API地址] 快速模型使用 backend_url: {quick_backend_url}")
             logger.info(f"🔍 [供应商查找] 深度模型 {deep_model} 对应的供应商: {deep_provider}")
             logger.info(f"🔍 [API地址] 深度模型使用 backend_url: {deep_backend_url}")
+
+            # 🔍 LLM可用性预检查 — 在分析开始前检测模型是否可用
+            update_progress_sync(8, "🔍 检查模型可用性...", "llm_health_check")
+
+            llm_check_error = self._check_llm_availability(
+                quick_model, quick_provider, quick_backend_url,
+                deep_model, deep_provider, deep_backend_url,
+            )
+
+            if llm_check_error:
+                logger.error(f"❌ [LLM预检查] 模型不可用: {llm_check_error}")
+                update_progress_sync(0, f"❌ {llm_check_error}", "llm_unavailable")
+
+                import asyncio as _aio
+                _loop = _aio.new_event_loop()
+                _aio.set_event_loop(_loop)
+                try:
+                    _loop.run_until_complete(
+                        self.memory_manager.update_task_status(
+                            task_id=task_id,
+                            status=TaskStatus.FAILED,
+                            progress=0,
+                            message=llm_check_error,
+                            current_step="llm_unavailable",
+                        )
+                    )
+                    _loop.run_until_complete(
+                        self._update_task_status(task_id, AnalysisStatus.FAILED, 0)
+                    )
+                finally:
+                    _loop.close()
+
+                return {
+                    "state": {"error_report": llm_check_error},
+                    "decision": None,
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": llm_check_error,
+                }
 
             # 检查两个模型是否来自同一个厂家
             if quick_provider == deep_provider:
@@ -2424,7 +2558,7 @@ class SimpleAnalysisService:
                 # 计算运行时长
                 start_time = doc.get("started_at") or doc.get("created_at")
                 if start_time:
-                    running_seconds = (datetime.now(timezone.utc) - start_time).total_seconds()
+                    running_seconds = (datetime.now(timezone.utc) - _ensure_utc(start_time)).total_seconds()
                     task["running_hours"] = round(running_seconds / 3600, 2)
 
                 zombie_tasks.append(task)

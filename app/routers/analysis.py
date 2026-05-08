@@ -8,6 +8,17 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import logging
+
+
+def _ensure_utc(dt):
+    """确保 datetime 对象是 UTC 时区感知的，避免 offset-naive/offset-aware 相减报错"""
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    return dt
 import time
 import uuid
 import asyncio
@@ -150,7 +161,7 @@ async def get_task_status_new(
                 elapsed_time = 0
                 if start_time:
                     if isinstance(start_time, datetime):
-                        elapsed_time = (current_time - start_time).total_seconds()
+                        elapsed_time = (current_time - _ensure_utc(start_time)).total_seconds()
                     elif isinstance(start_time, str):
                         try:
                             start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
@@ -193,7 +204,7 @@ async def get_task_status_new(
                 end_time = mongo_result.get("updated_at")
                 elapsed_time = 0
                 if start_time and end_time:
-                    elapsed_time = (end_time - start_time).total_seconds()
+                    elapsed_time = (_ensure_utc(end_time) - _ensure_utc(start_time)).total_seconds()
 
                 status_data = {
                     "task_id": task_id,

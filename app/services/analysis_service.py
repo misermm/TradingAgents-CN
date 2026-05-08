@@ -838,12 +838,17 @@ class AnalysisService:
                     from datetime import datetime
                     start_time = task.get("started_at")
                     if task.get("completed_at"):
-                        # 任务已完成
-                        elapsed_time = (task.get("completed_at") - start_time).total_seconds()
-                        estimated_total_time = elapsed_time  # 已完成任务的总时长就是已用时间
+                        completed_at = task.get("completed_at")
+                        if isinstance(start_time, datetime) and start_time.tzinfo is None:
+                            start_time = start_time.replace(tzinfo=timezone.utc)
+                        if isinstance(completed_at, datetime) and completed_at.tzinfo is None:
+                            completed_at = completed_at.replace(tzinfo=timezone.utc)
+                        elapsed_time = (completed_at - start_time).total_seconds()
+                        estimated_total_time = elapsed_time
                         remaining_time = 0
                     else:
-                        # 任务进行中
+                        if isinstance(start_time, datetime) and start_time.tzinfo is None:
+                            start_time = start_time.replace(tzinfo=timezone.utc)
                         elapsed_time = (datetime.now(timezone.utc) - start_time).total_seconds()
 
                         # 使用任务的预估时长，如果没有则使用默认值（5分钟）

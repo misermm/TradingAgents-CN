@@ -6,6 +6,95 @@
 
 ## 最近完成的改动
 
+### 94. 单股分析"服务器内部错误"修复 — datetime时区相减报错 ✅ (2026-05-08)
+
+**问题描述**: 单股分析勾选大师等分析师后，点击分析按钮，前端报错"服务器内部错误，请稍后重试"。
+
+**根因分析**:
+1. 分析任务提交成功后，前端轮询 `GET /api/analysis/tasks/{task_id}/status` 获取进度
+2. 当任务不在内存中（服务重启/任务清理后），回退到MongoDB查询
+3. MongoDB返回的datetime字段是offset-naive（无时区信息），而代码中用 `datetime.now(timezone.utc)`（offset-aware）做减法
+4. Python不允许offset-naive和offset-aware的datetime相减，抛出 `TypeError: can't subtract offset-naive and offset-aware datetimes`
+5. 异常被捕获后返回HTTP 500，前端拦截器对500统一显示"服务器内部错误"
+
+**修复方案**: 添加 `_ensure_utc()` 辅助函数，确保datetime相减前统一为UTC时区感知
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `app/routers/analysis.py` | 修改 | 添加 `_ensure_utc()` 函数，修复2处datetime相减的时区问题 |
+| `app/services/simple_analysis_service.py` | 修改 | 添加 `_ensure_utc()` 函数，修复僵尸任务检测中的datetime相减问题 |
+| `app/services/analysis_service.py` | 修改 | 修复任务状态查询中的datetime相减时区问题 |
+
+**详细改动**:
+
+1. **`_ensure_utc()` 辅助函数**:
+   - 检查datetime是否有时区信息，无则添加UTC时区
+   - 避免offset-naive与offset-aware datetime相减报错
+
+2. **`app/routers/analysis.py` 修复点**:
+   - L164: `current_time - start_time` → `current_time - _ensure_utc(start_time)`
+   - L207: `end_time - start_time` → `_ensure_utc(end_time) - _ensure_utc(start_time)`
+
+3. **`app/services/simple_analysis_service.py` 修复点**:
+   - L2561: 僵尸任务运行时长计算中的datetime相减
+
+4. **`app/services/analysis_service.py` 修复点**:
+   - L842-847: 任务已完成/进行中的elapsed_time计算
+
+**验证结果**:
+- ✅ 状态查询不再返回500错误
+- ✅ `elapsed_time` 正确计算（如1813秒）
+- ✅ 前端不再显示"服务器内部错误"
+
+### 93. LLM不可用时立即中断分析 — 预检查+失败状态标记 ✅ (2026-05-08)
+
+**问题描述**: 当LLM模型不可用时（如RateLimitError、API Key无效、余额不足），系统仍显示"分析中"，最终标记"分析完成"但内容全是错误信息。用户期望：模型不可用时直接提示并中断。
+
+**根因分析**:
+1. 分析流程没有预检查机制，即使LLM不可用也会启动整个graph执行
+2. `_run_analysis_sync` 返回 `status: "failed"` 后，`execute_analysis_background` 仍继续执行完整性检查逻辑，覆盖了FAILED状态为COMPLETED
+3. 所有分析师报告都是降级消息时，仍标记为COMPLETED而非FAILED
+
+**修复方案**: 3层防护 — 预检查拦截 + 失败状态透传 + 全降级检测
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `app/services/simple_analysis_service.py` | 修改 | 添加LLM可用性预检查、失败状态透传、全降级检测 |
+
+**详细改动**:
+
+1. **LLM可用性预检查** (`_check_llm_availability` 方法):
+   - 在分析引擎初始化之前，发送最小请求（max_tokens=5, "Hi"）检测模型是否可用
+   - 支持快速模型和深度模型分别检查（相同模型只检查一次）
+   - 识别5种错误类型：速率限制(429)、认证失败(401)、余额不足(402)、连接超时、其他错误
+   - 返回用户友好的中文错误提示
+
+2. **预检查失败时立即中断**:
+   - 预检查失败后，标记任务状态为FAILED，进度0%
+   - 返回 `status: "failed"` 的result，不进入graph执行
+
+3. **失败状态透传**:
+   - `execute_analysis_background` 中检查result的status字段
+   - 如果是"failed"，直接return，不执行后续的完整性检查和COMPLETED标记
+
+4. **全降级检测**:
+   - 当所有分析师报告都是降级消息（速率限制/LLM调用失败）时，标记为FAILED
+   - 部分降级时仍标记COMPLETED（部分内容缺失）
+
+**验证结果**:
+- ✅ 预检查生效：OpenRouter速率限制时，任务立即标记为failed（进度0%）
+- ✅ 错误消息清晰："当前快速/深度模型（z-ai/glm-4.5-air:free）调用已达速率限制，请稍后重试或更换模型"
+- ✅ 不再出现"分析完成"但内容全是错误信息的情况
+
+**关键文件入口**:
+- 分析服务: `app/services/simple_analysis_service.py`（`_check_llm_availability` 方法）
+
+---
+
 ### 92. 分析流程健壮性修复 — LLM错误降级+文本工具调用修复+结果完整性检查 ✅ (2026-05-08)
 
 **问题描述**: 单股分析勾选大师等内容后点击分析，存在3个关键Bug：
