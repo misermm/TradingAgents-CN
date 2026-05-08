@@ -300,6 +300,24 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
             if pct_chg is None and current is not None and pre_close is not None and pre_close != 0:
                 pct_chg = round((current - pre_close) / pre_close * 100, 2)
 
+            pe_dynamic = self._safe_float(item.get("f162"))
+            pe_ttm = self._safe_float(item.get("f167"))
+            pb = self._safe_float(item.get("f168"))
+
+            if pb is not None and pb > 100:
+                self.logger.warning(
+                    f"⚠️ [PB验证] {symbol} 东方财富API返回PB值异常: {pb}，"
+                    f"超过A股合理上限100，已置为None"
+                )
+                pb = None
+
+            if pe_ttm is not None and pe_ttm > 1000:
+                self.logger.warning(
+                    f"⚠️ [PE验证] {symbol} 东方财富API返回PE_TTM值异常: {pe_ttm}，"
+                    f"超过A股合理上限1000，已置为None"
+                )
+                pe_ttm = None
+
             return {
                 "symbol": str(item.get("f57", symbol)),
                 "name": item.get("f58", ""),
@@ -316,9 +334,9 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
                 "amplitude": self._safe_float(item.get("f171")),
                 "turnover_rate": self._safe_float(item.get("f55")),
                 "volume_ratio": self._safe_float(item.get("f50")),
-                "pe_dynamic": self._safe_float(item.get("f162")),
-                "pe_ttm": self._safe_float(item.get("f167")),
-                "pb": self._safe_float(item.get("f168")),
+                "pe_dynamic": pe_dynamic,
+                "pe_ttm": pe_ttm,
+                "pb": pb,
                 "total_mv": self._safe_float(item.get("f116")),
                 "circ_mv": self._safe_float(item.get("f117")),
                 "limit_up": limit_up,

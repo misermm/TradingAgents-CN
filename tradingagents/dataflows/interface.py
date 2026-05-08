@@ -20,6 +20,8 @@ from .cn_data_service import (
 from .hk_data_service import (
     get_hk_stock_data_unified,
     get_hk_stock_info_unified,
+    get_hk_stock_data_akshare,
+    get_hk_stock_info_akshare,
 )
 from .us_data_service import get_us_stock_data
 

@@ -99,6 +99,7 @@ test_mongodb_connection.py
 test_mongodb_fix.py
 verify_database_fix.py
 setup_mongodb_user.py
+test_*.py
 
 # ==================== 临时本地脚本 ====================
 start_local_services.bat

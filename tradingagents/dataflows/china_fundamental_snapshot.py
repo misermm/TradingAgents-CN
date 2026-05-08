@@ -765,16 +765,14 @@ def _collect_baostock_payload(symbol: str) -> Optional[Dict[str, Any]]:
                     field_map = dict(zip(rs_balance.fields, balance_data))
                     _set_if_valid(data, "debt_ratio", _akshare_safe_float(field_map.get("liabilityToAsset")))
                     _set_if_valid(data, "current_ratio", _akshare_safe_float(field_map.get("currentRatio")))
-                    _set_if_valid(data, "total_assets", _akshare_safe_float(field_map.get("totalAssets")))
-                    _set_if_valid(data, "total_liabilities", _akshare_safe_float(field_map.get("totalLiability")))
-                    _set_if_valid(data, "book_value_per_share", _akshare_safe_float(field_map.get("surplusPerShare")))
+                    _set_if_valid(data, "quick_ratio", _akshare_safe_float(field_map.get("quickRatio")))
 
                 # 查询成长能力
                 rs_growth = bs.query_growth_data(code=bs_code, year=y, quarter=q)
                 if rs_growth.error_code == '0' and rs_growth.next():
                     growth_data = rs_growth.get_row_data()
                     field_map = dict(zip(rs_growth.fields, growth_data))
-                    _set_if_valid(data, "revenue_yoy", _akshare_safe_float(field_map.get("YOYEquity")))
+                    _set_if_valid(data, "equity_yoy", _akshare_safe_float(field_map.get("YOYEquity")))
                     _set_if_valid(data, "net_profit_yoy", _akshare_safe_float(field_map.get("YOYNI")))
 
                 # 查询现金流量表
@@ -877,16 +875,39 @@ def _collect_indicator_lg_payload(symbol: str, updated_at: str) -> Optional[Dict
             return None
         latest = df.iloc[0]
         data = {}
-        pe_ttm = _akshare_safe_float(latest.get("摊薄每股收益(元)"))
-        if pe_ttm is not None:
-            data["pe_ttm"] = pe_ttm
+        eps_diluted = _akshare_safe_float(latest.get("摊薄每股收益(元)"))
+        if eps_diluted is not None:
+            data["eps"] = eps_diluted
+        eps_weighted = _akshare_safe_float(latest.get("加权每股收益(元)"))
+        if eps_weighted is not None:
+            data["eps"] = eps_weighted
         bvps = _akshare_safe_float(latest.get("每股净资产_调整前(元)"))
         if bvps is not None:
-            data["pb"] = bvps
             data["book_value_per_share"] = bvps
+        ocf_per_share = _akshare_safe_float(latest.get("每股经营性现金流(元)"))
+        if ocf_per_share is not None:
+            data["operating_cash_flow_per_share"] = ocf_per_share
         roe_val = _akshare_safe_float(latest.get("加权净资产收益率(%)") or latest.get("净资产收益率(%)"))
         if roe_val is not None:
             data["roe"] = roe_val
+        roa_val = _akshare_safe_float(latest.get("总资产利润率(%)"))
+        if roa_val is not None:
+            data["roa"] = roa_val
+        net_margin = _akshare_safe_float(latest.get("销售净利率(%)"))
+        if net_margin is not None:
+            data["net_margin"] = net_margin
+        gross_margin = _akshare_safe_float(latest.get("销售毛利率(%)"))
+        if gross_margin is not None:
+            data["gross_margin"] = gross_margin
+        revenue_yoy = _akshare_safe_float(latest.get("主营业务收入增长率(%)"))
+        if revenue_yoy is not None:
+            data["revenue_yoy"] = revenue_yoy
+        net_profit_yoy = _akshare_safe_float(latest.get("净利润增长率(%)"))
+        if net_profit_yoy is not None:
+            data["net_profit_yoy"] = net_profit_yoy
+        current_ratio = _akshare_safe_float(latest.get("流动比率"))
+        if current_ratio is not None:
+            data["current_ratio"] = current_ratio
         total_assets = _akshare_safe_float(latest.get("总资产(元)"))
         if total_assets is not None:
             data["total_assets"] = total_assets
@@ -1298,6 +1319,15 @@ def _apply_derived_fields(fields: Dict[str, Dict[str, Any]]) -> None:
     if revenue is not None and revenue != 0 and net_profit is not None:
         _set_derived_field(fields, "net_margin", net_profit / revenue * 100, ["net_profit", "revenue"])
 
+    price = _numeric_field_value(fields, "price")
+    book_value_per_share = _numeric_field_value(fields, "book_value_per_share")
+    if price is not None and book_value_per_share is not None and book_value_per_share != 0:
+        _set_derived_field(fields, "pb", price / book_value_per_share, ["price", "book_value_per_share"])
+
+    eps = _numeric_field_value(fields, "eps")
+    if price is not None and eps is not None and eps > 0:
+        _set_derived_field(fields, "pe_ttm", price / eps, ["price", "eps"])
+
 
 def validate_data_consistency(snapshot_data: dict) -> list:
     inconsistencies = []
@@ -1371,6 +1401,14 @@ def validate_data_consistency(snapshot_data: dict) -> list:
                 "fields": ["pb", "book_value_per_share"],
                 "description": f"PB异常高({pb:.4g})，每股净资产接近零({book_value_per_share:.4g})，PB无实际参考意义",
                 "conflict_values": {"pb": pb, "book_value_per_share": book_value_per_share},
+                "suggested_fix": {"pb": "N/A"},
+            })
+        else:
+            inconsistencies.append({
+                "rule": "PB_abnormally_high",
+                "fields": ["pb"],
+                "description": f"PB异常高({pb:.4g})，超过A股合理上限100，可能数据错误",
+                "conflict_values": {"pb": pb},
                 "suggested_fix": {"pb": "N/A"},
             })
 
