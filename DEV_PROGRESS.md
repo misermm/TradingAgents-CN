@@ -1,10 +1,51 @@
 # 开发进度文档
-**更新时间**: 2026-05-07
+**更新时间**: 2026-05-08
 **当前项目目标**: 逻辑Bug全面排查与修复 + A股分析准确性优化 + Docker部署优化
 
 ---
 
 ## 最近完成的改动
+
+### 91. 项目冗余文件清理 — 删除~110个临时/调试/旧版本文件 ✅ (2026-05-08)
+
+**问题描述**: 项目中积累了大量一次性调试脚本、旧版本测试、修复报告、数据缓存等冗余文件，影响项目整洁度
+
+**清理范围与结果**:
+
+| 类别 | 删除数量 | 说明 |
+|------|---------|------|
+| 根目录散落 test_*.py | 6 | 临时测试脚本（akshare_fix, baostock, buffett等） |
+| reports/ 旧修复报告 | 6 | logger/logging/pip_freeze/syntax_error等旧报告 |
+| tests/debug_*.py | 10 | 一次性调试脚本 |
+| tests/quick_*/simple_*/verify_* | 17 | 临时验证脚本 |
+| tests/0.1.14/ 旧版本测试 | 15 | v0.1.14版本的过时测试 |
+| tests/test_*_fix.py | 47 | 一次性Bug修复验证测试 |
+| tests/test_*_simple/final/improved等 | 19 | 一次性变体测试 |
+| 根目录 analysis_result_sample.json | 1 | 样本数据文件 |
+| tradingagents/data_cache/ 部分缓存 | 31 | 可重新生成的数据快照 |
+| utils/ 修复报告和一次性脚本 | 4 | fundamentals_fix.md, cleanup/check/update脚本 |
+| frontend/ 临时文件 | 2 | test-import.js, clear_auth.html |
+| **合计** | **~158** | |
+
+**保留的文件**:
+- `utils/data_config.py` — 仍被 `tradingagents/dataflows/providers/hk/improved_hk.py` 引用
+- `tests/test_*_debug.py` — 用户选择保留
+- `tests/` 中剩余的正式测试文件
+- `web/` 目录文档 — 用户选择保留
+- 部分数据缓存文件 — 用户选择保留
+
+**验证结果**:
+- ✅ `from tradingagents.graph.trading_graph import TradingAgentsGraph` 导入正常
+- ✅ `from app.main import app` 导入正常
+- ✅ 核心模块和App模块均无报错
+
+**关键文件入口**:
+- 核心分析入口: `main.py`
+- 后端应用: `app/main.py`
+- 测试目录: `tests/`（已清理冗余文件）
+- 工具目录: `utils/data_config.py`（唯一保留）
+
+---
 
 ### 90. 分析报告数据质量问题修复 — 文本工具调用解析+价格单位校正+报告质量守门 ✅ (2026-05-07)
 
