@@ -301,8 +301,20 @@ def create_news_analyst(llm, toolkit):
         llm_start_time = datetime.now()
         chain = prompt | llm.bind_tools(tools)
         logger.info(f"[新闻分析师] 开始LLM调用，分析 {ticker} 的新闻")
-        # 修复：传递字典而不是直接传递消息列表，以便 ChatPromptTemplate 能正确处理所有变量
-        result = chain.invoke({"messages": state["messages"]})
+        try:
+            result = chain.invoke({"messages": state["messages"]})
+        except Exception as llm_err:
+            err_type = type(llm_err).__name__
+            logger.error(f"❌ [新闻分析师] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            if "RateLimit" in err_type or "429" in str(llm_err):
+                fallback = f"## 新闻分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成新闻分析报告。建议稍后重试或更换模型。"
+            else:
+                fallback = f"## 新闻分析\n\n⚠️ LLM调用失败（{err_type}），无法生成新闻分析报告。"
+            return {
+                "news_report": fallback,
+                "messages": [],
+                "news_tool_call_count": state.get("news_tool_call_count", 0)
+            }
         
         llm_end_time = datetime.now()
         llm_time_taken = (llm_end_time - llm_start_time).total_seconds()

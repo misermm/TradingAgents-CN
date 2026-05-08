@@ -6,6 +6,78 @@
 
 ## 最近完成的改动
 
+### 92. 分析流程健壮性修复 — LLM错误降级+文本工具调用修复+结果完整性检查 ✅ (2026-05-08)
+
+**问题描述**: 单股分析勾选大师等内容后点击分析，存在3个关键Bug：
+1. 基本面报告仍包含原始工具调用文本（LLM第二次迭代时输出文本格式工具调用，代码未检测）
+2. RateLimitError/APIStatusError导致整个分析流程中断（异常从graph.stream传播，所有后续节点跳过）
+3. 分析失败但状态标记为completed（用户无法知道分析结果不完整）
+
+**根因分析**:
+1. **基本面报告文本工具调用**: 基本面分析师在第二次迭代时（工具已返回结果），LLM又输出了文本格式的工具调用。代码在 `has_tool_result` 为True时直接返回LLM原始内容，没有检查内容是否是文本格式工具调用
+2. **LLM错误导致流程中断**: 分析师节点的LLM调用（`chain.invoke`）没有try-except保护，RateLimitError等异常直接通过 `log_analyst_module` 装饰器的 `raise` 传播到 `graph.stream()`，导致整个迭代停止
+3. **状态标记不准确**: `simple_analysis_service` 无条件标记任务为completed，不检查分析结果是否完整
+
+**修复方案**: 3层防护 — 节点级错误降级 + 文本工具调用修复 + 结果完整性检查
+
+**修改的文件**:
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `tradingagents/agents/analysts/fundamentals_analyst.py` | 修改 | 修复文本工具调用检测逻辑：当has_text_tool_call时不再跳过，优先基于已有数据生成报告 |
+| `tradingagents/agents/analysts/market_analyst.py` | 修改 | 添加LLM调用try-except，RateLimitError返回降级消息 |
+| `tradingagents/agents/analysts/social_media_analyst.py` | 修改 | 添加LLM调用try-except，RateLimitError返回降级消息 |
+| `tradingagents/agents/analysts/news_analyst.py` | 修改 | 添加LLM调用try-except，RateLimitError返回降级消息 |
+| `tradingagents/agents/analysts/china_market_analyst.py` | 修改 | 添加LLM调用try-except（2处），RateLimitError返回降级消息 |
+| `tradingagents/agents/managers/research_manager.py` | 修改 | 添加LLM调用try-except，返回降级内容 |
+| `app/services/simple_analysis_service.py` | 修改 | 添加分析结果完整性检查，缺失报告时标记"部分内容缺失" |
+
+**详细改动**:
+
+1. **基本面分析师文本工具调用修复**:
+   - 修改条件判断：`(has_tool_result or has_analysis_content) and not has_text_tool_call`
+   - 当检测到文本工具调用时，优先基于消息历史中的ToolMessage数据生成报告
+   - 如果ToolMessage数据不可用，回退到TextToolCallParser解析执行
+
+2. **所有分析师节点LLM调用保护**:
+   - 在 `chain.invoke` 外层添加try-except
+   - RateLimitError（429）→ "⚠️ LLM调用达到速率限制，建议稍后重试或更换模型"
+   - 其他异常 → "⚠️ LLM调用失败，无法生成报告"
+   - 返回降级消息而非抛出异常，确保后续节点继续执行
+
+3. **研究经理LLM调用保护**:
+   - `llm.invoke(prompt)` 添加try-except
+   - 失败时返回降级内容，保持investment_debate_state结构完整
+
+4. **分析结果完整性检查**:
+   - 检查error_report、速率限制标记、缺失报告
+   - 不完整时标记消息为"分析完成（部分内容缺失）: ..."
+   - 完整时正常标记"分析完成"
+
+**验证结果**:
+- ✅ 所有7个修改文件 py_compile 语法检查通过
+- ✅ 模块导入验证通过（fundamentals, social, market, news, china, research, service）
+- ✅ TextToolCallParser 单元测试通过（KV格式检测+解析、正常内容不误检）
+- ✅ 东方财富价格校正验证通过（398→3.98, 3.98→3.98）
+- ✅ RateLimitError降级验证通过（分析师返回降级消息而非崩溃）
+- ✅ 结果完整性检查验证通过（缺失报告时状态消息显示"部分内容缺失"）
+- ⚠️ 完整端到端分析验证受限于LLM API可用性（OpenRouter速率限制、DeepSeek余额不足、DashScope Key无效）
+
+**已知问题与现状**:
+- LLM API Key配置问题：OpenRouter免费模型50次/天限制、DeepSeek余额不足、DashScope API Key无效
+- 建议用户在前端设置中配置有效的付费API Key以获得完整分析体验
+
+**关键文件入口**:
+- 基本面分析师: `tradingagents/agents/analysts/fundamentals_analyst.py`
+- 市场分析师: `tradingagents/agents/analysts/market_analyst.py`
+- 社媒分析师: `tradingagents/agents/analysts/social_media_analyst.py`
+- 新闻分析师: `tradingagents/agents/analysts/news_analyst.py`
+- 中国市场分析师: `tradingagents/agents/analysts/china_market_analyst.py`
+- 研究经理: `tradingagents/agents/managers/research_manager.py`
+- 分析服务: `app/services/simple_analysis_service.py`
+
+---
+
 ### 91. 项目冗余文件清理 — 删除~110个临时/调试/旧版本文件 ✅ (2026-05-08)
 
 **问题描述**: 项目中积累了大量一次性调试脚本、旧版本测试、修复报告、数据缓存等冗余文件，影响项目整洁度

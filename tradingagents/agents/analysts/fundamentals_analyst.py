@@ -371,8 +371,20 @@ def create_fundamentals_analyst(llm, toolkit):
         logger.info("📝 [提示词调试] 完整内容打印结束，开始调用LLM")
         logger.info("=" * 80)
 
-        # 修复：传递字典而不是直接传递消息列表，以便 ChatPromptTemplate 能正确处理所有变量
-        result = chain.invoke({"messages": state["messages"]})
+        try:
+            result = chain.invoke({"messages": state["messages"]})
+        except Exception as llm_err:
+            err_type = type(llm_err).__name__
+            logger.error(f"❌ [基本面分析师] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            if "RateLimit" in err_type or "429" in str(llm_err):
+                fallback = f"## 基本面分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成基本面分析报告。建议稍后重试或更换模型。"
+            else:
+                fallback = f"## 基本面分析\n\n⚠️ LLM调用失败（{err_type}），无法生成基本面分析报告。"
+            return {
+                "fundamentals_report": fallback,
+                "messages": [],
+                "fundamentals_tool_call_count": tool_call_count
+            }
         logger.info(f"📊 [基本面分析师] LLM调用完成")
         
         # 🔍 [调试日志] 打印AIMessage的详细内容
@@ -567,7 +579,7 @@ def create_fundamentals_analyst(llm, toolkit):
                 logger.info(f"📊 [基本面分析师] ===== 强制工具调用检查结束 =====")
 
                 # 如果已经有工具结果或已有分析内容，跳过强制调用
-                if has_tool_result or has_analysis_content:
+                if (has_tool_result or has_analysis_content) and not has_text_tool_call:
                     logger.info(f"🚫 [决策] ===== 跳过强制工具调用 =====")
                     if has_tool_result:
                         logger.info(f"⚠️ [决策原因] 检测到已有 {tool_call_count} 次工具调用结果，避免重复调用")
@@ -584,10 +596,48 @@ def create_fundamentals_analyst(llm, toolkit):
                         "fundamentals_tool_call_count": tool_call_count
                     }
 
-                # 如果检测到文本格式工具调用，使用 TextToolCallParser 解析执行
                 if has_text_tool_call:
-                    logger.info(f"🔧 [决策] ===== 执行文本工具调用解析 =====")
+                    logger.info(f"🔧 [决策] ===== 检测到文本格式工具调用，尝试基于已有数据生成报告 =====")
                     content_str = str(result.content) if hasattr(result, 'content') else ""
+
+                    if has_tool_result:
+                        logger.info(f"🔧 [决策] 已有工具返回数据，基于消息历史中的数据生成报告")
+                        try:
+                            tool_data_parts = []
+                            for msg in messages:
+                                if isinstance(msg, ToolMessage):
+                                    tool_data_parts.append(str(msg.content))
+                            tool_data = "\n".join(tool_data_parts) if tool_data_parts else ""
+
+                            currency_info = f"{market_info['currency_name']}（{market_info['currency_symbol']}）"
+                            force_report_prompt = (
+                                f"你是专业的股票基本面分析师。\n"
+                                f"请基于以下真实数据，对{company_name}（股票代码：{ticker}）进行详细的基本面分析：\n\n"
+                                f"{tool_data[:8000]}\n\n"
+                                f"报告必须包含：\n"
+                                f"1. 公司基本信息和财务数据分析\n"
+                                f"2. PE、PB、PEG等估值指标分析\n"
+                                f"3. 当前股价是否被低估或高估的判断\n"
+                                f"4. 合理价位区间和目标价位建议（使用{currency_info}）\n"
+                                f"5. 基于基本面的投资建议（买入/持有/卖出）\n"
+                                f"要求：使用中文，基于真实数据，分析详细专业。"
+                            )
+                            force_prompt = ChatPromptTemplate.from_messages([
+                                ("system", "你是专业的股票基本面分析师，基于提供的真实数据进行分析。"),
+                                ("human", "{analysis_request}")
+                            ])
+                            force_chain = force_prompt | fresh_llm
+                            force_result = force_chain.invoke({"analysis_request": force_report_prompt})
+                            report = str(force_result.content) if hasattr(force_result, 'content') else "基本面分析完成"
+                            logger.info(f"✅ [文本工具调用] 基于已有数据生成报告成功，长度: {len(report)}")
+                            return {
+                                "fundamentals_report": report,
+                                "messages": [result],
+                                "fundamentals_tool_call_count": tool_call_count
+                            }
+                        except Exception as e:
+                            logger.error(f"❌ [文本工具调用] 基于已有数据生成报告失败: {e}")
+
                     parsed_report = TextToolCallParser.execute_and_generate_report(
                         content=content_str,
                         available_tools=tools,

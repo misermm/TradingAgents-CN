@@ -926,18 +926,67 @@ class SimpleAnalysisService:
             if result.get('decision'):
                 logger.info(f"🔍 [DEBUG] 即将保存的decision内容: {result['decision']}")
 
-            # 更新状态为完成
-            await self.memory_manager.update_task_status(
-                task_id=task_id,
-                status=TaskStatus.COMPLETED,
-                progress=100,
-                message="分析完成",
-                current_step="completed",
-                result_data=result
-            )
+            # 🔍 检查分析结果完整性
+            state = result.get("state", {})
+            error_report = state.get("error_report", "") if isinstance(state, dict) else ""
+            selected_analysts = request.parameters.selected_analysts if request.parameters else []
+            missing_reports = []
+            rate_limited = False
 
-            # 同步更新MongoDB状态为完成
-            await self._update_task_status(task_id, AnalysisStatus.COMPLETED, 100)
+            if isinstance(state, dict):
+                report_checks = {
+                    "market": ("market_report", "市场分析"),
+                    "fundamentals": ("fundamentals_report", "基本面分析"),
+                    "social": ("sentiment_report", "情绪分析"),
+                    "news": ("news_report", "新闻分析"),
+                }
+                for analyst_key, (report_key, report_name) in report_checks.items():
+                    if analyst_key in selected_analysts:
+                        report_val = state.get(report_key, "")
+                        if not report_val or len(str(report_val).strip()) < 50:
+                            missing_reports.append(report_name)
+                        elif "速率限制" in str(report_val) or "RateLimit" in str(report_val):
+                            rate_limited = True
+
+                master_reports = state.get("master_reports", {})
+                if isinstance(master_reports, dict):
+                    for mk, mv in master_reports.items():
+                        if mk in selected_analysts:
+                            if not mv or len(str(mv).strip()) < 50:
+                                missing_reports.append(f"大师分析({mk})")
+                            elif "速率限制" in str(mv) or "RateLimit" in str(mv):
+                                rate_limited = True
+
+            if error_report or rate_limited or len(missing_reports) > 0:
+                warning_parts = []
+                if error_report:
+                    warning_parts.append(f"流程异常: {error_report[:100]}")
+                if rate_limited:
+                    warning_parts.append("部分分析因LLM速率限制未完成")
+                if missing_reports:
+                    warning_parts.append(f"缺失报告: {', '.join(missing_reports)}")
+                warning_msg = "; ".join(warning_parts)
+                logger.warning(f"⚠️ [分析完整性] 任务 {task_id}: {warning_msg}")
+
+                await self.memory_manager.update_task_status(
+                    task_id=task_id,
+                    status=TaskStatus.COMPLETED,
+                    progress=100,
+                    message=f"分析完成（部分内容缺失）: {warning_msg}",
+                    current_step="completed_with_warnings",
+                    result_data=result
+                )
+                await self._update_task_status(task_id, AnalysisStatus.COMPLETED, 100)
+            else:
+                await self.memory_manager.update_task_status(
+                    task_id=task_id,
+                    status=TaskStatus.COMPLETED,
+                    progress=100,
+                    message="分析完成",
+                    current_step="completed",
+                    result_data=result
+                )
+                await self._update_task_status(task_id, AnalysisStatus.COMPLETED, 100)
 
             # 创建通知：分析完成（方案B：REST+SSE）
             try:

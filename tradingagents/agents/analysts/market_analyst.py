@@ -246,8 +246,20 @@ def create_market_analyst(llm, toolkit):
         chain = prompt | llm.bind_tools(tools)
 
         logger.info(f"📊 [市场分析师] 开始调用LLM...")
-        # 修复：传递字典而不是直接传递消息列表，以便 ChatPromptTemplate 能正确处理所有变量
-        result = chain.invoke({"messages": state["messages"]})
+        try:
+            result = chain.invoke({"messages": state["messages"]})
+        except Exception as llm_err:
+            err_type = type(llm_err).__name__
+            logger.error(f"❌ [市场分析师] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            if "RateLimit" in err_type or "429" in str(llm_err):
+                fallback = f"## 市场技术分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成市场分析报告。建议稍后重试或更换模型。"
+            else:
+                fallback = f"## 市场技术分析\n\n⚠️ LLM调用失败（{err_type}），无法生成市场分析报告。"
+            return {
+                "market_report": fallback,
+                "messages": [],
+                "market_tool_call_count": state.get("market_tool_call_count", 0)
+            }
         logger.info(f"📊 [市场分析师] LLM调用完成")
 
         # 打印LLM响应

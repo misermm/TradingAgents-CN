@@ -445,8 +445,22 @@ def _generate_report_from_prefetched(
         ]
     )
     chain = prompt_template | llm
-    result = chain.invoke({"analysis_request": analysis_prompt})
-    return _validate_report(result.content if hasattr(result, "content") else str(result), prefetched_data, name_cn)
+    max_retries = 2
+    for attempt in range(max_retries + 1):
+        try:
+            result = chain.invoke({"analysis_request": analysis_prompt})
+            return _validate_report(result.content if hasattr(result, "content") else str(result), prefetched_data, name_cn)
+        except Exception as e:
+            if attempt < max_retries:
+                logger.warning(f"[{name_cn}] LLM调用失败(第{attempt+1}次)，重试中: {type(e).__name__}: {str(e)[:100]}")
+                import time
+                time.sleep(2 * (attempt + 1))
+            else:
+                logger.error(f"[{name_cn}] LLM调用失败(已重试{max_retries}次): {type(e).__name__}: {str(e)[:200]}")
+                return _validate_report(
+                    f"## {name_cn}投资大师分析\n\n⚠️ LLM调用失败，无法生成详细分析报告。\n\n错误类型: {type(e).__name__}\n建议: 检查模型配置或切换到其他大模型。",
+                    prefetched_data, name_cn
+                )
 
 
 def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framework: str, output_format: str, tools_list: Optional[List[Any]] = None):
@@ -540,21 +554,25 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
                 }
 
         if prefetched_data and len(prefetched_data) > 50:
-            report = _generate_report_from_prefetched(
-                llm,
-                name_cn,
-                name_en,
-                company_name,
-                ticker,
-                current_date,
-                philosophy,
-                framework,
-                output_format,
-                prefetched_data,
-                quant_context,
-                currency_info,
-                market_info,
-            )
+            try:
+                report = _generate_report_from_prefetched(
+                    llm,
+                    name_cn,
+                    name_en,
+                    company_name,
+                    ticker,
+                    current_date,
+                    philosophy,
+                    framework,
+                    output_format,
+                    prefetched_data,
+                    quant_context,
+                    currency_info,
+                    market_info,
+                )
+            except Exception as e:
+                logger.error(f"{log_tag} 生成报告失败: {type(e).__name__}: {str(e)[:200]}")
+                report = f"## {name_cn}投资大师分析\n\n⚠️ 报告生成失败: {type(e).__name__}\n\n基于已有数据的简化分析：\n{prefetched_data[:2000]}"
             return {
                 "master_reports": {master_id: report},
                 "master_tool_call_counts": {master_id: tool_call_count},
@@ -595,16 +613,27 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
         except Exception:
             chain = prompt | fresh_llm
 
-        result = chain.invoke(
-            {
-                "messages": state["messages"],
-                "tool_names": ", ".join(tool_names),
-                "system_message": system_message,
-                "current_date": current_date,
-                "company_name": company_name,
-                "ticker": ticker,
+        try:
+            result = chain.invoke(
+                {
+                    "messages": state["messages"],
+                    "tool_names": ", ".join(tool_names),
+                    "system_message": system_message,
+                    "current_date": current_date,
+                    "company_name": company_name,
+                    "ticker": ticker,
+                }
+            )
+        except Exception as e:
+            logger.error(f"{log_tag} LLM调用失败(bind_tools模式): {type(e).__name__}: {str(e)[:200]}")
+            report = f"## {name_cn}投资大师分析\n\n⚠️ LLM调用失败: {type(e).__name__}\n\n基于已有数据的简化分析：\n{raw_data_str[:2000] if raw_data_str else '数据不可用'}"
+            return {
+                "master_reports": {master_id: report},
+                "messages": [],
+                "master_tool_call_counts": {master_id: tool_call_count},
+                "master_data_quality": {master_id: current_data_quality} if current_data_quality else {},
+                "master_quantitative_results": {master_id: quant_result} if quant_result else {},
             }
-        )
 
         if isinstance(result, ToolMessage):
             return {"messages": [result], "master_tool_call_counts": {master_id: tool_call_count + 1}}

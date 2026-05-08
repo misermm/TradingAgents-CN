@@ -97,7 +97,24 @@ def create_research_manager(llm, memory):
         # ⏱️ 记录开始时间
         start_time = time.time()
 
-        response = llm.invoke(prompt)
+        try:
+            response = llm.invoke(prompt)
+        except Exception as llm_err:
+            err_type = type(llm_err).__name__
+            logger.error(f"❌ [Research Manager] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            fallback_content = f"基于已有分析师报告的综合研究结论：由于LLM调用失败（{err_type}），无法生成详细的研究经理报告。建议基于各分析师的独立报告进行决策。"
+            new_investment_debate_state = {
+                "judge_decision": fallback_content,
+                "history": investment_debate_state.get("history", ""),
+                "bear_history": investment_debate_state.get("bear_history", ""),
+                "bull_history": investment_debate_state.get("bull_history", ""),
+                "current_response": fallback_content,
+                "count": investment_debate_state.get("count", 0),
+            }
+            return {
+                "investment_debate_state": new_investment_debate_state,
+                "investment_plan": fallback_content,
+            }
 
         # ⏱️ 记录结束时间
         elapsed_time = time.time() - start_time

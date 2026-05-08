@@ -169,7 +169,19 @@ def create_china_market_analyst(llm, toolkit):
         prompt = prompt.partial(ticker=ticker)
         
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        try:
+            result = chain.invoke(state["messages"])
+        except Exception as llm_err:
+            err_type = type(llm_err).__name__
+            logger.error(f"❌ [中国市场分析师] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            if "RateLimit" in err_type or "429" in str(llm_err):
+                fallback = f"## 中国市场分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成中国市场分析报告。建议稍后重试或更换模型。"
+            else:
+                fallback = f"## 中国市场分析\n\n⚠️ LLM调用失败（{err_type}），无法生成中国市场分析报告。"
+            return {
+                "china_market_report": fallback,
+                "messages": [],
+            }
         
         # 使用统一的Google工具调用处理器
         if GoogleToolCallHandler.is_google_model(llm):
@@ -309,7 +321,19 @@ def create_china_stock_screener(llm, toolkit):
         prompt = prompt.partial(current_date=current_date)
         
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        try:
+            result = chain.invoke(state["messages"])
+        except Exception as llm_err:
+            err_type = type(llm_err).__name__
+            logger.error(f"❌ [中国市场分析师-深度] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            if "RateLimit" in err_type or "429" in str(llm_err):
+                fallback = f"## 中国市场深度分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成中国市场深度分析报告。建议稍后重试或更换模型。"
+            else:
+                fallback = f"## 中国市场深度分析\n\n⚠️ LLM调用失败（{err_type}），无法生成中国市场深度分析报告。"
+            return {
+                "china_market_report": fallback,
+                "messages": [],
+            }
         
         return {
             "messages": [result],

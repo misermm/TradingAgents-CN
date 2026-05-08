@@ -736,7 +736,7 @@ class TradingAgentsGraph:
             # Debug mode with tracing and progress updates
             trace = []
             final_state = None
-            for chunk in self.graph.stream(init_agent_state, **args):
+            for chunk in self._safe_stream(init_agent_state, args):
                 # 记录节点计时
                 for node_name in chunk.keys():
                     if not node_name.startswith('__'):
@@ -782,7 +782,7 @@ class TradingAgentsGraph:
                 # 使用 updates 模式以便获取节点级别的进度
                 trace = []
                 final_state = None
-                for chunk in self.graph.stream(init_agent_state, **args):
+                for chunk in self._safe_stream(init_agent_state, args):
                     # 记录节点计时
                     for node_name in chunk.keys():
                         if not node_name.startswith('__'):
@@ -815,7 +815,7 @@ class TradingAgentsGraph:
                 # 使用stream模式以便计时，但不发送进度更新
                 trace = []
                 final_state = None
-                for chunk in self.graph.stream(init_agent_state, **args):
+                for chunk in self._safe_stream(init_agent_state, args):
                     # 记录节点计时
                     for node_name in chunk.keys():
                         if not node_name.startswith('__'):
@@ -971,6 +971,25 @@ class TradingAgentsGraph:
 
         # Return decision and processed signal
         return final_state, decision
+
+    def _safe_stream(self, init_state, args):
+        """安全的流式迭代器，捕获单个节点的异常而不中断整个分析流程"""
+        try:
+            for chunk in self.graph.stream(init_state, **args):
+                yield chunk
+        except Exception as e:
+            logger.error(f"❌ [Graph Stream] 流式执行异常: {type(e).__name__}: {str(e)[:300]}")
+            import traceback
+            logger.error(f"❌ [Graph Stream] 堆栈:\n{traceback.format_exc()[:1000]}")
+
+            logger.warning(f"⚠️ [Graph Stream] 分析流程异常，尝试返回已收集的状态")
+
+            yield {
+                "_error_fallback": {
+                    "error_report": f"⚠️ 分析流程执行异常: {type(e).__name__}",
+                    "messages": [],
+                }
+            }
 
     def _send_progress_update(self, chunk, progress_callback):
         """发送进度更新到回调函数

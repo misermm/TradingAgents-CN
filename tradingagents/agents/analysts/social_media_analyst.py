@@ -191,8 +191,20 @@ def create_social_media_analyst(llm, toolkit):
 
         chain = prompt | llm.bind_tools(tools)
 
-        # 修复：传递字典而不是直接传递消息列表，以便 ChatPromptTemplate 能正确处理所有变量
-        result = chain.invoke({"messages": state["messages"]})
+        try:
+            result = chain.invoke({"messages": state["messages"]})
+        except Exception as llm_err:
+            err_type = type(llm_err).__name__
+            logger.error(f"❌ [社交媒体分析师] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            if "RateLimit" in err_type or "429" in str(llm_err):
+                fallback = f"## 社交媒体情绪分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成情绪分析报告。建议稍后重试或更换模型。"
+            else:
+                fallback = f"## 社交媒体情绪分析\n\n⚠️ LLM调用失败（{err_type}），无法生成情绪分析报告。"
+            return {
+                "messages": [],
+                "sentiment_report": fallback,
+                "sentiment_tool_call_count": tool_call_count
+            }
 
         # 使用统一的Google工具调用处理器
         if GoogleToolCallHandler.is_google_model(llm):
