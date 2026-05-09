@@ -20,6 +20,34 @@ from tradingagents.utils.logging_manager import get_logger
 logger = get_logger('agents')
 
 
+def _format_large_number(val_str) -> str:
+    if val_str is None or val_str == 'None' or val_str == 'N/A':
+        return 'N/A'
+    try:
+        val = float(val_str)
+        if abs(val) >= 1e12:
+            return f"${val/1e12:.2f}T"
+        if abs(val) >= 1e9:
+            return f"${val/1e9:.2f}B"
+        if abs(val) >= 1e6:
+            return f"${val/1e6:.2f}M"
+        return f"${val:.2f}"
+    except (ValueError, TypeError):
+        return str(val_str)
+
+
+def _safe_format_pct(val_str, is_pct: bool = False) -> str:
+    if val_str is None or val_str == 'None' or val_str == 'N/A':
+        return 'N/A'
+    try:
+        val = float(val_str)
+        if is_pct:
+            return f"{val:.2%}"
+        return f"{val:.2f}"
+    except (ValueError, TypeError):
+        return str(val_str)
+
+
 def get_fundamentals(
     ticker: Annotated[str, "Ticker symbol of the company"],
     curr_date: Annotated[str, "Current date (not used for Alpha Vantage)"] = None
@@ -77,34 +105,34 @@ def get_fundamentals(
             
             # 估值指标
             result += "## Valuation Metrics\n"
-            result += f"**Market Cap**: ${data.get('MarketCapitalization', 'N/A')}\n"
-            result += f"**PE Ratio**: {data.get('PERatio', 'N/A')}\n"
-            result += f"**PEG Ratio**: {data.get('PEGRatio', 'N/A')}\n"
-            result += f"**Price to Book**: {data.get('PriceToBookRatio', 'N/A')}\n"
-            result += f"**Price to Sales**: {data.get('PriceToSalesRatioTTM', 'N/A')}\n"
-            result += f"**EV to Revenue**: {data.get('EVToRevenue', 'N/A')}\n"
-            result += f"**EV to EBITDA**: {data.get('EVToEBITDA', 'N/A')}\n\n"
+            result += f"**Market Cap**: {_format_large_number(data.get('MarketCapitalization'))}\n"
+            result += f"**PE Ratio**: {_safe_format_pct(data.get('PERatio'))}\n"
+            result += f"**PEG Ratio**: {_safe_format_pct(data.get('PEGRatio'))}\n"
+            result += f"**Price to Book**: {_safe_format_pct(data.get('PriceToBookRatio'))}\n"
+            result += f"**Price to Sales**: {_safe_format_pct(data.get('PriceToSalesRatioTTM'))}\n"
+            result += f"**EV to Revenue**: {_safe_format_pct(data.get('EVToRevenue'))}\n"
+            result += f"**EV to EBITDA**: {_safe_format_pct(data.get('EVToEBITDA'))}\n\n"
             
             # 财务指标
             result += "## Financial Metrics\n"
-            result += f"**Revenue TTM**: ${data.get('RevenueTTM', 'N/A')}\n"
-            result += f"**Gross Profit TTM**: ${data.get('GrossProfitTTM', 'N/A')}\n"
-            result += f"**EBITDA**: ${data.get('EBITDA', 'N/A')}\n"
-            result += f"**Net Income TTM**: ${data.get('NetIncomeTTM', 'N/A')}\n"
-            result += f"**EPS**: ${data.get('EPS', 'N/A')}\n"
-            result += f"**Diluted EPS TTM**: ${data.get('DilutedEPSTTM', 'N/A')}\n\n"
+            result += f"**Revenue TTM**: {_format_large_number(data.get('RevenueTTM'))}\n"
+            result += f"**Gross Profit TTM**: {_format_large_number(data.get('GrossProfitTTM'))}\n"
+            result += f"**EBITDA**: {_format_large_number(data.get('EBITDA'))}\n"
+            result += f"**Net Income TTM**: {_format_large_number(data.get('NetIncomeTTM'))}\n"
+            result += f"**EPS**: {_safe_format_pct(data.get('EPS'))} per share\n"
+            result += f"**Diluted EPS TTM**: {_safe_format_pct(data.get('DilutedEPSTTM'))} per share\n\n"
             
             # 盈利能力
             result += "## Profitability\n"
-            result += f"**Profit Margin**: {data.get('ProfitMargin', 'N/A')}\n"
-            result += f"**Operating Margin TTM**: {data.get('OperatingMarginTTM', 'N/A')}\n"
-            result += f"**Return on Assets TTM**: {data.get('ReturnOnAssetsTTM', 'N/A')}\n"
-            result += f"**Return on Equity TTM**: {data.get('ReturnOnEquityTTM', 'N/A')}\n\n"
+            result += f"**Profit Margin**: {_safe_format_pct(data.get('ProfitMargin'), is_pct=True)}\n"
+            result += f"**Operating Margin TTM**: {_safe_format_pct(data.get('OperatingMarginTTM'), is_pct=True)}\n"
+            result += f"**Return on Assets TTM**: {_safe_format_pct(data.get('ReturnOnAssetsTTM'), is_pct=True)}\n"
+            result += f"**Return on Equity TTM**: {_safe_format_pct(data.get('ReturnOnEquityTTM'), is_pct=True)}\n\n"
             
             # 股息信息
             result += "## Dividend Information\n"
-            result += f"**Dividend Per Share**: ${data.get('DividendPerShare', 'N/A')}\n"
-            result += f"**Dividend Yield**: {data.get('DividendYield', 'N/A')}\n"
+            result += f"**Dividend Per Share**: ${_safe_format_pct(data.get('DividendPerShare'))}\n"
+            result += f"**Dividend Yield**: {_safe_format_pct(data.get('DividendYield'), is_pct=True)}\n"
             result += f"**Dividend Date**: {data.get('DividendDate', 'N/A')}\n"
             result += f"**Ex-Dividend Date**: {data.get('ExDividendDate', 'N/A')}\n\n"
             

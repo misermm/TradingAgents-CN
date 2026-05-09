@@ -409,7 +409,20 @@ class TushareProvider(BaseStockDataProvider):
             if df is not None and not df.empty:
                 row = df.iloc[0].to_dict()
                 if daily_basic_df is not None and not daily_basic_df.empty:
-                    row.update(daily_basic_df.iloc[0].to_dict())
+                    daily_date = row.get('trade_date')
+                    basic_row = daily_basic_df.iloc[0]
+                    basic_date = basic_row.get('trade_date')
+                    if daily_date and basic_date and str(daily_date) == str(basic_date):
+                        row.update(basic_row.to_dict())
+                    else:
+                        if daily_date:
+                            match_rows = daily_basic_df[daily_basic_df['trade_date'] == daily_date]
+                            if not match_rows.empty:
+                                row.update(match_rows.iloc[0].to_dict())
+                            else:
+                                self.logger.warning(f"daily_basic日期({basic_date})与daily日期({daily_date})不匹配且无对应行，跳过合并")
+                        else:
+                            self.logger.warning(f"daily数据缺少trade_date，跳过daily_basic合并")
 
                 row.setdefault('ts_code', ts_code)
                 row.setdefault('symbol', symbol)
@@ -1192,16 +1205,30 @@ class TushareProvider(BaseStockDataProvider):
         }
 
     def standardize_quotes(self, raw_data: Dict[str, Any]) -> Dict[str, Any]:
-        """标准化实时行情数据"""
+        """标准化实时行情数据
+
+        Tushare API 单位约定：
+        - vol: 手 (需×100转为股)
+        - amount: 千元 (需×1000转为元)
+        - total_mv: 万元 (需×10000转为元)
+        - circ_mv: 万元 (需×10000转为元)
+        """
         ts_code = raw_data.get('ts_code', '')
         symbol = ts_code.split('.')[0] if '.' in ts_code else ts_code
         volume = self._convert_to_float(raw_data.get('vol'))
         amount = self._convert_to_float(raw_data.get('amount'))
 
-        if raw_data.get('volume_unit') in {'hand', 'lots', 'lot'} and volume is not None:
+        if volume is not None:
             volume *= 100
-        if raw_data.get('amount_unit') in {'thousand_yuan', 'k_cny', 'thousand'} and amount is not None:
+        if amount is not None:
             amount *= 1000
+
+        total_mv = self._convert_to_float(raw_data.get('total_mv'))
+        circ_mv = self._convert_to_float(raw_data.get('circ_mv'))
+        if total_mv is not None:
+            total_mv *= 10000
+        if circ_mv is not None:
+            circ_mv *= 10000
 
         return {
             # 基础字段
@@ -1227,8 +1254,8 @@ class TushareProvider(BaseStockDataProvider):
             "amount": amount,
 
             # 财务指标
-            "total_mv": self._convert_to_float(raw_data.get('total_mv')),
-            "circ_mv": self._convert_to_float(raw_data.get('circ_mv')),
+            "total_mv": total_mv,
+            "circ_mv": circ_mv,
             "pe": self._convert_to_float(raw_data.get('pe')),
             "pb": self._convert_to_float(raw_data.get('pb')),
             "turnover_rate": self._convert_to_float(raw_data.get('turnover_rate')),

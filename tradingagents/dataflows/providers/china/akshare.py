@@ -866,8 +866,8 @@ class AKShareProvider(BaseStockDataProvider):
                             "pe": quotes_data.get("pe"),  # 动态市盈率
                             "pe_ttm": quotes_data.get("pe"),  # TTM市盈率（与动态市盈率相同）
                             "pb": quotes_data.get("pb"),  # 市净率
-                            "total_mv": quotes_data.get("total_mv") / 1e8 if quotes_data.get("total_mv") else None,  # 总市值（转换为亿元）
-                            "circ_mv": quotes_data.get("circ_mv") / 1e8 if quotes_data.get("circ_mv") else None,  # 流通市值（转换为亿元）
+                            "total_mv": quotes_data.get("total_mv") if quotes_data.get("total_mv") else None,
+                            "circ_mv": quotes_data.get("circ_mv") if quotes_data.get("circ_mv") else None,
                             # 扩展字段
                             "full_symbol": self._get_full_symbol(matched_code),
                             "market_info": self._get_market_info(matched_code),
@@ -1145,8 +1145,8 @@ class AKShareProvider(BaseStockDataProvider):
             "pe": quote_data.get("pe"),
             "pe_ttm": quote_data.get("pe"),
             "pb": quote_data.get("pb"),
-            "total_mv": quote_data.get("total_mv") / 1e8 if quote_data.get("total_mv") else None,
-            "circ_mv": quote_data.get("circ_mv") / 1e8 if quote_data.get("circ_mv") else None,
+            "total_mv": quote_data.get("total_mv") if quote_data.get("total_mv") else None,
+            "circ_mv": quote_data.get("circ_mv") if quote_data.get("circ_mv") else None,
             "trade_date": trade_date,
             "updated_at": now_cn.isoformat(),
             "full_symbol": self._get_full_symbol(code),
@@ -1275,6 +1275,16 @@ class AKShareProvider(BaseStockDataProvider):
             return None
 
         try:
+            if start_date and end_date:
+                try:
+                    sd = start_date.replace('-', '')
+                    ed = end_date.replace('-', '')
+                    if sd > ed:
+                        logger.warning(f"⚠️ {code}历史数据: start_date({start_date}) > end_date({end_date})，已自动交换")
+                        start_date, end_date = end_date, start_date
+                except Exception:
+                    pass
+
             logger.debug(f"📊 获取{code}历史数据: {start_date} 到 {end_date}")
 
             # 转换周期格式

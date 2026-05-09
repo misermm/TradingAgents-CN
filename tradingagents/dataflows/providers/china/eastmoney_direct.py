@@ -145,25 +145,30 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
         - 北交所: 0.830799
 
         Args:
-            symbol: 股票代码（如 600519, 000001）
+            symbol: 股票代码（如 600519, 000001, 600519.SH, 1.600519）
 
         Returns:
             secid字符串（如 1.600519, 0.000001）
         """
         symbol = str(symbol).strip()
-        # 已经是secid格式
-        if "." in symbol:
-            return symbol
 
-        # 根据代码规则判断市场
+        if "." in symbol:
+            parts = symbol.split(".")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit() and len(parts[0]) <= 1:
+                return symbol
+            if symbol.endswith((".SH", ".SS", ".XSHG")):
+                symbol = parts[0]
+            elif symbol.endswith((".SZ", ".XSHE")):
+                symbol = parts[0]
+
         if symbol.startswith(("60", "68", "90")):
-            return f"1.{symbol}"  # 沪市
+            return f"1.{symbol}"
         elif symbol.startswith(("00", "30", "20")):
-            return f"0.{symbol}"  # 深市
+            return f"0.{symbol}"
         elif symbol.startswith(("8", "4")):
-            return f"0.{symbol}"  # 北交所
+            return f"0.{symbol}"
         else:
-            return f"1.{symbol}"  # 默认沪市
+            return f"1.{symbol}"
 
     def _http_get(self, url: str, **kwargs) -> Any:
         """
@@ -433,7 +438,7 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
                     "current_price": current,
                     "high": self._safe_float(item.get("f15")),
                     "low": self._safe_float(item.get("f16")),
-                    "volume": self._safe_float(item.get("f5")),
+                    "volume": self._safe_float(item.get("f5"), multiplier=100) if item.get("f5") is not None else None,
                     "amount": self._safe_float(item.get("f6")),
                     "change": change,
                     "pct_chg": pct_chg,
@@ -1322,7 +1327,7 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
     # ==================== 辅助方法 ====================
 
     @staticmethod
-    def _safe_float(value) -> Optional[float]:
+    def _safe_float(value, multiplier: float = None) -> Optional[float]:
         """
         安全转换为浮点数
 
@@ -1330,6 +1335,7 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
 
         Args:
             value: 待转换的值
+            multiplier: 可选乘数，用于单位转换（如手→股需乘100）
 
         Returns:
             浮点数或None
@@ -1337,7 +1343,10 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
         if value is None or value == "" or value == "-":
             return None
         try:
-            return float(value)
+            result = float(value)
+            if multiplier is not None:
+                result = result * multiplier
+            return result
         except (ValueError, TypeError):
             return None
 

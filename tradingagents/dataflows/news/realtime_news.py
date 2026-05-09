@@ -342,19 +342,19 @@ class RealtimeNewsAggregator:
                                 # 解析时间
                                 time_str = row.get('时间', '')
                                 if time_str:
-                                    # 尝试解析时间格式，可能是'2023-01-01 12:34:56'格式
                                     try:
                                         publish_time = datetime.strptime(time_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=ZoneInfo(get_timezone_name()))
                                     except Exception:
-                                        # 尝试其他可能的格式
                                         try:
                                             publish_time = datetime.strptime(time_str, '%Y-%m-%d').replace(tzinfo=ZoneInfo(get_timezone_name()))
                                         except Exception:
-                                            logger.warning(f"[中文财经新闻] 无法解析时间格式: {time_str}，使用当前时间")
-                                            publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+                                            logger.warning(f"[中文财经新闻] 无法解析时间格式: {time_str}，跳过该新闻")
+                                            skipped_count += 1
+                                            continue
                                 else:
-                                    logger.warning(f"[中文财经新闻] 新闻时间为空，使用当前时间")
-                                    publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+                                    logger.warning(f"[中文财经新闻] 新闻时间为空，跳过该新闻")
+                                    skipped_count += 1
+                                    continue
 
                                 # 检查时效性
                                 if publish_time < datetime.now(ZoneInfo(get_timezone_name())) - timedelta(hours=hours_back):
@@ -417,9 +417,11 @@ class RealtimeNewsAggregator:
                                             try:
                                                 publish_time = datetime.strptime(str(time_str), '%Y-%m-%d').replace(tzinfo=ZoneInfo(get_timezone_name()))
                                             except Exception:
-                                                publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+                                                logger.warning(f"[中文财经新闻] 东方财富直接API无法解析时间: {time_str}，跳过该新闻")
+                                                continue
                                     else:
-                                        publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+                                        logger.warning(f"[中文财经新闻] 东方财富直接API新闻时间为空，跳过该新闻")
+                                        continue
 
                                     if publish_time < datetime.now(ZoneInfo(get_timezone_name())) - timedelta(hours=hours_back):
                                         skipped_count += 1
@@ -521,10 +523,11 @@ class RealtimeNewsAggregator:
                 try:
                     # 解析时间
                     if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                        publish_time = datetime.fromtimestamp(time.mktime(entry.published_parsed), tz=ZoneInfo(get_timezone_name()))
+                        import calendar
+                        publish_time = datetime.fromtimestamp(calendar.timegm(entry.published_parsed), tz=ZoneInfo('UTC')).astimezone(ZoneInfo(get_timezone_name()))
                     else:
-                        logger.warning(f"[RSS解析] 条目缺少发布时间，使用当前时间")
-                        publish_time = datetime.now(ZoneInfo(get_timezone_name()))
+                        logger.warning(f"[RSS解析] 条目缺少发布时间，跳过该条目")
+                        continue
 
                     # 检查时效性
                     if publish_time < datetime.now(ZoneInfo(get_timezone_name())) - timedelta(hours=hours_back):
@@ -646,8 +649,14 @@ class RealtimeNewsAggregator:
             # 简单的标题去重
             title_key = item.title.lower().strip()
 
-            # 检查标题长度
-            if len(title_key) <= 10:
+            if not title_key:
+                continue
+
+            cjk_count = sum(1 for ch in title_key if '\u4e00' <= ch <= '\u9fff' or '\u3400' <= ch <= '\u4dbf')
+            is_cjk_dominant = cjk_count > len(title_key) * 0.3
+            min_title_len = 4 if is_cjk_dominant else 10
+
+            if len(title_key) <= min_title_len:
                 logger.debug(f"[新闻去重] 跳过标题过短的新闻: '{item.title}'，来源: {item.source}")
                 short_title_count += 1
                 continue

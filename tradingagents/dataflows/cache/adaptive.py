@@ -66,11 +66,19 @@ class AdaptiveCacheSystem:
         if cache_time is None:
             return False
         
-        expiry_time = cache_time + timedelta(seconds=ttl_seconds)
-        return datetime.now() < expiry_time
+        try:
+            expiry_time = cache_time + timedelta(seconds=ttl_seconds)
+            now = datetime.now()
+            if cache_time.tzinfo is not None and now.tzinfo is None:
+                now = now.replace(tzinfo=cache_time.tzinfo)
+            elif cache_time.tzinfo is None and now.tzinfo is not None:
+                now = now.replace(tzinfo=None)
+            return now < expiry_time
+        except TypeError:
+            return False
     
     def _save_to_file(self, cache_key: str, data: Any, metadata: Dict) -> bool:
-        """保存到文件缓存"""
+        """保存到文件缓存（原子写入，防止并发损坏）"""
         try:
             cache_file = self.cache_dir / f"{cache_key}.pkl"
             cache_data = {
@@ -80,8 +88,18 @@ class AdaptiveCacheSystem:
                 'backend': 'file'
             }
             
-            with open(cache_file, 'wb') as f:
-                pickle.dump(cache_data, f)
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(suffix='.pkl', dir=str(self.cache_dir))
+            try:
+                with os.fdopen(fd, 'wb') as f:
+                    pickle.dump(cache_data, f)
+                os.replace(tmp_path, str(cache_file))
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
             
             self.logger.debug(f"文件缓存保存成功: {cache_key}")
             return True
@@ -99,10 +117,48 @@ class AdaptiveCacheSystem:
             
             with open(cache_file, 'rb') as f:
                 cache_data = pickle.load(f)
+
+            if not isinstance(cache_data, dict):
+                self.logger.warning(f"文件缓存格式无效(非字典): {cache_key}, 类型={type(cache_data).__name__}")
+                try:
+                    cache_file.unlink()
+                except OSError:
+                    pass
+                return None
+
+            required_keys = {'data', 'timestamp'}
+            if not required_keys.issubset(cache_data.keys()):
+                self.logger.warning(f"文件缓存结构不完整(缺少{required_keys - cache_data.keys()}): {cache_key}")
+                try:
+                    cache_file.unlink()
+                except OSError:
+                    pass
+                return None
+
+            if not isinstance(cache_data.get('timestamp'), datetime):
+                ts = cache_data.get('timestamp')
+                if isinstance(ts, str):
+                    try:
+                        cache_data['timestamp'] = datetime.fromisoformat(ts)
+                    except (ValueError, TypeError):
+                        self.logger.warning(f"文件缓存时间戳格式无效: {cache_key}, ts={ts}")
+                        return None
+                else:
+                    self.logger.warning(f"文件缓存时间戳类型无效: {cache_key}, type={type(ts).__name__}")
+                    return None
             
             self.logger.debug(f"文件缓存加载成功: {cache_key}")
             return cache_data
             
+        except (pickle.UnpicklingError, EOFError, ValueError) as e:
+            self.logger.error(f"文件缓存数据损坏: {cache_key}, {e}")
+            try:
+                cache_file = self.cache_dir / f"{cache_key}.pkl"
+                if cache_file.exists():
+                    cache_file.unlink()
+            except OSError:
+                pass
+            return None
         except Exception as e:
             self.logger.error(f"文件缓存加载失败: {e}")
             return None

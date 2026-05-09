@@ -42,22 +42,28 @@ def _merge_master_state(final_state: dict, node_update: dict) -> dict:
     if not isinstance(node_update, dict):
         return node_update
     for field in _MASTER_MERGE_FIELDS:
-        if field in node_update and field in final_state:
-            existing = final_state.get(field, {})
-            update_val = node_update.get(field)
-            if isinstance(existing, dict) and isinstance(update_val, dict):
-                merged = dict(existing)
-                for k, v in update_val.items():
-                    # 仅在现有值为空且新值非空时跳过，否则始终用新值覆盖
-                    if k in merged and merged[k] and not v:
-                        continue
-                    merged[k] = v
+        if field not in node_update:
+            continue
+        update_val = node_update.get(field)
+        if field not in final_state:
+            if isinstance(update_val, dict):
                 node_update = dict(node_update)
-                node_update[field] = merged
-            elif isinstance(update_val, dict) and not isinstance(existing, dict):
-                # existing 不是字典但 update_val 是字典，直接使用 update_val
-                node_update = dict(node_update)
-                node_update[field] = update_val
+                node_update[field] = dict(update_val)
+            continue
+        existing = final_state.get(field, {})
+        if isinstance(existing, dict) and isinstance(update_val, dict):
+            merged = dict(existing)
+            for k, v in update_val.items():
+                if k in merged and merged[k] and not v:
+                    continue
+                if isinstance(v, int) and not v and isinstance(merged.get(k), int) and merged.get(k, 0) > 0:
+                    continue
+                merged[k] = v
+            node_update = dict(node_update)
+            node_update[field] = merged
+        elif isinstance(update_val, dict) and not isinstance(existing, dict):
+            node_update = dict(node_update)
+            node_update[field] = update_val
     return node_update
 from .propagation import Propagator
 from .reflection import Reflector

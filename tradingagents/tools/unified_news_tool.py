@@ -67,25 +67,35 @@ class UnifiedNewsAnalyzer:
     def _identify_stock_type(self, stock_code: str) -> str:
         """识别股票类型"""
         stock_code = stock_code.upper().strip()
-        
+
         # A股判断
         if re.match(r'^(00|30|60|68)\d{4}$', stock_code):
             return "A股"
         elif re.match(r'^(SZ|SH)\d{6}$', stock_code):
             return "A股"
-        
+        elif re.match(r'^\d{6}\.(SH|SZ|SS|XSHE|XSHG)$', stock_code):
+            return "A股"
+
         # 港股判断
         elif re.match(r'^\d{4,5}\.HK$', stock_code):
             return "港股"
-        elif re.match(r'^\d{4,5}$', stock_code) and len(stock_code) <= 5:
+        elif re.match(r'^\d{5}$', stock_code):
             return "港股"
-        
+
         # 美股判断
         elif re.match(r'^[A-Z]{1,5}$', stock_code):
             return "美股"
-        elif '.' in stock_code and not stock_code.endswith('.HK'):
+        elif '.' in stock_code and not stock_code.endswith('.HK') and not re.search(r'\.(SH|SZ|SS|XSHE|XSHG)$', stock_code):
             return "美股"
-        
+
+        # 4位纯数字代码：可能是港股或A股代码缺少前导零，默认按港股处理
+        # 但如果是00/30/60/68开头的4位数字，更可能是A股代码截断，按A股处理
+        elif re.match(r'^\d{4}$', stock_code):
+            if re.match(r'^(00|30|60|68)', stock_code):
+                logger.warning(f"[统一新闻工具] 4位数字代码 {stock_code} 可能是A股代码截断，按A股处理")
+                return "A股"
+            return "港股"
+
         # 默认按A股处理
         else:
             return "A股"
@@ -123,14 +133,10 @@ class UnifiedNewsAnalyzer:
             # 查询最近30天的新闻（扩大时间范围）
             thirty_days_ago = datetime.now() - timedelta(days=30)
 
-            # 尝试多种查询方式（使用 symbol 字段）
             query_list = [
                 {'symbol': clean_code, 'publish_time': {'$gte': thirty_days_ago}},
                 {'symbol': stock_code, 'publish_time': {'$gte': thirty_days_ago}},
                 {'symbols': clean_code, 'publish_time': {'$gte': thirty_days_ago}},
-                # 如果最近30天没有新闻，则查询所有新闻（不限时间）
-                {'symbol': clean_code},
-                {'symbols': clean_code},
             ]
 
             news_items = []
@@ -154,7 +160,7 @@ class UnifiedNewsAnalyzer:
                 title = news.get('title', '无标题')
                 content = news.get('content', '') or news.get('summary', '')
                 source = news.get('source', '未知来源')
-                publish_time = news.get('publish_time', datetime.now())
+                publish_time = news.get('publish_time', '未知时间')
                 sentiment = news.get('sentiment', 'neutral')
 
                 # 情绪图标

@@ -283,7 +283,8 @@ def evaluate_master_data_requirements(master_id: str, source_data: str) -> Dict[
         from tradingagents.agents.masters.quantitative_base import extract_financial_data
 
         extracted_data = extract_financial_data(raw)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"extract_financial_data 失败: {e}")
         extracted_data = {}
 
     present_count = 0
@@ -351,7 +352,11 @@ def apply_quantitative_quality_guard(quant_result: Optional[Dict[str, Any]], dat
 
     guarded = dict(quant_result)
     original_signal = str(guarded.get("signal", "neutral"))
-    completeness = float(data_quality.get("completeness", 1.0) or 0.0)
+    completeness = data_quality.get("completeness", 1.0)
+    try:
+        completeness = float(completeness) if completeness is not None else 0.0
+    except (ValueError, TypeError):
+        completeness = 0.0
     estimated_required = list(data_quality.get("estimated_required", []))
     missing_required = list(data_quality.get("missing_required", []))
 
@@ -599,7 +604,7 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
                     philosophy,
                     framework,
                     output_format,
-                    prefetched_data,
+                    raw_data_str,
                     quant_context,
                     currency_info,
                     market_info,
@@ -645,7 +650,8 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
 
         try:
             chain = prompt | fresh_llm.bind_tools(tools_list)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"bind_tools 失败，回退到无工具链: {e}")
             chain = prompt | fresh_llm
 
         try:

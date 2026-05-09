@@ -87,8 +87,9 @@ def get_hk_stock_data_unified(symbol: str, start_date: str = None, end_date: str
 
             elif source == 'yfinance' and HK_STOCK_AVAILABLE:
                 try:
-                    logger.info(f"🔄 使用Yahoo Finance获取港股数据: {symbol}")
-                    result = get_hk_stock_data(symbol, start_date, end_date)
+                    yf_symbol = _normalize_hk_symbol_for_yfinance(symbol)
+                    logger.info(f"🔄 使用Yahoo Finance获取港股数据: {yf_symbol}")
+                    result = get_hk_stock_data(yf_symbol, start_date, end_date)
                     if result and "❌" not in result:
                         logger.info(f"✅ Yahoo Finance港股数据获取成功: {symbol}")
                         return result
@@ -125,6 +126,14 @@ def get_hk_stock_data_unified(symbol: str, start_date: str = None, end_date: str
         return f"❌ 获取港股{symbol}数据失败: {e}"
 
 
+def _normalize_hk_symbol_for_yfinance(symbol: str) -> str:
+    clean = str(symbol).strip().upper().replace('.HK', '').replace('.hk', '')
+    if clean.isdigit():
+        clean_code = clean.lstrip('0') or '0'
+        return f"{clean_code.zfill(4)}.HK"
+    return symbol
+
+
 def get_hk_stock_info_unified(symbol: str) -> Dict:
     try:
         enabled_sources = _get_enabled_hk_data_sources()
@@ -144,8 +153,9 @@ def get_hk_stock_info_unified(symbol: str) -> Dict:
 
             elif source == 'yfinance' and HK_STOCK_AVAILABLE:
                 try:
-                    logger.info(f"🔄 使用Yahoo Finance获取港股信息: {symbol}")
-                    result = get_hk_stock_info(symbol)
+                    yf_symbol = _normalize_hk_symbol_for_yfinance(symbol)
+                    logger.info(f"🔄 使用Yahoo Finance获取港股信息: {yf_symbol}")
+                    result = get_hk_stock_info(yf_symbol)
                     if result and 'error' not in result and not result.get('name', '').startswith('港股'):
                         logger.info(f"✅ Yahoo Finance成功获取港股信息: {symbol} -> {result.get('name', 'N/A')}")
                         return result

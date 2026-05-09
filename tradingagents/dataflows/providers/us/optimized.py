@@ -352,27 +352,61 @@ class OptimizedUSDataProvider:
             import os
             from datetime import datetime, timedelta
 
-
-            # 获取API密钥
             api_key = os.getenv('FINNHUB_API_KEY')
             if not api_key:
                 return None
 
             client = finnhub.Client(api_key=api_key)
 
-            # 获取实时报价
+            start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
+            end_ts = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp())
+
+            candles = client.stock_candles(symbol.upper(), 'D', start_ts, end_ts)
+
             quote = client.quote(symbol.upper())
             if not quote or 'c' not in quote:
                 return None
 
-            # 获取公司信息
             profile = client.company_profile2(symbol=symbol.upper())
             company_name = profile.get('name', symbol.upper()) if profile else symbol.upper()
 
-            # 格式化数据
             current_price = quote.get('c', 0)
             change = quote.get('d', 0)
             change_percent = quote.get('dp', 0)
+
+            candle_section = ""
+            if candles and candles.get('s') == 'ok' and candles.get('c'):
+                closes = candles['c']
+                highs = candles.get('h', closes)
+                lows = candles.get('l', closes)
+                volumes = candles.get('v', [0] * len(closes))
+                timestamps = candles.get('t', [])
+
+                period_high = max(highs) if highs else current_price
+                period_low = min(lows) if lows else current_price
+                avg_volume = sum(volumes) / len(volumes) if volumes else 0
+
+                recent_count = min(5, len(closes))
+                candle_section = f"""
+## 📈 近{recent_count}日行情
+"""
+                for i in range(-recent_count, 0):
+                    if timestamps and abs(i) <= len(timestamps):
+                        ts_idx = len(timestamps) + i
+                        if 0 <= ts_idx < len(timestamps):
+                            dt = datetime.fromtimestamp(timestamps[ts_idx]).strftime('%Y-%m-%d')
+                            candle_section += f"- {dt}: 收盘 ${closes[i]:.2f}, 最高 ${highs[i]:.2f}, 最低 ${lows[i]:.2f}, 成交量 {volumes[i]:,.0f}\n"
+
+                candle_section += f"""
+## 📊 期间统计
+- 期间最高: ${period_high:.2f}
+- 期间最低: ${period_low:.2f}
+- 期间振幅: {((period_high - period_low) / max(period_low, 0.01) * 100):.2f}%
+- 日均成交量: {avg_volume:,.0f}
+- 数据点数: {len(closes)}
+"""
+            else:
+                candle_section = "\n⚠️ 未获取到历史K线数据，仅显示实时行情\n"
 
             formatted_data = f"""# {symbol.upper()} 美股数据分析
 
@@ -386,12 +420,9 @@ class OptimizedUSDataProvider:
 - 最低价: ${quote.get('l', 0):.2f}
 - 前收盘: ${quote.get('pc', 0):.2f}
 - 更新时间: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y-%m-%d %H:%M:%S')}
-
-## 📈 数据概览
+{candle_section}
 - 数据期间: {start_date} 至 {end_date}
-- 数据来源: FINNHUB API (实时数据)
-- 当前价位相对位置: {((current_price - quote.get('l', current_price)) / max(quote.get('h', current_price) - quote.get('l', current_price), 0.01) * 100):.1f}%
-- 日内振幅: {((quote.get('h', 0) - quote.get('l', 0)) / max(quote.get('pc', 1), 0.01) * 100):.2f}%
+- 数据来源: FINNHUB API
 
 生成时间: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y-%m-%d %H:%M:%S')}
 """
@@ -468,9 +499,16 @@ class OptimizedUSDataProvider:
             df.index = pd.to_datetime(df.index)
             df = df.sort_index()
 
-            # 重命名列
-            df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            df = df.astype(float)
+            column_mapping = {
+                '1. open': 'Open', '2. high': 'High', '3. low': 'Low',
+                '4. close': 'Close', '5. volume': 'Volume',
+                '5. adjusted close': 'Adj Close', '6. volume': 'Volume',
+                '7. dividend amount': 'Dividend', '8. split coefficient': 'Split',
+            }
+            df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
 
             # 过滤日期范围
             df = df[(df.index >= start_date) & (df.index <= end_date)]
@@ -488,21 +526,18 @@ class OptimizedUSDataProvider:
             return None
 
     def _generate_fallback_data(self, symbol: str, start_date: str, end_date: str, error_msg: str) -> str:
-        """生成备用数据"""
-        return f"""# {symbol} 美股数据获取失败
+        """生成数据获取失败的提示信息"""
+        return f"""❌ DATA_UNAVAILABLE: 无法获取 {symbol} 的美股数据
 
-## ❌ 错误信息
+## 错误信息
 {error_msg}
 
-## 📊 模拟数据（仅供演示）
+## 请求参数
 - 股票代码: {symbol}
-- 数据期间: {start_date} 至 {end_date}
-- 最新价格: ${random.uniform(100, 300):.2f}
-- 模拟涨跌: {random.uniform(-5, 5):+.2f}%
+- 请求期间: {start_date} 至 {end_date}
 
-## ⚠️ 重要提示
-由于API限制或网络问题，无法获取实时数据。
-建议稍后重试或检查网络连接。
+## 建议
+由于API限制或网络问题，无法获取实时数据。建议稍后重试或检查网络连接。
 
 生成时间: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y-%m-%d %H:%M:%S')}
 """

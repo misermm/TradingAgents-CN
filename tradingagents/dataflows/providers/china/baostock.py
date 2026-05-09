@@ -675,7 +675,8 @@ class BaoStockProvider(BaseStockDataProvider):
                     return {}
                 
                 latest_row = data_list[-1]
-                row_dict = dict(zip(fields, latest_row)) if fields else {}
+                rs_fields = rs.fields if hasattr(rs, 'fields') and rs.fields else ["date","code","open","high","low","close","preclose","volume","amount","pctChg"]
+                row_dict = dict(zip(rs_fields, latest_row)) if rs_fields else {}
                 close_val = self._safe_float(row_dict.get("close"))
                 preclose_val = self._safe_float(row_dict.get("preclose"))
                 change_val = (close_val - preclose_val) if (close_val is not None and preclose_val is not None) else None
@@ -1137,11 +1138,11 @@ class BaoStockProvider(BaseStockDataProvider):
             return {}
 
         field_mapping = {
-            'total_assets': 'total_assets',
-            'total_liab': 'total_liabilities',
-            'total_current_assets': 'current_assets',
-            'total_current_liab': 'current_liabilities',
-            'total_equity': 'total_equity',
+            'totalAssets': 'total_assets',
+            'totalLiab': 'total_liabilities',
+            'totalCurrentAssets': 'current_assets',
+            'totalCurrentLiab': 'current_liabilities',
+            'totalEquity': 'total_equity',
         }
 
         result = {}

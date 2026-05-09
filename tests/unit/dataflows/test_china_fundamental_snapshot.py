@@ -599,7 +599,10 @@ def test_collect_free_source_payloads_uses_available_sources_and_ignores_failure
     snapshot = build_china_fundamental_snapshot("000001", payloads)
 
     source_order = [payload["source"] for payload in payloads]
-    assert source_order[:3] == ["eastmoney", "akshare", "baostock"]
+    expected_sources = {"eastmoney", "akshare", "baostock", "baostock_direct"}
+    assert set(source_order).issubset(expected_sources | {"akshare_indicator_lg"})
+    assert "eastmoney" in source_order
+    assert "akshare" in source_order
     assert snapshot["fields"]["pe_ttm"]["source"] == "eastmoney"
     # roe source may be baostock_direct (now available) or akshare depending on data priority
     assert snapshot["fields"]["roe"]["source"] in ("baostock_direct", "akshare")

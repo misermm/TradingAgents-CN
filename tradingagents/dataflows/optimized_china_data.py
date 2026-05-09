@@ -289,7 +289,11 @@ class OptimizedChinaDataProvider:
                     if df_q is not None and not df_q.empty:
                         row_q = df_q.iloc[-1]
                         current_price = str(row_q.get('close', 'N/A'))
-                        change_pct = f"{float(row_q.get('pct_chg', 0)):+.2f}%" if row_q.get('pct_chg') is not None else 'N/A'
+                        _pct_raw = row_q.get('pct_chg')
+                        try:
+                            change_pct = f"{float(_pct_raw):+.2f}%" if _pct_raw is not None else 'N/A'
+                        except (ValueError, TypeError):
+                            change_pct = 'N/A'
                         volume = str(row_q.get('volume', 'N/A'))
 
                         # 构造基础信息格式
@@ -1693,7 +1697,7 @@ class OptimizedChinaDataProvider:
 
                             def try_extract_value(bs_df, keys_to_try, metrics_dict, field_name):
                                 for key in keys_to_try:
-                                    if key in bs_df.columns:
+                                    if key in bs_df.columns and len(bs_df[key]) > 0:
                                         val = bs_df[key].iloc[0]
                                         if val is not None and metrics_dict.get(field_name) in (None, 'N/A'):
                                             try:
@@ -1874,6 +1878,8 @@ class OptimizedChinaDataProvider:
                             import pandas as pd
                             eps_data = []
                             for col in value_cols:
+                                if len(eps_row[col]) == 0:
+                                    continue
                                 eps_val = eps_row[col].iloc[0]
                                 if eps_val is not None and str(eps_val) != 'nan' and eps_val != '--':
                                     eps_data.append({'报告期': col, '基本每股收益': eps_val})
@@ -2015,6 +2021,8 @@ class OptimizedChinaDataProvider:
                         import pandas as pd
                         revenue_data = []
                         for col in value_cols:
+                            if len(revenue_row[col]) == 0:
+                                continue
                             rev_val = revenue_row[col].iloc[0]
                             if rev_val is not None and str(rev_val) != 'nan' and rev_val != '--':
                                 revenue_data.append({'报告期': col, '营业收入': rev_val})
@@ -2531,8 +2539,6 @@ class OptimizedChinaDataProvider:
                     return None
                 try:
                     v = float(raw)
-                    if abs(v) <= 1:
-                        v = v * 100
                     return v
                 except (ValueError, TypeError):
                     return None
@@ -3033,7 +3039,7 @@ class OptimizedChinaDataProvider:
                 logger.debug(f"营收增长率评分解析失败(revenue_growth_str={revenue_growth_str}): {e}")
 
         # 净利润增长率评分
-        net_profit_yoy_str = metrics.get("net_profit_yoy", "N/A")
+        net_profit_yoy_str = metrics.get("net_profit_yoy") or metrics.get("profit_growth", "N/A")
         if net_profit_yoy_str != "N/A":
             try:
                 net_profit_yoy = float(str(net_profit_yoy_str).replace("%", ""))

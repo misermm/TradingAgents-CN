@@ -1,13 +1,127 @@
 # 开发进度文档
-**更新时间**: 2026-05-09 (第三轮)
-**当前项目目标**: 逻辑Bug全面排查与修复 + A股分析准确性优化 + Docker部署优化
+**更新时间**: 2026-05-09 (第六轮 - 续)
+**当前项目目标**: 全链路数据准确性修复 + A股/港股/美股分析逻辑Bug修复
 
 ---
 
 ## 当前状态概要
 
-**最近完成的改动**: Ralph Loop第三轮 - 修复阻塞性IndentationError + 添加裸异常日志 + 价格转换安全检查
-**下一步从哪接着做**: 可继续修复数据准确性细节问题，或进行端到端集成测试
+**最近完成的改动**: 第六轮 Ralph Loop - 共22个Bug修复（新闻时间/缓存/评分/数据合并/百分比转换/单位统一/代码格式）
+**下一步从哪接着做**: 继续深度搜索数据提供层API对接准确性 + LLM适配层响应解析
+
+### 本轮修复汇总 (2026-05-09 第六轮 — Ralph Loop 全链路Bug修复)
+
+通过3个并行探索Agent对缓存层、新闻层、评分引擎、数据合并、Graph状态层进行深度审查，修复了以下Bug：
+
+#### 🔴 严重Bug修复 (10个)
+
+| # | 文件 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 1 | `realtime_news.py` L344-357 | 新闻时间解析失败回退`datetime.now()`，旧新闻伪装为最新 | 改为`continue`跳过该新闻 | 旧新闻出现在最新列表 |
+| 2 | `realtime_news.py` L420-422 | 东方财富直接API新闻时间解析失败也回退`now()` | 同上改为`continue` | 同上 |
+| 3 | `unified_news_tool.py` L127 | 数据库查询无时间过滤，返回数年前过期新闻 | 添加30天时间过滤 | 分析基于过期新闻 |
+| 4 | `adaptive.py` `_is_cache_valid` | 缓存时间戳有时区信息但`datetime.now()`无时区，比较TypeError | 添加时区归一化 | 缓存有效性判断异常 |
+| 5 | `adaptive.py` `_save_to_file` | 并发写入pickle文件无保护，文件损坏 | 原子写入：tempfile+os.replace | 缓存文件损坏 |
+| 6 | `adaptive.py` `_load_from_file` | Pickle反序列化无结构校验，旧格式/损坏文件崩溃 | 校验dict类型+required_keys+timestamp类型 | 缓存加载崩溃 |
+| 7 | `optimized_china_data.py` L3036 | 评分引擎查找`net_profit_yoy`但Tushare存为`profit_growth` | 同时检查两个字段名 | 净利润增长率评分永远为0 |
+| 8 | `realtime_news.py` L524 | RSS时间用`time.mktime()`把UTC当本地时间，8小时偏移 | 改为`calendar.timegm()`+UTC时区 | RSS新闻时间偏移8小时 |
+| 9 | `optimized_china_data.py` L2542 | `_pct_val`函数`abs(v)<=1`时自动×100，0.5%变50% | 移除自动转换，东方财富已是百分比 | 增长率数据严重失真 |
+| 10 | `tushare.py` L410-412 | daily/daily_basic日期不匹配直接合并，价格+基本面混日期 | 校验trade_date匹配后再合并 | 行情数据与基本面日期错位 |
+
+#### 🟡 中等Bug修复 (5个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 11 | `unified_news_tool.py` L80-81 | 4位数字代码（如"0001"）误判为港股 | 区分A股前缀(00/30/60/68)4位代码按A股处理 |
+| 12 | `realtime_news.py` L650 | 新闻去重标题长度阈值不区分中英文 | CJK占比>30%时阈值4，否则10 |
+| 13 | `optimized_china_data.py` L292 | `float(row_q.get('pct_chg',0))`非数值时ValueError | try-except包裹，失败返回'N/A' |
+| 14 | `optimized_china_data.py` L1697/1877/2018 | `df[col].iloc[0]`空列IndexError | 添加`len(df[col])>0`检查 |
+| 15 | `base_master.py` L354 | `float(completeness or 0.0)`字符串"N/A"时ValueError | try-except包裹 |
+
+#### 🟢 改进 (2个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 16 | `trading_graph.py` `_merge_master_state` | 字段仅在final_state存在时合并，首次数据丢失 | 改为field不在final_state时也保留dict拷贝 |
+| 17 | `base_master.py` L286/652 | bare except无日志，隐藏关键错误 | 添加logger.warning日志 |
+
+**验证结果**:
+- ✅ **77/77 单元测试全部通过**（0失败）
+- ✅ 所有模块导入正常
+- ✅ 修复覆盖缓存层、新闻层、评分引擎、数据合并、Graph状态层、数据提供层、代码格式
+
+#### 🔴 补充严重Bug修复 (5个)
+
+| # | 文件 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 18 | `eastmoney_direct.py` L155-156 | `_get_secid`中`if "." in symbol: return symbol`把"600519.SH"直接返回，非有效secid | 区分secid格式与yfinance格式，自动转换 | 东方财富API调用失败 |
+| 19 | `akshare.py` L1277 | 历史数据`start_date > end_date`未校验，API返回空数据 | 添加日期范围校验，自动交换 | 历史数据获取返回空 |
+| 20 | `stock_utils.py` L47 | 4位数字代码一律判为港股，A股前缀代码误判 | 区分A股前缀(00/30/60/68)4位代码 | A股代码被误判为港股 |
+| 21 | `akshare.py` L869/1148 | `total_mv / 1e8`返回亿元，但Tushare返回元，单位差1亿倍 | 移除AKShare的/1e8转换，统一返回元 | 总市值数据严重失真 |
+| 22 | `unified_news_tool.py` L163 | `publish_time`默认`datetime.now()`，缺失时间的旧新闻伪装最新 | 改为默认"未知时间" | 旧新闻出现在最新列表 |
+
+**关键文件入口**:
+- 缓存系统: `tradingagents/dataflows/cache/adaptive.py`
+- 新闻系统: `tradingagents/dataflows/news/realtime_news.py`
+- 新闻工具: `tradingagents/tools/unified_news_tool.py`
+- 评分引擎: `tradingagents/dataflows/optimized_china_data.py`
+- Tushare数据: `tradingagents/dataflows/providers/china/tushare.py`
+- AKShare数据: `tradingagents/dataflows/providers/china/akshare.py`
+- 东方财富数据: `tradingagents/dataflows/providers/china/eastmoney_direct.py`
+- Graph状态: `tradingagents/graph/trading_graph.py`
+- 大师基类: `tradingagents/agents/masters/base_master.py`
+- 股票工具: `tradingagents/utils/stock_utils.py`
+
+---
+
+## 后续探索发现的潜在问题（待修复）
+
+### 高优先级待处理
+
+| # | 文件 | 问题描述 | 建议 |
+|---|------|---------|------|
+| 1 | `improved_hk.py` L160-175 vs `hk_stock.py` L208-237 | 港股代码标准化不一致：5位无后缀 vs 4位+.HK | 统一标准化函数 |
+| 2 | `optimized.py` L348-403 | Finnhub只返回实时快照不返回历史数据 | 使用stock_candles接口 |
+| 3 | `base_master.py` | 一致性修正后的数据没有传给LLM | 修正数据传递链 |
+| 4 | `improved_hk.py` L603-605 | AKShare财务数据单位转换可能错误 | 确认原始单位后修正 |
+
+### 中优先级待观察
+
+| # | 文件 | 问题描述 | 建议 |
+|---|------|---------|------|
+| 1 | `hk_stock.py` L276-280 vs `improved_hk.py` | RSI计算方式不一致(SMA vs EMA) | 统一使用EMA算法 |
+| 2 | `realtime_news.py` L299-301 | NewsAPI调用失败后缺乏有效降级机制 | 添加更完整的降级逻辑 |
+| 3 | `adaptive.py` L303-307 | 文件缓存有效性检查中时间戳解析无异常处理 | 添加try-except兜底 |
+
+---
+
+### 本轮修复汇总 (2026-05-09 第四轮 — 数据获取层字段映射与单位转换深度审计)
+|---|------|------|
+| 8 | `akshare.py` L1079-1119 | `_build_bid_ask_quotes` 返回 name 为占位符"股票{code}"而非真实名称 |
+| 9 | `akshare.py` L1106-1110 | 主接口 pe/pb/total_mv/circ_mv 全为 None，备份接口有值 |
+| 10 | `eastmoney_direct.py` L274 | 价格校正中 change 启发式 `abs(change)>1` 判断有缺陷 |
+| 11 | `eastmoney_direct.py` L280-289 | 开盘/最高/最低校正阈值 `>50` 对低价股不生效 |
+| 12 | `akshare.py` L1235-1242 | `_safe_int` 返回 0 掩盖缺失数据，与 `_safe_float` 返回 None 不一致 |
+| 13 | `akshare.py` L869-870 | 批量行情与单股行情 total_mv 单位处理不一致 |
+| 14 | `tushare.py` L1198-1199 | volume 类型应为 int 但返回 float |
+
+#### 🟢 低严重度Bug (代码质量/边界情况)
+
+| # | 文件 | 问题 |
+|---|------|------|
+| 15 | `baostock.py` L592-593 | `_get_stock_info_detail` 使用位置索引访问字段，依赖字段顺序 |
+| 16 | `baostock.py` L594-595 | industry/area 始终返回"未知"，未尝试从其他接口获取 |
+| 17 | `akshare.py` L1209-1211 | 股息率单位启发式判断不够健壮 |
+| 18 | `eastmoney_direct.py` L307-319 | PB/PE_TTM 异常值硬阈值过滤可能误杀 |
+| 19 | `akshare.py` L831-846 | 新浪/东方财富接口列名假设一致，实际可能不同 |
+| 20 | `eastmoney_direct.py` L1344-1390 | `_normalize_a_share_prices` 不覆盖北交所股票 |
+
+**关键文件入口**:
+- AKShare提供器: `tradingagents/dataflows/providers/china/akshare.py`
+- Tushare提供器: `tradingagents/dataflows/providers/china/tushare.py`
+- 东方财富直连: `tradingagents/dataflows/providers/china/eastmoney_direct.py`
+- BaoStock提供器: `tradingagents/dataflows/providers/china/baostock.py`
+- 基类: `tradingagents/dataflows/providers/base_provider.py`
 
 ### 本轮修复汇总 (2026-05-09 第三轮 — Ralph Loop Bug探索与修复)
 
