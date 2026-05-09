@@ -21,7 +21,7 @@ except ImportError:
 
 # 导入 Baostock 提供器
 try:
-    from .baostock import BaostockProvider
+    from .baostock import BaoStockProvider
     BAOSTOCK_AVAILABLE = True
 except ImportError:
     BaostockProvider = None
@@ -56,7 +56,7 @@ __all__ = [
     'AKSHARE_AVAILABLE',
     'TushareProvider',
     'TUSHARE_AVAILABLE',
-    'BaostockProvider',
+    'BaoStockProvider',
     'BAOSTOCK_AVAILABLE',
     'SinaFinanceProvider',
     'SINA_AVAILABLE',

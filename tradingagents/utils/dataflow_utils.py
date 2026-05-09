@@ -5,16 +5,49 @@
 """
 import os
 import json
+import asyncio
+import concurrent.futures
 import pandas as pd
 from datetime import date, timedelta, datetime
-from typing import Annotated
+from typing import Annotated, Any, Coroutine
 
-# 导入日志模块
 from tradingagents.utils.logging_manager import get_logger
 logger = get_logger('agents')
 
 
 SavePathType = Annotated[str, "File path to save data. If None, data is not saved."]
+
+
+def run_async_safely(coro: Coroutine, timeout: float = 30) -> Any:
+    """
+    安全地在同步上下文中运行异步协程
+
+    处理三种场景：
+    1. 没有事件循环 → asyncio.run()
+    2. 事件循环已关闭 → 创建新循环并运行
+    3. 事件循环正在运行（如 FastAPI）→ 在独立线程中运行
+
+    Args:
+        coro: 异步协程对象
+        timeout: 超时时间（秒），默认30秒
+
+    Returns:
+        协程的返回值
+    """
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None or loop.is_closed():
+        return asyncio.run(coro)
+
+    if loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result(timeout=timeout)
+
+    return loop.run_until_complete(coro)
 
 def save_output(data: pd.DataFrame, tag: str, save_path: SavePathType = None) -> None:
     """

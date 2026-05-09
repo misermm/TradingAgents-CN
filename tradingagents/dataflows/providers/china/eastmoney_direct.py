@@ -437,7 +437,7 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
                     "amount": self._safe_float(item.get("f6")),
                     "change": change,
                     "pct_chg": pct_chg,
-                    "amplitude": self._safe_float(item.get("f8")),
+                    "amplitude": self._safe_float(item.get("f7")),
                     "turnover_rate": self._safe_float(item.get("f8")),
                     "pe_dynamic": self._safe_float(item.get("f9")),
                     "pb": self._safe_float(item.get("f23")),

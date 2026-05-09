@@ -192,16 +192,11 @@ class DataCompletenessChecker:
             if market == "CN":
                 # A股：使用 Tushare 查找最新交易日
                 from tradingagents.dataflows.providers.china.tushare import TushareProvider
-                import asyncio
+                from tradingagents.utils.dataflow_utils import run_async_safely
                 
                 provider = TushareProvider()
                 if provider.is_available():
-                    loop = asyncio.get_event_loop()
-                    if loop.is_closed():
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                    
-                    latest_date = loop.run_until_complete(provider.find_latest_trade_date())
+                    latest_date = run_async_safely(provider.find_latest_trade_date())
                     if latest_date:
                         return latest_date
             

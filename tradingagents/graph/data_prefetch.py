@@ -63,10 +63,11 @@ def create_data_prefetch_node(toolkit):
         capital_flow_data = ""
         announcement_data = ""
         quant_data = ""
+        snapshot_dict = {}
         if is_china:
             capital_flow_data = _get_china_capital_flow(ticker, log_tag)
             announcement_data = _get_china_announcement_signals(ticker, log_tag)
-            quant_data = _get_china_quant_data(ticker, log_tag)
+            quant_data, snapshot_dict = _get_china_quant_data(ticker, log_tag)
 
         logger.info(f"{log_tag} 数据质量: {data_quality}")
         logger.info(f"{log_tag} ===== 预获取完成 =====")
@@ -83,6 +84,7 @@ def create_data_prefetch_node(toolkit):
             "prefetched_fundamentals_data": fundamentals_with_industry,
             "prefetched_market_data": str(market_data) if market_data else "",
             "prefetched_quant_data": quant_data,
+            "fundamental_snapshot": snapshot_dict,
         }
 
     return data_prefetch_node
@@ -235,7 +237,7 @@ def _get_china_announcement_signals(ticker: str, log_tag: str) -> str:
         return ""
 
 
-def _get_china_quant_data(ticker: str, log_tag: str) -> str:
+def _get_china_quant_data(ticker: str, log_tag: str) -> tuple:
     try:
         from tradingagents.dataflows.china_fundamental_snapshot import (
             collect_china_free_source_payloads,
@@ -246,9 +248,13 @@ def _get_china_quant_data(ticker: str, log_tag: str) -> str:
         payloads = collect_china_free_source_payloads(ticker)
         if not payloads:
             logger.debug(f"{log_tag} 快照数据源为空，跳过量化数据生成")
-            return ""
+            return "", {}
 
         snapshot = build_china_fundamental_snapshot(ticker, payloads)
+        if not snapshot:
+            logger.debug(f"{log_tag} 快照构建返回空，跳过量化数据生成")
+            return "", {}
+
         quant_text = snapshot_to_quant_text(snapshot)
 
         if quant_text:
@@ -257,7 +263,7 @@ def _get_china_quant_data(ticker: str, log_tag: str) -> str:
         else:
             logger.debug(f"{log_tag} 量化分析专用数据为空")
 
-        return quant_text
+        return quant_text, snapshot
     except Exception as e:
         logger.debug(f"{log_tag} 量化分析专用数据生成失败: {e}")
-        return ""
+        return "", {}

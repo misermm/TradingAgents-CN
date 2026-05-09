@@ -60,6 +60,7 @@ from .interface import (
     get_google_news,
     get_reddit_global_news,
     get_reddit_company_news,
+    get_chinese_social_sentiment,
     # Financial statements functions
     get_simfin_balance_sheet,
     get_simfin_cashflow,
@@ -72,6 +73,7 @@ from .interface import (
     get_YFin_data,
     # Tushare data functions
     get_china_stock_data_tushare,
+    get_china_stock_info_tushare,
     get_china_stock_fundamentals_tushare,
     # Unified China data functions (recommended)
     get_china_stock_data_unified,
@@ -81,6 +83,11 @@ from .interface import (
     # Hong Kong stock functions
     get_hk_stock_data_unified,
     get_hk_stock_info_unified,
+    get_hk_stock_data_akshare,
+    get_hk_stock_info_akshare,
+    # US stock functions
+    get_us_stock_data,
+    # Multi-market functions
     get_stock_data_by_market,
 )
 
@@ -92,6 +99,7 @@ __all__ = [
     "get_google_news",
     "get_reddit_global_news",
     "get_reddit_company_news",
+    "get_chinese_social_sentiment",
     # Financial statements functions
     "get_simfin_balance_sheet",
     "get_simfin_cashflow",
@@ -104,6 +112,7 @@ __all__ = [
     "get_YFin_data",
     # Tushare data functions
     "get_china_stock_data_tushare",
+    "get_china_stock_info_tushare",
     "get_china_stock_fundamentals_tushare",
     # Unified China data functions
     "get_china_stock_data_unified",
@@ -113,5 +122,10 @@ __all__ = [
     # Hong Kong stock functions
     "get_hk_stock_data_unified",
     "get_hk_stock_info_unified",
+    "get_hk_stock_data_akshare",
+    "get_hk_stock_info_akshare",
+    # US stock functions
+    "get_us_stock_data",
+    # Multi-market functions
     "get_stock_data_by_market",
 ]

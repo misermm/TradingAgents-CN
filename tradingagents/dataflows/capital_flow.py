@@ -124,8 +124,8 @@ class ChinaCapitalFlowProvider:
                 try:
                     north_df[date_col] = pd.to_datetime(north_df[date_col], errors="coerce")
                     north_df = north_df[north_df[date_col] >= cutoff]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"北向资金日期过滤失败: {e}")
 
             if north_df.empty:
                 return f"近{days}天无北向资金数据"

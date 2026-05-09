@@ -24,6 +24,7 @@ FREE_SOURCE_PRIORITY = {
     "akshare": 80,
     "akshare_direct": 78,
     "akshare_indicator_lg": 75,
+    "baostock_direct": 72,
     "baostock": 70,
     "mongodb": 60,
     "cache": 50,
@@ -43,6 +44,7 @@ FIELD_SPECS: Dict[str, Dict[str, Any]] = {
     "revenue_yoy": {"label": "营收同比", "aliases": ["revenue_yoy", "revenue_growth", "YYZSRTBZZ", "营业收入同比增长率", "营业总收入同比增长率"], "required": False},
     "net_profit": {"label": "净利润", "aliases": ["net_profit", "net_income", "净利润"], "required": True},
     "net_profit_yoy": {"label": "净利润同比", "aliases": ["net_profit_yoy", "profit_growth", "GSJLRTBZZ", "净利润同比增长率"], "required": False},
+    "equity_yoy": {"label": "净资产同比", "aliases": ["equity_yoy", "YOYEquity", "净资产同比增长率"], "required": False},
     "deducted_net_profit": {"label": "扣非净利润", "aliases": ["deducted_net_profit", "KCFJCXSYJLR", "扣非净利润", "扣除非经常性损益后的净利润"], "required": False},
     "deducted_net_profit_trend": {"label": "扣非净利润趋势", "aliases": ["deducted_net_profit_trend", "扣非净利润趋势"], "required": False},
     "roe": {"label": "ROE", "aliases": ["roe", "return_on_equity", "净资产收益率", "ROE"], "required": True},
@@ -52,7 +54,8 @@ FIELD_SPECS: Dict[str, Dict[str, Any]] = {
     "gross_margin": {"label": "毛利率", "aliases": ["gross_margin", "毛利率"], "required": False},
     "gross_margin_trend": {"label": "毛利率趋势", "aliases": ["gross_margin_trend", "毛利率趋势"], "required": False},
     "net_margin": {"label": "净利率", "aliases": ["net_margin", "net_profit_margin", "净利率", "净利润率"], "required": False},
-    "operating_cash_flow": {"label": "经营现金流", "aliases": ["operating_cash_flow", "n_cashflow_act", "经营现金流", "经营活动现金流", "经营活动产生的现金流量净额", "operating_cash_flow_per_share"], "required": False},
+    "operating_cash_flow": {"label": "经营现金流", "aliases": ["operating_cash_flow", "n_cashflow_act", "经营现金流", "经营活动现金流", "经营活动产生的现金流量净额"], "required": False},
+    "operating_cash_flow_per_share": {"label": "每股经营现金流", "aliases": ["operating_cash_flow_per_share", "每股经营性现金流", "每股经营性现金流(元)"], "required": False},
     "free_cash_flow": {"label": "自由现金流", "aliases": ["free_cash_flow", "fcf", "自由现金流"], "required": False},
     "free_cash_flow_trend": {"label": "自由现金流趋势", "aliases": ["free_cash_flow_trend", "自由现金流趋势"], "required": False},
     "capital_expenditure": {"label": "资本开支", "aliases": ["capital_expenditure", "capex", "购建固定资产、无形资产和其他长期资产支付的现金"], "required": False},
@@ -63,6 +66,7 @@ FIELD_SPECS: Dict[str, Dict[str, Any]] = {
     "current_assets": {"label": "流动资产", "aliases": ["current_assets", "流动资产", "流动资产合计", "totalCurrentAssets"], "required": False},
     "current_liabilities": {"label": "流动负债", "aliases": ["current_liabilities", "流动负债", "流动负债合计", "totalCurrentLiabilities"], "required": False},
     "current_ratio": {"label": "流动比率", "aliases": ["current_ratio", "流动比率"], "required": False},
+    "quick_ratio": {"label": "速动比率", "aliases": ["quick_ratio", "速动比率", "quickRatio"], "required": False},
     "current_ratio_trend": {"label": "流动比率趋势", "aliases": ["current_ratio_trend", "流动比率趋势"], "required": False},
     "accounts_receivable": {"label": "应收账款", "aliases": ["accounts_receivable", "应收账款"], "required": False},
     "contract_liabilities": {"label": "\u5408\u540c\u8d1f\u503a", "aliases": ["contract_liabilities", "\u5408\u540c\u8d1f\u503a", "\u5408\u540c\u8d1f\u503a\u5408\u8ba1"], "required": False},
@@ -278,10 +282,16 @@ def _cleanup_provider(provider: Any) -> None:
 
 
 def _merge_provider_data(*parts: Any) -> Dict[str, Any]:
+    """合并多个数据源的数据，空值不覆盖已有有效值"""
     merged: Dict[str, Any] = {}
     for part in parts:
         if isinstance(part, Mapping):
-            merged.update(part)
+            for key, value in part.items():
+                # 空值（None、空字符串、"N/A"）不覆盖已有有效值
+                if value is None or value == "" or value == "N/A":
+                    continue
+                if key not in merged or merged[key] is None or merged[key] == "" or merged[key] == "N/A":
+                    merged[key] = value
     return merged
 
 
@@ -790,6 +800,7 @@ def _collect_baostock_payload(symbol: str) -> Optional[Dict[str, Any]]:
                         "data": data,
                         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "report_period": data.get("report_period"),
+                        "data_period_type": "single_quarter",  # BaoStock返回单季度数据
                     }
         
         bs.logout()
@@ -1670,12 +1681,8 @@ def _format_field_value(field_name: str, value: Any) -> str:
         return ""
     if field_name not in PERCENT_FIELDS or not isinstance(value, (int, float)):
         return str(value)
-    # 仅对PERCENT_FIELDS中的字段做百分比转换，其他字段直接显示
-    if field_name in PERCENT_FIELDS and -1 <= value <= 1:
-        percent_value = value * 100
-    else:
-        percent_value = value
-    return f"{percent_value:g}%"
+    # 数据源返回的百分比字段已经是百分比形式（如 15.5 表示 15.5%），直接添加 % 后缀
+    return f"{value:g}%"
 
 
 def format_china_fundamental_snapshot_report(snapshot: Mapping[str, Any]) -> str:

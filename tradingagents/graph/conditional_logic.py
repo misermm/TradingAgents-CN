@@ -142,7 +142,7 @@ class ConditionalLogic:
         if tool_call_count >= max_tool_calls:
             return "Msg Clear News"
 
-        if news_report and len(news_report) > 100:
+        if news_report and len(news_report) > 100 and not _is_invalid_report(news_report):
             return "Msg Clear News"
 
         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
@@ -158,7 +158,7 @@ class ConditionalLogic:
         last_message = messages[-1]
 
         tool_call_count = state.get("fundamentals_tool_call_count", 0)
-        max_tool_calls = 1
+        max_tool_calls = 2  # 允许一次重试，避免单次工具调用失败导致无数据
 
         fundamentals_report = state.get("fundamentals_report", "")
 

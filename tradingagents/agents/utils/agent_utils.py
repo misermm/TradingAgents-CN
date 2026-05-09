@@ -18,8 +18,6 @@ from langchain_core.messages import HumanMessage
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.tool_logging import log_tool_call, log_analysis_step
 
-# 导入日志模块
-from tradingagents.utils.logging_manager import get_logger
 logger = get_logger('agents')
 
 
@@ -211,9 +209,9 @@ class Toolkit:
         """
         try:
             # 使用Tushare获取主要指数数据
-            from tradingagents.dataflows.providers.china.tushare import get_tushare_adapter
+            from tradingagents.dataflows.providers.china.tushare import get_tushare_provider
 
-            adapter = get_tushare_adapter()
+            adapter = get_tushare_provider()
 
 
             # 使用Tushare获取主要指数信息

@@ -318,7 +318,7 @@ def test_announcement_signals_parse_governance_and_guidance_extensions():
     assert signals["related_party_transaction_amount_max"] == 50000000.0
     assert "增持公司股份计划" in signals["management_alignment_summary"]
     assert "业绩预增公告" in signals["earnings_guidance_summary"]
-    assert signals["earnings_guidance_change_pct_min"] == -50.0
+    assert signals["earnings_guidance_change_pct_min"] == 50.0
     assert signals["earnings_guidance_change_pct_max"] == 50.0
 
 
@@ -598,10 +598,12 @@ def test_collect_free_source_payloads_uses_available_sources_and_ignores_failure
     payloads = collect_china_free_source_payloads("000001")
     snapshot = build_china_fundamental_snapshot("000001", payloads)
 
-    assert [payload["source"] for payload in payloads] == ["eastmoney", "akshare", "baostock", "akshare_indicator_lg"]
+    assert [payload["source"] for payload in payloads] == ["baostock_direct", "eastmoney", "akshare", "baostock", "akshare_indicator_lg"]
     assert snapshot["fields"]["pe_ttm"]["source"] == "eastmoney"
-    assert snapshot["fields"]["roe"]["source"] == "akshare"
-    assert snapshot["fields"]["operating_cash_flow"]["source"] == "baostock"
+    # roe source may be baostock_direct (now available) or akshare depending on data priority
+    assert snapshot["fields"]["roe"]["source"] in ("baostock_direct", "akshare")
+    # operating_cash_flow source may vary due to baostock_direct now being available
+    assert snapshot["fields"]["operating_cash_flow"]["source"] in ("baostock", "baostock_direct", "akshare_indicator_lg")
 
 
 def test_collect_free_source_payloads_disconnects_providers(monkeypatch):

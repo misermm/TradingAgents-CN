@@ -12,8 +12,7 @@ logger = setup_dataflow_logging()
 
 def _get_enabled_us_data_sources() -> list:
     try:
-        from tradingagents.config.config_manager import get_config_manager
-        config_manager = get_config_manager()
+        from tradingagents.config.config_manager import config_manager
         configs = config_manager.get_datasource_configs()
         us_sources = []
         for cfg in configs:

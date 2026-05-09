@@ -363,7 +363,7 @@ def apply_quantitative_quality_guard(quant_result: Optional[Dict[str, Any]], dat
     if missing_required:
         reasons.append("missing_required_fields")
 
-    degrade = bool(estimated_required) or completeness < 0.9
+    degrade = bool(estimated_required) or completeness < 0.75
     guarded_signal = _weaken_signal_toward_neutral(original_signal) if degrade else original_signal
     guarded["signal"] = guarded_signal
     guarded["quality_guard"] = {

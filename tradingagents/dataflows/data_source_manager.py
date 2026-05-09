@@ -983,8 +983,7 @@ class DataSourceManager:
 
     def _get_datasource_configs_from_db(self) -> dict:
         try:
-            from tradingagents.config.config_manager import get_config_manager
-            config_manager = get_config_manager()
+            from tradingagents.config.config_manager import config_manager
             configs = config_manager.get_datasource_configs()
             if configs:
                 result = {}
@@ -1401,8 +1400,8 @@ class DataSourceManager:
                     df = self._fetch_from_yfinance(symbol, start_date, end_date, period)
                     if df is not None and not df.empty:
                         return df
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"yfinance数据获取失败: {e}")
 
         except Exception as e:
             logger.debug(f"增量数据获取失败: {e}")
@@ -1414,17 +1413,9 @@ class DataSourceManager:
         """从AKShare获取增量数据"""
         try:
             from .providers.china.akshare import get_akshare_provider
-            import asyncio
+            from tradingagents.utils.dataflow_utils import run_async_safely
             provider = get_akshare_provider()
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            df = loop.run_until_complete(provider.get_historical_data(symbol, start_date, end_date, period))
+            df = run_async_safely(provider.get_historical_data(symbol, start_date, end_date, period))
             if df is not None and not df.empty:
                 logger.debug(f"📊 [增量更新-AKShare] {symbol} 获取到 {len(df)}条")
             return df
@@ -1437,17 +1428,9 @@ class DataSourceManager:
         """从Tushare获取增量数据"""
         try:
             from .providers.china.tushare import get_tushare_provider
-            import asyncio
+            from tradingagents.utils.dataflow_utils import run_async_safely
             provider = get_tushare_provider()
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            df = loop.run_until_complete(provider.get_historical_data(symbol, start_date, end_date))
+            df = run_async_safely(provider.get_historical_data(symbol, start_date, end_date))
             if df is not None and not df.empty:
                 logger.debug(f"📊 [增量更新-Tushare] {symbol} 获取到 {len(df)}条")
             return df
@@ -1460,17 +1443,9 @@ class DataSourceManager:
         """从BaoStock获取增量数据"""
         try:
             from .providers.china.baostock import get_baostock_provider
-            import asyncio
+            from tradingagents.utils.dataflow_utils import run_async_safely
             provider = get_baostock_provider()
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            df = loop.run_until_complete(provider.get_historical_data(symbol, start_date, end_date, period))
+            df = run_async_safely(provider.get_historical_data(symbol, start_date, end_date, period))
             if df is not None and not df.empty:
                 logger.debug(f"📊 [增量更新-BaoStock] {symbol} 获取到 {len(df)}条")
             return df
@@ -2141,26 +2116,14 @@ class DataSourceManager:
             cached_data = self._get_cached_data(symbol, start_date, end_date, max_age_hours=24)
             if cached_data is not None and not cached_data.empty:
                 logger.info(f"✅ [缓存命中] 从缓存获取{symbol}数据")
-                # 获取股票基本信息
                 provider = self._get_tushare_adapter()
                 if provider:
-                    import asyncio
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_closed():
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                    except RuntimeError:
-                        # 在线程池中没有事件循环，创建新的
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-
-                    stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+                    from tradingagents.utils.dataflow_utils import run_async_safely
+                    stock_info = run_async_safely(provider.get_stock_basic_info(symbol))
                     stock_name = stock_info.get('name', f'股票{symbol}') if stock_info else f'股票{symbol}'
                 else:
                     stock_name = f'股票{symbol}'
 
-                # 格式化返回
                 return self._format_stock_data_response(cached_data, symbol, stock_name, start_date, end_date)
 
             # 2. 缓存未命中，从provider获取
@@ -2171,26 +2134,15 @@ class DataSourceManager:
             if not provider:
                 return f"❌ Tushare提供器不可用"
 
-            # 使用异步方法获取历史数据
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-            except RuntimeError:
-                # 在线程池中没有事件循环，创建新的
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            data = loop.run_until_complete(provider.get_historical_data(symbol, start_date, end_date))
+            from tradingagents.utils.dataflow_utils import run_async_safely
+            data = run_async_safely(provider.get_historical_data(symbol, start_date, end_date))
 
             if data is not None and not data.empty:
                 # 保存到缓存
                 self._save_to_cache(symbol, data, start_date, end_date)
 
                 # 获取股票基本信息（异步）
-                stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+                stock_info = run_async_safely(provider.get_stock_basic_info(symbol))
                 stock_name = stock_info.get('name', f'股票{symbol}') if stock_info else f'股票{symbol}'
 
                 # 格式化返回
@@ -2230,22 +2182,14 @@ class DataSourceManager:
             from .providers.china.akshare import get_akshare_provider
             provider = get_akshare_provider()
 
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            from tradingagents.utils.dataflow_utils import run_async_safely
 
-            data = loop.run_until_complete(provider.get_historical_data(symbol, start_date, end_date, period))
+            data = run_async_safely(provider.get_historical_data(symbol, start_date, end_date, period))
 
             duration = time.time() - start_time
 
             if data is not None and not data.empty:
-                stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+                stock_info = run_async_safely(provider.get_stock_basic_info(symbol))
                 stock_name = stock_info.get('name', f'股票{symbol}') if stock_info else f'股票{symbol}'
 
                 result = self._format_stock_data_response(data, symbol, stock_name, start_date, end_date)
@@ -2282,21 +2226,13 @@ class DataSourceManager:
         from .providers.china.baostock import get_baostock_provider
         provider = get_baostock_provider()
 
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        from tradingagents.utils.dataflow_utils import run_async_safely
 
         try:
-            data = loop.run_until_complete(provider.get_historical_data(symbol, start_date, end_date, period))
+            data = run_async_safely(provider.get_historical_data(symbol, start_date, end_date, period))
 
             if data is not None and not data.empty:
-                stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+                stock_info = run_async_safely(provider.get_stock_basic_info(symbol))
                 stock_name = stock_info.get('name', f'股票{symbol}') if stock_info else f'股票{symbol}'
 
                 result = self._format_stock_data_response(data, symbol, stock_name, start_date, end_date)
@@ -2334,37 +2270,14 @@ class DataSourceManager:
             str: 格式化的股票数据报告
         """
         try:
-            import asyncio
+            from tradingagents.utils.dataflow_utils import run_async_safely
             from tradingagents.dataflows.providers.china.sina_finance import SinaFinanceProvider
 
             provider = SinaFinanceProvider()
 
-            # 获取实时行情
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 在已有事件循环中，使用线程执行
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.connect())
-                        future.result(timeout=15)
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.get_stock_quotes(symbol))
-                        quotes = future.result(timeout=15)
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.get_historical_data(symbol, start_date, end_date))
-                        hist_data = future.result(timeout=30)
-                else:
-                    asyncio.run(provider.connect())
-                    quotes = asyncio.run(provider.get_stock_quotes(symbol))
-                    hist_data = asyncio.run(provider.get_historical_data(symbol, start_date, end_date))
-            except RuntimeError:
-                # 没有事件循环，直接创建
-                asyncio.run(provider.connect())
-                quotes = asyncio.run(provider.get_stock_quotes(symbol))
-                hist_data = asyncio.run(provider.get_historical_data(symbol, start_date, end_date))
+            run_async_safely(provider.connect())
+            quotes = run_async_safely(provider.get_stock_quotes(symbol))
+            hist_data = run_async_safely(provider.get_historical_data(symbol, start_date, end_date))
 
             # 格式化输出
             result_parts = []
@@ -2425,35 +2338,14 @@ class DataSourceManager:
             str: 格式化的股票数据报告
         """
         try:
-            import asyncio
+            from tradingagents.utils.dataflow_utils import run_async_safely
             from tradingagents.dataflows.providers.china.eastmoney_direct import EastMoneyDirectProvider
 
             provider = EastMoneyDirectProvider()
 
-            # 获取实时行情和财务数据
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.connect())
-                        future.result(timeout=15)
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.get_stock_quotes(symbol))
-                        quotes = future.result(timeout=15)
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.get_financial_data(symbol))
-                        financial = future.result(timeout=15)
-                else:
-                    asyncio.run(provider.connect())
-                    quotes = asyncio.run(provider.get_stock_quotes(symbol))
-                    financial = asyncio.run(provider.get_financial_data(symbol))
-            except RuntimeError:
-                asyncio.run(provider.connect())
-                quotes = asyncio.run(provider.get_stock_quotes(symbol))
-                financial = asyncio.run(provider.get_financial_data(symbol))
+            run_async_safely(provider.connect())
+            quotes = run_async_safely(provider.get_stock_quotes(symbol))
+            financial = run_async_safely(provider.get_financial_data(symbol))
 
             # 格式化输出
             result_parts = []
@@ -3180,14 +3072,10 @@ class DataSourceManager:
                 logger.warning(f"⚠️ [AKShare-基本面] 获取估值指标失败: {e}")
                 # AKShare估值指标失败时，尝试从东方财富直连获取
                 try:
-                    import asyncio
+                    from tradingagents.utils.dataflow_utils import run_async_safely
                     from tradingagents.dataflows.providers.china.eastmoney_direct import EastMoneyDirectProvider
                     em = EastMoneyDirectProvider()
-                    loop = asyncio.new_event_loop()
-                    try:
-                        em_result = loop.run_until_complete(em.get_stock_quotes(symbol))
-                    finally:
-                        loop.close()
+                    em_result = run_async_safely(em.get_stock_quotes(symbol))
                     if em_result is not None and isinstance(em_result, pd.DataFrame) and not em_result.empty:
                         row = em_result.iloc[0]
                         result_parts.append("📈 估值指标（东方财富直连）:")
@@ -3210,10 +3098,10 @@ class DataSourceManager:
                     logger.warning(f"⚠️ [东方财富-基本面] 获取估值指标也失败: {em_e}")
                     # 东方财富也失败时，尝试新浪财经
                     try:
-                        import asyncio
+                        from tradingagents.utils.dataflow_utils import run_async_safely
                         from tradingagents.dataflows.providers.china.sina_finance import SinaFinanceProvider
                         sina = SinaFinanceProvider()
-                        sina_result = asyncio.get_event_loop().run_until_complete(sina.get_stock_quotes(symbol))
+                        sina_result = run_async_safely(sina.get_stock_quotes(symbol))
                         if sina_result is not None and isinstance(sina_result, pd.DataFrame) and not sina_result.empty:
                             row = sina_result.iloc[0]
                             result_parts.append("📈 估值指标（新浪财经）:")
@@ -3407,35 +3295,14 @@ class DataSourceManager:
     def _get_eastmoney_fundamentals(self, symbol: str) -> str:
         """从东方财富直接API获取基本面数据"""
         try:
-            import asyncio
+            from tradingagents.utils.dataflow_utils import run_async_safely
             from tradingagents.dataflows.providers.china.eastmoney_direct import EastMoneyDirectProvider
 
             provider = EastMoneyDirectProvider()
 
-            # 获取实时行情（含PE/PB等估值指标）和财务数据
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.connect())
-                        future.result(timeout=15)
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.get_stock_quotes(symbol))
-                        quotes = future.result(timeout=15)
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, provider.get_financial_data(symbol))
-                        financial = future.result(timeout=15)
-                else:
-                    asyncio.run(provider.connect())
-                    quotes = asyncio.run(provider.get_stock_quotes(symbol))
-                    financial = asyncio.run(provider.get_financial_data(symbol))
-            except RuntimeError:
-                asyncio.run(provider.connect())
-                quotes = asyncio.run(provider.get_stock_quotes(symbol))
-                financial = asyncio.run(provider.get_financial_data(symbol))
+            run_async_safely(provider.connect())
+            quotes = run_async_safely(provider.get_stock_quotes(symbol))
+            financial = run_async_safely(provider.get_financial_data(symbol))
 
             # 格式化基本面报告
             result_parts = []
@@ -4045,8 +3912,7 @@ class USDataSourceManager:
 
     def _get_datasource_configs_from_db(self) -> dict:
         try:
-            from tradingagents.config.config_manager import get_config_manager
-            config_manager = get_config_manager()
+            from tradingagents.config.config_manager import config_manager
             configs = config_manager.get_datasource_configs()
             if configs:
                 result = {}

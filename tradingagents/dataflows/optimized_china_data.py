@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any
 from .cache import get_cache
 
 from tradingagents.config.runtime_settings import get_float, get_timezone_name
-# 导入日志模块
+from tradingagents.utils.dataflow_utils import run_async_safely
 from tradingagents.utils.logging_manager import get_logger
 logger = get_logger('agents')
 
@@ -881,60 +881,55 @@ class OptimizedChinaDataProvider:
         """从实时指标获取部分数据（PE/PB等）- 优先使用东方财富直接API，降级到realtime_metrics"""
         try:
             from .providers.china.eastmoney_direct import EastMoneyDirectProvider
-            import asyncio
 
             em_provider = EastMoneyDirectProvider()
-            loop = asyncio.new_event_loop()
-            try:
-                quote_data = loop.run_until_complete(em_provider.get_stock_quotes(symbol))
-                if quote_data:
-                    metrics = {}
-                    pe_ttm = quote_data.get('pe_ttm')
-                    if pe_ttm is not None:
-                        try:
-                            metrics['pe'] = f"{float(pe_ttm):.1f}倍"
-                        except (ValueError, TypeError):
-                            pass
-                    pe_dynamic = quote_data.get('pe_dynamic')
-                    if pe_dynamic is not None and 'pe' not in metrics:
-                        try:
-                            metrics['pe'] = f"{float(pe_dynamic):.1f}倍"
-                        except (ValueError, TypeError):
-                            pass
-                    pb = quote_data.get('pb')
-                    if pb is not None:
-                        try:
-                            metrics['pb'] = f"{float(pb):.2f}倍"
-                        except (ValueError, TypeError):
-                            pass
-                    total_mv = quote_data.get('total_mv')
-                    if total_mv is not None:
-                        try:
-                            mv_val = float(total_mv)
-                            if abs(mv_val) >= 1e8:
-                                metrics['total_mv'] = f"{mv_val / 1e8:.2f}亿元"
-                            else:
-                                metrics['total_mv'] = f"{mv_val:.2f}元"
-                        except (ValueError, TypeError):
-                            pass
+            quote_data = run_async_safely(em_provider.get_stock_quotes(symbol))
+            if quote_data:
+                metrics = {}
+                pe_ttm = quote_data.get('pe_ttm')
+                if pe_ttm is not None:
+                    try:
+                        metrics['pe'] = f"{float(pe_ttm):.1f}倍"
+                    except (ValueError, TypeError):
+                        pass
+                pe_dynamic = quote_data.get('pe_dynamic')
+                if pe_dynamic is not None and 'pe' not in metrics:
+                    try:
+                        metrics['pe'] = f"{float(pe_dynamic):.1f}倍"
+                    except (ValueError, TypeError):
+                        pass
+                pb = quote_data.get('pb')
+                if pb is not None:
+                    try:
+                        metrics['pb'] = f"{float(pb):.2f}倍"
+                    except (ValueError, TypeError):
+                        pass
+                total_mv = quote_data.get('total_mv')
+                if total_mv is not None:
+                    try:
+                        mv_val = float(total_mv)
+                        if abs(mv_val) >= 1e8:
+                            metrics['total_mv'] = f"{mv_val / 1e8:.2f}亿元"
+                        else:
+                            metrics['total_mv'] = f"{mv_val:.2f}元"
+                    except (ValueError, TypeError):
+                        pass
 
-                    if metrics.get('pe') and metrics['pe'] != 'N/A':
-                        try:
-                            pe_val = float(str(metrics['pe']).replace('倍', '').replace(',', ''))
-                            if pe_val > 0:
-                                metrics['roe'] = f"{min(100 / pe_val, 50):.1f}%"
-                        except Exception:
-                            pass
+                if metrics.get('pe') and metrics['pe'] != 'N/A':
+                    try:
+                        pe_val = float(str(metrics['pe']).replace('倍', '').replace(',', ''))
+                        if pe_val > 0:
+                            metrics['roe'] = f"{min(100 / pe_val, 50):.1f}%"
+                    except Exception as e:
+                        logger.debug(f"ROE估算计算失败(PE={metrics.get('pe')}): {e}")
 
-                    if metrics:
-                        metrics['fundamental_score'] = 4
-                        metrics['risk_level'] = '中'
-                        metrics['data_quality'] = 'partial'
-                        metrics['data_source'] = 'EastMoneyDirect'
-                        logger.info(f"✅ 从东方财富直接API获取部分实时指标: {symbol}")
-                        return metrics
-            finally:
-                loop.close()
+                if metrics:
+                    metrics['fundamental_score'] = 4
+                    metrics['risk_level'] = '中'
+                    metrics['data_quality'] = 'partial'
+                    metrics['data_source'] = 'EastMoneyDirect'
+                    logger.info(f"✅ 从东方财富直接API获取部分实时指标: {symbol}")
+                    return metrics
         except Exception as e:
             logger.debug(f"东方财富直接API获取实时指标失败: {e}")
 
@@ -952,8 +947,8 @@ class OptimizedChinaDataProvider:
                         pe_val = float(str(result['pe']).replace('倍', '').replace(',', ''))
                         if pe_val > 0:
                             metrics['roe'] = f"{min(100 / pe_val, 50):.1f}%"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"ROE估算计算失败(PE={result.get('pe')}): {e}")
                 metrics['fundamental_score'] = 3
                 metrics['risk_level'] = '中'
                 metrics['data_quality'] = 'partial'
@@ -1050,60 +1045,50 @@ class OptimizedChinaDataProvider:
 
             # 第二优先级：从AKShare API获取
             from .providers.china.akshare import get_akshare_provider
-            import asyncio
 
             akshare_provider = get_akshare_provider()
 
             if akshare_provider.connected:
-                loop = asyncio.new_event_loop()
-                try:
-                    financial_data = loop.run_until_complete(akshare_provider.get_financial_data(symbol))
+                financial_data = run_async_safely(akshare_provider.get_financial_data(symbol))
 
-                    if financial_data and any(not v.empty if hasattr(v, 'empty') else bool(v) for v in financial_data.values()):
-                        logger.info(f"✅ AKShare财务数据获取成功: {symbol}")
-                        stock_info = loop.run_until_complete(akshare_provider.get_stock_basic_info(symbol))
+                if financial_data and any(not v.empty if hasattr(v, 'empty') else bool(v) for v in financial_data.values()):
+                    logger.info(f"✅ AKShare财务数据获取成功: {symbol}")
+                    stock_info = run_async_safely(akshare_provider.get_stock_basic_info(symbol))
 
-                        logger.debug(f"🔧 调用AKShare解析函数，股价: {price_value}")
-                        metrics = self._parse_akshare_financial_data(financial_data, stock_info, price_value)
-                        logger.debug(f"🔧 AKShare解析结果: {metrics}")
-                        if metrics:
-                            logger.info(f"✅ AKShare解析成功，返回指标")
-                            self._cache_raw_financial_data(symbol, financial_data, stock_info)
-                            return metrics
-                        else:
-                            logger.warning(f"⚠️ AKShare解析失败，返回None")
+                    logger.debug(f"🔧 调用AKShare解析函数，股价: {price_value}")
+                    metrics = self._parse_akshare_financial_data(financial_data, stock_info, price_value)
+                    logger.debug(f"🔧 AKShare解析结果: {metrics}")
+                    if metrics:
+                        logger.info(f"✅ AKShare解析成功，返回指标")
+                        self._cache_raw_financial_data(symbol, financial_data, stock_info)
+                        return metrics
                     else:
-                        logger.warning(f"⚠️ AKShare未获取到{symbol}财务数据，尝试Tushare")
-                finally:
-                    loop.close()
+                        logger.warning(f"⚠️ AKShare解析失败，返回None")
+                else:
+                    logger.warning(f"⚠️ AKShare未获取到{symbol}财务数据，尝试Tushare")
             else:
                 logger.warning(f"⚠️ AKShare未连接，尝试Tushare")
 
             # 第三优先级：使用Tushare数据源
             logger.info(f"🔄 使用Tushare备用数据源获取{symbol}财务数据")
             from .providers.china.tushare import get_tushare_provider
-            import asyncio
 
             provider = get_tushare_provider()
             if not provider.connected:
                 logger.debug(f"Tushare未连接，无法获取{symbol}真实财务数据")
                 return None
 
-            loop = asyncio.new_event_loop()
-            try:
-                financial_data = loop.run_until_complete(provider.get_financial_data(symbol))
-                if not financial_data:
-                    logger.debug(f"未获取到{symbol}的财务数据")
-                    return None
+            financial_data = run_async_safely(provider.get_financial_data(symbol))
+            if not financial_data:
+                logger.debug(f"未获取到{symbol}的财务数据")
+                return None
 
-                stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+            stock_info = run_async_safely(provider.get_stock_basic_info(symbol))
 
-                metrics = self._parse_financial_data(financial_data, stock_info, price_value)
-                if metrics:
-                    self._cache_raw_financial_data(symbol, financial_data, stock_info)
-                    return metrics
-            finally:
-                loop.close()
+            metrics = self._parse_financial_data(financial_data, stock_info, price_value)
+            if metrics:
+                self._cache_raw_financial_data(symbol, financial_data, stock_info)
+                return metrics
 
         except Exception as e:
             logger.debug(f"获取{symbol}真实财务数据失败: {e}")
@@ -1118,21 +1103,17 @@ class OptimizedChinaDataProvider:
                 logger.debug(f"BaoStock未连接，无法获取{symbol}真实财务数据")
                 return None
 
-            loop = asyncio.new_event_loop()
-            try:
-                financial_data = loop.run_until_complete(provider.get_financial_data(symbol))
-                if not financial_data:
-                    logger.debug(f"未获取到{symbol}的财务数据")
-                    return None
+            financial_data = run_async_safely(provider.get_financial_data(symbol))
+            if not financial_data:
+                logger.debug(f"未获取到{symbol}的财务数据")
+                return None
 
-                stock_info = loop.run_until_complete(provider.get_stock_basic_info(symbol))
+            stock_info = run_async_safely(provider.get_stock_basic_info(symbol))
 
-                metrics = self._parse_baostock_financial_data(financial_data, stock_info, price_value)
-                if metrics:
-                    logger.info(f"✅ BaoStock财务数据获取成功: {symbol}")
-                    return metrics
-            finally:
-                loop.close()
+            metrics = self._parse_baostock_financial_data(financial_data, stock_info, price_value)
+            if metrics:
+                logger.info(f"✅ BaoStock财务数据获取成功: {symbol}")
+                return metrics
 
         except Exception as e:
             logger.debug(f"获取{symbol}真实财务数据失败: {e}")
@@ -1141,22 +1122,17 @@ class OptimizedChinaDataProvider:
         try:
             logger.info(f"🔄 使用东方财富直接API获取{symbol}财务数据")
             from .providers.china.eastmoney_direct import EastMoneyDirectProvider
-            import asyncio
 
             em_provider = EastMoneyDirectProvider()
-            loop = asyncio.new_event_loop()
-            try:
-                financial_data = loop.run_until_complete(em_provider.get_financial_data(symbol))
-                if financial_data and financial_data.get('latest'):
-                    quote_data = loop.run_until_complete(em_provider.get_stock_quotes(symbol))
-                    metrics = self._parse_eastmoney_direct_financial_data(financial_data, quote_data, price_value)
-                    if metrics:
-                        logger.info(f"✅ 东方财富直接API财务数据获取成功: {symbol}")
-                        return metrics
-                else:
-                    logger.debug(f"东方财富直接API未获取到{symbol}财务数据")
-            finally:
-                loop.close()
+            financial_data = run_async_safely(em_provider.get_financial_data(symbol))
+            if financial_data and financial_data.get('latest'):
+                quote_data = run_async_safely(em_provider.get_stock_quotes(symbol))
+                metrics = self._parse_eastmoney_direct_financial_data(financial_data, quote_data, price_value)
+                if metrics:
+                    logger.info(f"✅ 东方财富直接API财务数据获取成功: {symbol}")
+                    return metrics
+            else:
+                logger.debug(f"东方财富直接API未获取到{symbol}财务数据")
 
         except Exception as e:
             logger.debug(f"获取{symbol}东方财富直接API财务数据失败: {e}")
@@ -2951,7 +2927,7 @@ class OptimizedChinaDataProvider:
         """计算基本面评分"""
         score = 5.0  # 基础分
 
-        # ROE评分
+        # ROE评分（负ROE应扣分）
         roe_str = metrics.get("roe", "N/A")
         if roe_str != "N/A":
             try:
@@ -2962,10 +2938,14 @@ class OptimizedChinaDataProvider:
                     score += 1.0
                 elif roe > 5:
                     score += 0.5
-            except Exception:
-                pass
+                elif roe < 0:
+                    score -= 1.5  # 负ROE扣分
+                elif roe == 0:
+                    score -= 0.5  # 零ROE轻微扣分
+            except Exception as e:
+                logger.debug(f"ROE评分解析失败(roe_str={roe_str}): {e}")
 
-        # 净利率评分
+        # 净利率评分（负净利率应扣分）
         net_margin_str = metrics.get("net_margin", "N/A")
         if net_margin_str != "N/A":
             try:
@@ -2974,8 +2954,12 @@ class OptimizedChinaDataProvider:
                     score += 1.0
                 elif net_margin > 10:
                     score += 0.5
-            except Exception:
-                pass
+                elif net_margin < 0:
+                    score -= 1.0  # 亏损扣分
+                elif net_margin == 0:
+                    score -= 0.3
+            except Exception as e:
+                logger.debug(f"净利率评分解析失败(net_margin_str={net_margin_str}): {e}")
 
         return min(score, 10.0)
 
@@ -2988,14 +2972,16 @@ class OptimizedChinaDataProvider:
         if pe_str != "N/A" and "亏损" not in pe_str:
             try:
                 pe = float(pe_str.replace("倍", ""))
-                if pe < 15:
+                if pe < 0:
+                    score -= 2.0  # 负PE（亏损）大幅扣分
+                elif pe < 15:
                     score += 2.0
                 elif pe < 25:
                     score += 1.0
                 elif pe > 50:
                     score -= 1.0
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"PE评分解析失败(pe_str={pe_str}): {e}")
 
         # PB评分
         pb_str = metrics.get("pb", "N/A")
@@ -3008,42 +2994,93 @@ class OptimizedChinaDataProvider:
                     score += 0.5
                 elif pb > 5:
                     score -= 0.5
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"PB评分解析失败(pb_str={pb_str}): {e}")
 
         return min(max(score, 1.0), 10.0)
 
     def _calculate_growth_score(self, metrics: dict, stock_info: dict) -> float:
         """计算成长性评分"""
-        score = 6.0  # 基础分
+        score = 5.0  # 基础分
 
-        # 根据行业调整
+        # 营收增长率评分（核心指标）
+        revenue_growth_str = metrics.get("revenue_growth", "N/A")
+        if revenue_growth_str != "N/A":
+            try:
+                revenue_growth = float(str(revenue_growth_str).replace("%", ""))
+                if revenue_growth > 30:
+                    score += 2.0
+                elif revenue_growth > 20:
+                    score += 1.5
+                elif revenue_growth > 10:
+                    score += 1.0
+                elif revenue_growth > 0:
+                    score += 0.5
+                elif revenue_growth > -10:
+                    score -= 0.5
+                else:
+                    score -= 1.0
+            except Exception as e:
+                logger.debug(f"营收增长率评分解析失败(revenue_growth_str={revenue_growth_str}): {e}")
+
+        # 净利润增长率评分
+        net_profit_yoy_str = metrics.get("net_profit_yoy", "N/A")
+        if net_profit_yoy_str != "N/A":
+            try:
+                net_profit_yoy = float(str(net_profit_yoy_str).replace("%", ""))
+                if net_profit_yoy > 30:
+                    score += 1.5
+                elif net_profit_yoy > 20:
+                    score += 1.0
+                elif net_profit_yoy > 10:
+                    score += 0.5
+                elif net_profit_yoy > 0:
+                    score += 0.25
+                elif net_profit_yoy < -20:
+                    score -= 1.0
+                elif net_profit_yoy < 0:
+                    score -= 0.5
+            except Exception as e:
+                logger.debug(f"净利润增长率评分解析失败(net_profit_yoy_str={net_profit_yoy_str}): {e}")
+
+        # 根据行业调整（微调）
         industry = stock_info.get('industry', '')
         if '科技' in industry or '软件' in industry or '互联网' in industry:
-            score += 1.0
+            score += 0.5
         elif '银行' in industry or '保险' in industry:
-            score -= 0.5
+            score -= 0.3
 
         return min(max(score, 1.0), 10.0)
 
     def _calculate_risk_level(self, metrics: dict, stock_info: dict) -> str:
         """计算风险等级"""
+        industry = stock_info.get('industry', '')
+        is_financial = any(kw in industry for kw in ('银行', '保险', '证券', '金融'))
+
         # 资产负债率
         debt_ratio_str = metrics.get("debt_ratio", "N/A")
         if debt_ratio_str != "N/A":
             try:
                 debt_ratio = float(debt_ratio_str.replace("%", ""))
-                if debt_ratio > 70:
-                    return "较高"
-                elif debt_ratio > 50:
-                    return "中等"
+                # 金融行业天然高杠杆，使用更高阈值
+                if is_financial:
+                    if debt_ratio > 95:
+                        return "较高"
+                    elif debt_ratio > 90:
+                        return "中等"
+                    else:
+                        return "较低"
                 else:
-                    return "较低"
+                    if debt_ratio > 70:
+                        return "较高"
+                    elif debt_ratio > 50:
+                        return "中等"
+                    else:
+                        return "较低"
             except Exception:
                 pass
 
-        # 根据行业判断
-        industry = stock_info.get('industry', '')
+        # 根据行业判断（数据缺失时）
         if '银行' in industry:
             return "中等"
         elif '科技' in industry or '创业板' in industry:
@@ -3066,37 +3103,65 @@ class OptimizedChinaDataProvider:
 
     def _analyze_growth_potential(self, symbol: str, industry_info: dict) -> str:
         """分析成长潜力"""
-        if symbol.startswith(('000001', '600036')):
-            return "银行业整体增长稳定，受益于经济发展和金融深化。数字化转型和财富管理业务是主要增长点。"
-        elif symbol.startswith('300'):
-            return "创业板公司通常具有较高的成长潜力，但也伴随着较高的风险。需要关注技术创新和市场拓展能力。"
+        industry = industry_info.get('industry', '')
+        growth_score = industry_info.get('growth_score', 'N/A')
+
+        # 根据行业生成有针对性的分析
+        if '银行' in industry or '保险' in industry or '证券' in industry:
+            return "金融行业整体增长稳定，受益于经济发展和金融深化。数字化转型和财富管理业务是主要增长点。"
+        elif '科技' in industry or '软件' in industry or '半导体' in industry:
+            return "科技行业具有较高成长潜力，技术创新和市场需求是核心驱动力。需关注研发投入和产品落地能力。"
+        elif '医药' in industry or '医疗' in industry or '生物' in industry:
+            return "医药行业受人口老龄化和健康需求增长驱动，具有长期成长性。需关注研发管线和政策环境。"
+        elif '消费' in industry or '食品' in industry or '白酒' in industry:
+            return "消费行业增长相对稳健，品牌力和渠道优势是关键。需关注消费趋势变化和市场份额。"
+        elif '新能源' in industry or '光伏' in industry or '锂电' in industry:
+            return "新能源行业处于快速发展期，政策支持和技术进步是主要驱动力。需关注产能过剩和技术迭代风险。"
+        elif '地产' in industry or '房地产' in industry:
+            return "房地产行业处于调整期，政策环境和市场信心是关键变量。需关注现金流和债务风险。"
         else:
             return "成长潜力需要结合具体行业和公司基本面分析。建议关注行业发展趋势和公司竞争优势。"
 
     def _analyze_risks(self, symbol: str, financial_estimates: dict, industry_info: dict) -> str:
         """分析投资风险"""
         risk_level = financial_estimates['risk_level']
+        industry = industry_info.get('industry', '')
+        debt_ratio = financial_estimates.get('debt_ratio', 'N/A')
 
         risk_analysis = f"**风险等级**: {risk_level}\n\n"
 
-        if symbol.startswith(('000001', '600036')):
+        # 根据行业和风险指标生成有针对性的分析
+        if '银行' in industry or '保险' in industry:
             risk_analysis += """**主要风险**:
 - 利率环境变化对净息差的影响
 - 信贷资产质量风险
 - 监管政策变化风险
-- 宏观经济下行对银行业的影响"""
-        elif symbol.startswith('300'):
+- 宏观经济下行对金融业的影响"""
+        elif '科技' in industry or '软件' in industry or '半导体' in industry:
             risk_analysis += """**主要风险**:
 - 技术更新换代风险
+- 研发投入无法转化为收入的风险
 - 市场竞争加剧风险
-- 估值波动较大
-- 业绩不确定性较高"""
-        else:
+- 人才流失风险"""
+        elif '医药' in industry or '医疗' in industry:
             risk_analysis += """**主要风险**:
+- 药品研发失败风险
+- 集采降价风险
+- 政策监管变化风险
+- 专利到期风险"""
+        else:
+            risk_analysis += f"""**主要风险**:
 - 行业周期性风险
 - 宏观经济环境变化
 - 市场竞争风险
 - 政策调整风险"""
+            if debt_ratio != 'N/A':
+                try:
+                    dr = float(str(debt_ratio).replace("%", ""))
+                    if dr > 70:
+                        risk_analysis += f"\n- 资产负债率较高（{dr:.1f}%），偿债压力较大"
+                except (ValueError, TypeError):
+                    pass
 
         return risk_analysis
 
@@ -3105,15 +3170,30 @@ class OptimizedChinaDataProvider:
         fundamental_score = financial_estimates['fundamental_score']
         valuation_score = financial_estimates['valuation_score']
         growth_score = financial_estimates['growth_score']
+        risk_level = financial_estimates.get('risk_level', '中等')
 
         total_score = (fundamental_score + valuation_score + growth_score) / 3
 
+        # 高风险降级：风险较高时，建议更保守
+        if risk_level == "较高":
+            total_score -= 0.5
+
         if total_score >= 7.5:
+            if risk_level == "较高":
+                return """**投资建议**: 🟡 **观望**
+- 基本面和估值良好，但风险等级较高
+- 建议等待风险释放后再考虑介入
+- 适合风险承受能力较强的投资者"""
             return """**投资建议**: 🟢 **买入**
 - 基本面良好，估值合理，具有较好的投资价值
 - 建议分批建仓，长期持有
 - 适合价值投资者和稳健型投资者"""
         elif total_score >= 6.0:
+            if risk_level == "较高":
+                return """**投资建议**: 🔴 **回避**
+- 风险较高，当前不建议介入
+- 建议持续关注，等待风险指标改善
+- 风险承受能力较低的投资者应避免"""
             return """**投资建议**: 🟡 **观望**
 - 基本面一般，需要进一步观察
 - 可以小仓位试探，等待更好时机

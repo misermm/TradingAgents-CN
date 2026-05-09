@@ -20,7 +20,7 @@ from typing import Union
 
 # 导入日志模块
 from tradingagents.utils.logging_manager import get_logger
-logger = get_logger('agents')
+logger = get_logger('dataflows.cache')
 
 # 导入文件缓存
 try:

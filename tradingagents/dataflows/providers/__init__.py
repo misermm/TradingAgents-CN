@@ -9,7 +9,7 @@ try:
     from .china import (
         AKShareProvider,
         TushareProvider,
-        BaostockProvider as BaoStockProvider,
+        BaoStockProvider,
         AKSHARE_AVAILABLE,
         TUSHARE_AVAILABLE,
         BAOSTOCK_AVAILABLE

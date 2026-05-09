@@ -91,12 +91,14 @@ def standardize_types(df: pd.DataFrame) -> pd.DataFrame:
     if "date" in out.columns:
         try:
             out["date"] = pd.to_datetime(out["date"], errors="coerce")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"日期列转换失败: {e}")
 
     for col in NUMERIC_COLUMNS:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce")
+            # 处理无穷大值，转为NaN
+            out[col] = out[col].replace([np.inf, -np.inf], np.nan)
 
     return out
 
@@ -141,6 +143,7 @@ def fill_missing_values(df: pd.DataFrame) -> pd.DataFrame:
     填充缺失值
 
     - 数值列: 前向填充，仍为NaN则填0
+    - 估值指标列(pe/pb等): 前向填充，保留NaN（避免0误导分析）
     - date列: 不填充
     """
     if df is None or df.empty:
@@ -148,9 +151,15 @@ def fill_missing_values(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
 
+    # 估值指标列：缺失时保留NaN而非填0，避免误导估值分析
+    valuation_columns = {"pe", "pb", "pe_ttm", "pb_mrq", "ps_ttm", "pcf_ttm",
+                         "market_cap", "circulating_market_cap", "eps", "bps", "roe"}
+
     for col in NUMERIC_COLUMNS:
         if col in out.columns:
-            out[col] = out[col].ffill().fillna(0)
+            out[col] = out[col].ffill()
+            if col not in valuation_columns:
+                out[col] = out[col].fillna(0)
 
     return out
 
@@ -245,12 +254,14 @@ def standardize_dataframe(
     if "date" in out.columns:
         try:
             out = out.sort_values("date").reset_index(drop=True)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"按日期排序失败: {e}")
 
     is_valid, issues = validate_dataframe(out, symbol)
     if is_valid:
         logger.debug(f"✅ [标准化] {symbol}: {len(out)}行, 列={list(out.columns)}")
+    else:
+        logger.warning(f"⚠️ [标准化] {symbol} 数据验证发现问题: {issues}")
 
     return out
 

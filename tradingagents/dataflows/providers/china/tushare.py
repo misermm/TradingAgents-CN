@@ -487,9 +487,9 @@ class TushareProvider(BaseStockDataProvider):
                 # 计算涨跌幅
                 if quote_data.get('close') and quote_data.get('pre_close'):
                     try:
-                        close = float(quote_data['close'])
-                        pre_close = float(quote_data['pre_close'])
-                        if pre_close > 0:
+                        close = self._safe_float(quote_data['close'])
+                        pre_close = self._safe_float(quote_data['pre_close'])
+                        if close is not None and pre_close is not None and pre_close > 0:
                             pct_chg = ((close - pre_close) / pre_close) * 100
                             quote_data['pct_chg'] = round(pct_chg, 2)
                             quote_data['change'] = round(close - pre_close, 2)
@@ -1021,16 +1021,16 @@ class TushareProvider(BaseStockDataProvider):
         return keywords[:5]  # 最多返回5个关键词
 
     def _parse_tushare_news_time(self, time_str: str) -> Optional[datetime]:
-        """解析Tushare新闻时间"""
+        """解析Tushare新闻时间（统一使用CST/Asia-Shanghai语义）"""
         if not time_str:
-            return datetime.utcnow()
+            return datetime.now()
 
         try:
             # Tushare时间格式: 2018-11-21 09:30:00
             return datetime.strptime(str(time_str), '%Y-%m-%d %H:%M:%S')
         except Exception as e:
             self.logger.debug(f"解析Tushare新闻时间失败: {e}")
-            return datetime.utcnow()
+            return datetime.now()
 
     def _classify_tushare_news(self, channels: str, content: str) -> str:
         """分类Tushare新闻"""

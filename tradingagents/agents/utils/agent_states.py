@@ -85,3 +85,4 @@ class AgentState(MessagesState):
     prefetched_fundamentals_data: Annotated[str, "Pre-fetched fundamentals data shared by all master analysts"]
     prefetched_market_data: Annotated[str, "Pre-fetched market data for reference"]
     prefetched_quant_data: Annotated[str, "Pre-fetched structured quantitative data for quant analyzers"]
+    fundamental_snapshot: Annotated[Dict[str, Any], merge_dicts]

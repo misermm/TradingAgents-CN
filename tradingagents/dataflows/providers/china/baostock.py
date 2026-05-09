@@ -434,14 +434,14 @@ class BaoStockProvider(BaseStockDataProvider):
                 logger.warning("⚠️ BaoStock股票列表为空")
                 return []
             
-            # 转换为标准格式
+            # 转换为标准格式（使用字段名映射，避免位置索引依赖）
             stock_list = []
             for row in data_list:
-                if len(row) >= 6:
-                    code = row[0]  # code
-                    name = row[1]  # code_name
-                    stock_type = row[4] if len(row) > 4 else '0'  # type
-                    status = row[5] if len(row) > 5 else '0'  # status
+                row_dict = dict(zip(fields, row)) if fields else {}
+                code = row_dict.get('code', row[0] if len(row) > 0 else '')
+                name = row_dict.get('code_name', row[1] if len(row) > 1 else '')
+                stock_type = row_dict.get('type', row[4] if len(row) > 4 else '0')
+                status = row_dict.get('status', row[5] if len(row) > 5 else '0')
                     
                     # 只保留A股股票 (type=1, status=1)
                     if stock_type == '1' and status == '1':
@@ -546,18 +546,19 @@ class BaoStockProvider(BaseStockDataProvider):
                 logger.warning(f"⚠️ {code}估值数据为空")
                 return {}
 
-            # 取最新一条数据
+            # 取最新一条数据，使用字段名映射
             latest_row = data_list[-1]
+            row_dict = dict(zip(fields, latest_row)) if fields else {}
 
             # 解析数据（fields: date, code, close, peTTM, pbMRQ, psTTM, pcfNcfTTM）
             valuation_data = {
-                "date": latest_row[0] if len(latest_row) > 0 else None,
+                "date": row_dict.get("date"),
                 "code": code,
-                "close": self._safe_float(latest_row[2]) if len(latest_row) > 2 else None,
-                "pe_ttm": self._safe_float(latest_row[3]) if len(latest_row) > 3 else None,
-                "pb_mrq": self._safe_float(latest_row[4]) if len(latest_row) > 4 else None,
-                "ps_ttm": self._safe_float(latest_row[5]) if len(latest_row) > 5 else None,
-                "pcf_ttm": self._safe_float(latest_row[6]) if len(latest_row) > 6 else None,
+                "close": self._safe_float(row_dict.get("close")),
+                "pe_ttm": self._safe_float(row_dict.get("peTTM")),
+                "pb_mrq": self._safe_float(row_dict.get("pbMRQ")),
+                "ps_ttm": self._safe_float(row_dict.get("psTTM")),
+                "pcf_ttm": self._safe_float(row_dict.get("pcfNcfTTM")),
             }
 
             logger.debug(f"✅ {code}估值数据获取成功: PE={valuation_data['pe_ttm']}, PB={valuation_data['pb_mrq']}")
@@ -674,19 +675,20 @@ class BaoStockProvider(BaseStockDataProvider):
                     return {}
                 
                 latest_row = data_list[-1]
-                close_val = self._safe_float(latest_row[5])
-                preclose_val = self._safe_float(latest_row[6])
+                row_dict = dict(zip(fields, latest_row)) if fields else {}
+                close_val = self._safe_float(row_dict.get("close"))
+                preclose_val = self._safe_float(row_dict.get("preclose"))
                 change_val = (close_val - preclose_val) if (close_val is not None and preclose_val is not None) else None
                 return {
                     "name": f"股票{code}",
-                    "open": self._safe_float(latest_row[2]),
-                    "high": self._safe_float(latest_row[3]),
-                    "low": self._safe_float(latest_row[4]),
+                    "open": self._safe_float(row_dict.get("open")),
+                    "high": self._safe_float(row_dict.get("high")),
+                    "low": self._safe_float(row_dict.get("low")),
                     "close": close_val,
                     "preclose": preclose_val,
-                    "volume": self._safe_int(latest_row[7]),
-                    "amount": self._safe_float(latest_row[8]),
-                    "change_percent": self._safe_float(latest_row[9]),
+                    "volume": self._safe_int(row_dict.get("volume")),
+                    "amount": self._safe_float(row_dict.get("amount")),
+                    "change_percent": self._safe_float(row_dict.get("pctChg")),
                     "change": change_val
                 }
             
@@ -891,7 +893,7 @@ class BaoStockProvider(BaseStockDataProvider):
             # 如果没有preclose字段，使用前一日收盘价估算
             if 'preclose' not in df.columns and len(df) > 0:
                 df['preclose'] = df['close'].shift(1)
-                df.loc[0, 'preclose'] = df.loc[0, 'close']  # 第一行使用当日收盘价
+                # 第一行无前一日数据，保持NaN（避免涨跌幅误算为0）
 
             # 标准化列名
             df = df.rename(columns={

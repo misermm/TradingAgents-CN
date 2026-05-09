@@ -1082,27 +1082,27 @@ class AKShareProvider(BaseStockDataProvider):
         now_cn = datetime.now(cn_tz)
         trade_date = now_cn.strftime("%Y-%m-%d")
 
-        volume_in_lots = int(data_dict.get("总手", 0))
-        volume_in_shares = volume_in_lots * 100
+        volume_in_lots = self._safe_int(data_dict.get("总手", 0))
+        volume_in_shares = (volume_in_lots or 0) * 100
 
         return {
             "code": code,
             "symbol": code,
             "name": f"股票{code}",
-            "price": float(data_dict.get("最新", 0)),
-            "close": float(data_dict.get("最新", 0)),
-            "current_price": float(data_dict.get("最新", 0)),
-            "change": float(data_dict.get("涨跌", 0)),
-            "change_percent": float(data_dict.get("涨幅", 0)),
-            "pct_chg": float(data_dict.get("涨幅", 0)),
+            "price": self._safe_float(data_dict.get("最新", 0)),
+            "close": self._safe_float(data_dict.get("最新", 0)),
+            "current_price": self._safe_float(data_dict.get("最新", 0)),
+            "change": self._safe_float(data_dict.get("涨跌", 0)),
+            "change_percent": self._safe_float(data_dict.get("涨幅", 0)),
+            "pct_chg": self._safe_float(data_dict.get("涨幅", 0)),
             "volume": volume_in_shares,
-            "amount": float(data_dict.get("金额", 0)),
-            "open": float(data_dict.get("今开", 0)),
-            "high": float(data_dict.get("最高", 0)),
-            "low": float(data_dict.get("最低", 0)),
-            "pre_close": float(data_dict.get("昨收", 0)),
-            "turnover_rate": float(data_dict.get("换手", 0)),
-            "volume_ratio": float(data_dict.get("量比", 0)),
+            "amount": self._safe_float(data_dict.get("金额", 0)),
+            "open": self._safe_float(data_dict.get("今开", 0)),
+            "high": self._safe_float(data_dict.get("最高", 0)),
+            "low": self._safe_float(data_dict.get("最低", 0)),
+            "pre_close": self._safe_float(data_dict.get("昨收", 0)),
+            "turnover_rate": self._safe_float(data_dict.get("换手", 0)),
+            "volume_ratio": self._safe_float(data_dict.get("量比", 0)),
             "pe": None,
             "pe_ttm": None,
             "pb": None,
@@ -1826,9 +1826,11 @@ class AKShareProvider(BaseStockDataProvider):
             return None
 
     def _parse_news_time(self, time_str: str) -> Optional[datetime]:
-        """解析新闻时间"""
+        """解析新闻时间（所有返回值统一使用CST/Asia-Shanghai语义）"""
+        cn_now = datetime.now()
+
         if not time_str:
-            return datetime.utcnow()
+            return cn_now
 
         try:
             # 尝试多种时间格式
@@ -1849,8 +1851,7 @@ class AKShareProvider(BaseStockDataProvider):
 
                     # 如果只有月日，补充年份
                     if fmt in ["%m-%d %H:%M", "%m/%d %H:%M"]:
-                        current_year = datetime.now().year
-                        parsed_time = parsed_time.replace(year=current_year)
+                        parsed_time = parsed_time.replace(year=cn_now.year)
 
                     return parsed_time
                 except ValueError:
@@ -1858,11 +1859,11 @@ class AKShareProvider(BaseStockDataProvider):
 
             # 如果都失败了，返回当前时间
             self.logger.debug(f"⚠️ 无法解析新闻时间: {time_str}")
-            return datetime.utcnow()
+            return cn_now
 
         except Exception as e:
             self.logger.debug(f"解析新闻时间异常: {e}")
-            return datetime.utcnow()
+            return cn_now
 
     def _analyze_news_sentiment(self, content: str, title: str) -> str:
         """
