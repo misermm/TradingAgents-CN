@@ -272,12 +272,16 @@ class HKStockProvider:
             data['ma20'] = data['Close'].rolling(window=20, min_periods=1).mean()
             data['ma60'] = data['Close'].rolling(window=60, min_periods=1).mean()
 
-            # 计算RSI（相对强弱指标）
+            # 计算RSI（相对强弱指标）- 使用EMA方法，与统一技术指标计算保持一致
             delta = data['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
-            rs = gain / (loss.replace(0, np.nan))
-            data['rsi'] = 100 - (100 / (1 + rs))
+            gain = delta.where(delta > 0, 0.0)
+            loss = (-delta).where(delta < 0, 0.0)
+            avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+            avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+            rs = avg_gain / avg_loss.replace(0, np.nan)
+            data['rsi'] = 100 - (100 / (1 + rs.fillna(0)))
+            data.loc[(avg_loss == 0) & (avg_gain > 0), 'rsi'] = 100
+            data['rsi'] = data['rsi'].fillna(50)
 
             # 计算MACD
             ema12 = data['Close'].ewm(span=12, adjust=False).mean()

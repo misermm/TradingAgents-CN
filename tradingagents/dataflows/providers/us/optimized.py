@@ -160,9 +160,13 @@ class OptimizedUSDataProvider:
                     continue
 
                 if formatted_data and "❌" not in formatted_data:
+                    if not self._validate_stock_data(formatted_data, source_name):
+                        logger.warning(f"⚠️ [数据来源: {source_name.upper()}] 数据一致性验证失败，尝试下一个数据源")
+                        formatted_data = None
+                        continue
                     data_source = source_name
                     logger.info(f"✅ [数据来源: API调用成功-{source_name.upper()}] {source_name.upper()} 数据获取成功: {symbol}")
-                    break  # 成功获取数据，跳出循环
+                    break
                 else:
                     logger.warning(f"⚠️ [数据来源: API失败-{source_name.upper()}] {source_name.upper()} 数据获取失败，尝试下一个数据源")
                     formatted_data = None
@@ -320,6 +324,15 @@ class OptimizedUSDataProvider:
 
         return result
 
+    def _validate_stock_data(self, data: str, source_name: str) -> bool:
+        required_markers = ['价格', '成交量']
+        for marker in required_markers:
+            if marker not in data:
+                logger.warning(f"⚠️ [数据验证-{source_name.upper()}] 缺少关键字段: {marker}")
+                return False
+        logger.info(f"✅ [数据验证-{source_name.upper()}] 数据格式验证通过，数据来源: {source_name}")
+        return True
+
     def _try_get_old_cache(self, symbol: str, start_date: str, end_date: str) -> Optional[str]:
         """尝试获取过期的缓存数据作为备用"""
         try:
@@ -363,6 +376,10 @@ class OptimizedUSDataProvider:
 
             candles = client.stock_candles(symbol.upper(), 'D', start_ts, end_ts)
 
+            if not candles or candles.get('s') != 'ok':
+                logger.warning(f"⚠️ [FINNHUB] stock_candles 返回无效状态: {candles.get('s', 'unknown') if candles else 'None'}，跳过此数据源")
+                return None
+
             quote = client.quote(symbol.upper())
             if not quote or 'c' not in quote:
                 return None
@@ -375,7 +392,7 @@ class OptimizedUSDataProvider:
             change_percent = quote.get('dp', 0)
 
             candle_section = ""
-            if candles and candles.get('s') == 'ok' and candles.get('c'):
+            if candles.get('c'):
                 closes = candles['c']
                 highs = candles.get('h', closes)
                 lows = candles.get('l', closes)
@@ -440,7 +457,7 @@ class OptimizedUSDataProvider:
             ticker = yf.Ticker(symbol.upper())
             data = ticker.history(start=start_date, end=end_date)
 
-            if data.empty:
+            if data is None or data.empty:
                 error_msg = f"未找到股票 '{symbol}' 在 {start_date} 到 {end_date} 期间的数据"
                 logger.error(f"❌ Yahoo Finance数据为空: {error_msg}")
                 return None
@@ -506,6 +523,13 @@ class OptimizedUSDataProvider:
                 '7. dividend amount': 'Dividend', '8. split coefficient': 'Split',
             }
             df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+
+            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+            missing_columns = [col for col in required_columns if col not in df.columns]
+            if missing_columns:
+                logger.warning(f"⚠️ [Alpha Vantage] 数据缺少必要列: {missing_columns}，可用列: {list(df.columns)}")
+                return None
+
             for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')

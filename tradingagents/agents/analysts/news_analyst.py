@@ -355,7 +355,6 @@ def create_news_analyst(llm, toolkit):
                 logger.warning(f"[新闻分析师] 📄 LLM原始响应内容 (前500字符): {result.content[:500] if hasattr(result, 'content') else 'No content'}")
 
                 try:
-                    # 强制获取新闻数据
                     logger.info(f"[新闻分析师] 🔧 强制调用统一新闻工具获取新闻数据...")
                     logger.info(f"[新闻分析师] 📊 调用参数: stock_code={ticker}, max_news=10")
 
@@ -367,7 +366,6 @@ def create_news_analyst(llm, toolkit):
                     if forced_news and len(forced_news.strip()) > 100:
                         logger.info(f"[新闻分析师] ✅ 强制获取新闻成功: {len(forced_news)} 字符")
 
-                        # 基于真实新闻数据重新生成分析
                         forced_prompt = f"""
 您是一位专业的财经新闻分析师。请基于以下最新获取的新闻数据，对股票 {ticker}（{company_name}）进行详细的新闻分析：
 
@@ -390,19 +388,19 @@ def create_news_analyst(llm, toolkit):
                             logger.info(f"[新闻分析师] ✅ 强制补救成功，生成基于真实数据的报告，长度: {len(report)} 字符")
                             logger.info(f"[新闻分析师] 📄 报告预览 (前300字符): {report[:300]}")
                         else:
-                            logger.warning(f"[新闻分析师] ⚠️ 强制补救LLM返回为空，使用原始结果")
-                            report = result.content if hasattr(result, 'content') else ""
+                            logger.warning(f"[新闻分析师] ⚠️ 强制补救LLM返回为空，尝试回退到预获取数据")
+                            report = self._generate_fallback_from_prefetched(state, ticker, company_name, llm, system_message)
                     else:
-                        logger.warning(f"[新闻分析师] ⚠️ 统一新闻工具获取失败或内容过短（{len(forced_news) if forced_news else 0}字符），使用原始结果")
+                        logger.warning(f"[新闻分析师] ⚠️ 统一新闻工具获取失败或内容过短（{len(forced_news) if forced_news else 0}字符），尝试回退到预获取数据")
                         if forced_news:
                             logger.warning(f"[新闻分析师] 📄 失败的新闻内容: {forced_news}")
-                        report = result.content if hasattr(result, 'content') else ""
+                        report = _generate_fallback_from_prefetched(state, ticker, company_name, llm, system_message)
 
                 except Exception as e:
                     logger.error(f"[新闻分析师] ❌ 强制补救过程失败: {e}")
                     import traceback
                     logger.error(f"[新闻分析师] 📋 异常堆栈: {traceback.format_exc()}")
-                    report = result.content if hasattr(result, 'content') else ""
+                    report = _generate_fallback_from_prefetched(state, ticker, company_name, llm, system_message)
             else:
                 # 有工具调用，直接使用结果
                 report = result.content
@@ -425,3 +423,33 @@ def create_news_analyst(llm, toolkit):
         }
 
     return news_analyst_node
+
+
+def _generate_fallback_from_prefetched(state, ticker, company_name, llm, system_message):
+    prefetched = state.get("prefetched_fundamentals_data", "")
+    if prefetched and len(prefetched.strip()) > 100:
+        logger.info(f"[新闻分析师] 📋 使用预获取数据生成回退分析，数据长度: {len(prefetched)}字符")
+        fallback_prompt = f"""⚠️ 数据质量警告：新闻工具调用失败，以下分析基于预获取的基本面数据，可能缺少最新新闻信息。
+
+请基于以下预获取数据，对股票 {ticker}（{company_name}）进行有限的分析：
+
+=== 预获取数据 ===
+{prefetched[:6000]}
+
+请在报告开头标注"⚠️ 数据质量警告：新闻数据获取失败，以下分析基于基本面预获取数据"。
+分析要点：
+1. 基于可用数据的市场概况
+2. 可能影响股价的基本面因素
+3. 有限的投资建议（买入/持有/卖出）
+
+{system_message}"""
+        try:
+            fallback_result = llm.invoke([{"role": "user", "content": fallback_prompt}])
+            if hasattr(fallback_result, 'content') and fallback_result.content:
+                logger.info(f"[新闻分析师] ✅ 基于预获取数据的回退分析生成成功，长度: {len(fallback_result.content)}字符")
+                return fallback_result.content
+        except Exception as e:
+            logger.error(f"[新闻分析师] ❌ 基于预获取数据的回退分析也失败: {e}")
+    else:
+        logger.warning(f"[新闻分析师] ⚠️ 无可用的预获取数据，生成数据缺失警告报告")
+    return f"## 新闻分析\n\n⚠️ 数据质量警告：新闻数据获取失败且无可用的预获取数据，无法生成有效的新闻分析报告。建议检查新闻数据源连接后重试。"

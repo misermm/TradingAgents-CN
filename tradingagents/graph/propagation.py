@@ -61,6 +61,7 @@ class Propagator:
             "master_quantitative_results": {},
             "master_consensus_report": "",
             "china_market_report": "",
+            "china_market_tool_call_count": 0,
             "prefetched_fundamentals_data": "",
             "prefetched_market_data": "",
         }

@@ -158,7 +158,11 @@ def fill_missing_values(df: pd.DataFrame) -> pd.DataFrame:
     for col in NUMERIC_COLUMNS:
         if col in out.columns:
             out[col] = out[col].ffill()
+            out[col] = out[col].bfill()
             if col not in valuation_columns:
+                remaining_nan = out[col].isna().sum()
+                if remaining_nan > 0:
+                    logger.warning(f"⚠️ [缺失值填充] 列 '{col}' 仍有 {remaining_nan} 个NaN，将填0")
                 out[col] = out[col].fillna(0)
 
     return out

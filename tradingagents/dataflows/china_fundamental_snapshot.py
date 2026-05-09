@@ -1241,13 +1241,18 @@ def _apply_trend_fields(fields: Dict[str, Dict[str, Any]], source_payloads: List
             "report_period": payload.get("report_period"),
             "updated_at": payload.get("updated_at"),
         }
+        def _safe_trend(cur, prev, inverse=False):
+            if cur is None or prev is None or cur == 0 or prev == 0:
+                return None
+            return _inverse_trend_direction(cur, prev) if inverse else _trend_direction(cur, prev)
+
         trend_specs: Dict[str, Any] = {
-            "roe_trend": _trend_direction(_period_numeric_value(current_period, FIELD_SPECS["roe"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["roe"]["aliases"])),
-            "gross_margin_trend": _trend_direction(_period_numeric_value(current_period, FIELD_SPECS["gross_margin"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["gross_margin"]["aliases"])),
-            "free_cash_flow_trend": _trend_direction(_period_numeric_value(current_period, FIELD_SPECS["free_cash_flow"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["free_cash_flow"]["aliases"])),
-            "deducted_net_profit_trend": _trend_direction(_period_numeric_value(current_period, FIELD_SPECS["deducted_net_profit"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["deducted_net_profit"]["aliases"])),
-            "debt_ratio_trend": _inverse_trend_direction(_period_numeric_value(current_period, FIELD_SPECS["debt_ratio"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["debt_ratio"]["aliases"])),
-            "current_ratio_trend": _trend_direction(_period_numeric_value(current_period, FIELD_SPECS["current_ratio"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["current_ratio"]["aliases"])),
+            "roe_trend": _safe_trend(_period_numeric_value(current_period, FIELD_SPECS["roe"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["roe"]["aliases"])),
+            "gross_margin_trend": _safe_trend(_period_numeric_value(current_period, FIELD_SPECS["gross_margin"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["gross_margin"]["aliases"])),
+            "free_cash_flow_trend": _safe_trend(_period_numeric_value(current_period, FIELD_SPECS["free_cash_flow"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["free_cash_flow"]["aliases"])),
+            "deducted_net_profit_trend": _safe_trend(_period_numeric_value(current_period, FIELD_SPECS["deducted_net_profit"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["deducted_net_profit"]["aliases"])),
+            "debt_ratio_trend": _safe_trend(_period_numeric_value(current_period, FIELD_SPECS["debt_ratio"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["debt_ratio"]["aliases"]), inverse=True),
+            "current_ratio_trend": _safe_trend(_period_numeric_value(current_period, FIELD_SPECS["current_ratio"]["aliases"]), _period_numeric_value(previous_period, FIELD_SPECS["current_ratio"]["aliases"])),
         }
 
         current_revenue = _period_numeric_value(current_period, FIELD_SPECS["revenue"]["aliases"])
@@ -1520,6 +1525,29 @@ def validate_data_consistency(snapshot_data: dict) -> list:
                     "conflict_values": {"total_assets": total_assets, "total_liabilities": total_liabilities, "book_value_per_share": book_value_per_share},
                     "suggested_fix": {"book_value_per_share": "需验证"},
                 })
+
+    _STALE_THRESHOLD_DAYS = 90
+    stale_fields = []
+    current_timestamp = int(datetime.now().timestamp())
+    for field_name, field_data in fields.items():
+        updated_at = field_data.get("updated_at")
+        if not updated_at:
+            continue
+        parsed = _parse_updated_at(updated_at)
+        if parsed[0] == 1:
+            days_old = (current_timestamp - parsed[1]) / 86400
+            if days_old > _STALE_THRESHOLD_DAYS:
+                stale_fields.append((field_name, int(days_old)))
+
+    if stale_fields:
+        stale_descriptions = [f"{fields[fn].get('label', fn)}: {d}天前" for fn, d in stale_fields]
+        inconsistencies.append({
+            "rule": "stale_data_detected",
+            "fields": [fn for fn, _ in stale_fields],
+            "description": f"以下字段数据可能已过期: {', '.join(stale_descriptions)}，建议更新数据",
+            "conflict_values": {fn: f"{d}天前" for fn, d in stale_fields},
+            "suggested_fix": {},
+        })
 
     return inconsistencies
 

@@ -31,10 +31,15 @@ def get_us_stock_data(symbol: str, start_date: str = None, end_date: str = None)
         try:
             from .providers.us import OptimizedUSDataProvider
             provider = OptimizedUSDataProvider()
-            return provider.get_stock_data(symbol, start_date, end_date)
+            result = provider.get_stock_data(symbol, start_date, end_date)
         except ImportError:
             from tradingagents.dataflows.providers.us.optimized import get_us_stock_data_cached
-            return get_us_stock_data_cached(symbol, start_date, end_date)
+            result = get_us_stock_data_cached(symbol, start_date, end_date)
+
+        if result is None:
+            logger.error(f"❌ 获取美股数据返回空结果: {symbol}")
+            return f"❌ 获取美股{symbol}数据失败: 数据提供器返回空结果，请检查股票代码或稍后重试"
+        return result
     except Exception as e:
-        logger.error(f"❌ 获取美股数据失败: {e}")
-        return f"❌ 获取美股{symbol}数据失败: {e}"
+        logger.error(f"❌ 获取美股数据异常: {type(e).__name__}: {e}", exc_info=True)
+        return f"❌ 获取美股{symbol}数据失败: {type(e).__name__}: {e}"

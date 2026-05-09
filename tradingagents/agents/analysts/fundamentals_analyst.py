@@ -512,12 +512,44 @@ def create_fundamentals_analyst(llm, toolkit):
                     }
 
                 elif tool_call_count >= max_tool_calls:
-                    # 达到最大调用次数，但还没有工具结果（不应该发生）
-                    logger.warning(f"🔧 [异常情况] 达到最大工具调用次数 {max_tool_calls}，但没有工具结果")
-                    fallback_report = f"基本面分析（股票代码：{ticker}）\n\n由于达到最大工具调用次数限制，使用简化分析模式。建议检查数据源连接或降低分析复杂度。"
+                    logger.warning(f"🔧 [异常情况] 达到最大工具调用次数 {max_tool_calls}，尝试基于已有数据生成部分分析")
+                    tool_data_parts = []
+                    for msg in messages:
+                        if isinstance(msg, ToolMessage):
+                            tool_data_parts.append(str(msg.content))
+                    if tool_data_parts:
+                        tool_data = "\n".join(tool_data_parts)
+                        logger.info(f"🔧 [部分分析] 找到 {len(tool_data_parts)} 条已有工具数据，长度: {len(tool_data)}字符")
+                        currency_info = f"{market_info['currency_name']}（{market_info['currency_symbol']}）"
+                        partial_prompt = (
+                            f"你是专业的股票基本面分析师。\n"
+                            f"请基于以下已有数据，对{company_name}（股票代码：{ticker}）进行基本面分析。\n"
+                            f"⚠️ 注意：由于工具调用次数限制，以下数据可能不完整，请在报告中标注数据完整性警告。\n\n"
+                            f"{tool_data[:8000]}\n\n"
+                            f"报告必须包含：\n"
+                            f"1. 基于已有数据的财务分析（标注⚠️数据可能不完整）\n"
+                            f"2. 估值指标分析（如有数据）\n"
+                            f"3. 投资建议（买入/持有/卖出）\n"
+                            f"要求：使用中文，基于真实数据，在报告开头标注数据完整性警告。"
+                        )
+                        try:
+                            partial_prompt_template = ChatPromptTemplate.from_messages([
+                                ("system", "你是专业的股票基本面分析师，基于提供的已有数据进行分析。"),
+                                ("human", "{analysis_request}")
+                            ])
+                            partial_chain = partial_prompt_template | fresh_llm
+                            partial_result = partial_chain.invoke({"analysis_request": partial_prompt})
+                            report = str(partial_result.content) if hasattr(partial_result, 'content') else "基本面分析完成"
+                            logger.info(f"✅ [部分分析] 基于已有数据生成报告成功，长度: {len(report)}字符")
+                        except Exception as e:
+                            logger.error(f"❌ [部分分析] 基于已有数据生成报告失败: {e}")
+                            report = f"基本面分析（股票代码：{ticker}）\n\n⚠️ 数据完整性警告：由于工具调用次数限制且部分分析生成失败，分析数据可能不完整。建议检查数据源连接或降低分析复杂度。"
+                    else:
+                        logger.warning(f"🔧 [异常情况] 达到最大工具调用次数且无已有工具数据")
+                        report = f"基本面分析（股票代码：{ticker}）\n\n⚠️ 数据完整性警告：由于达到最大工具调用次数限制且无可用数据，分析可能不完整。建议检查数据源连接或降低分析复杂度。"
                     return {
                         "messages": [result],
-                        "fundamentals_report": fallback_report,
+                        "fundamentals_report": report,
                         "fundamentals_tool_call_count": tool_call_count
                     }
                 else:

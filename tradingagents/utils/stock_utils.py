@@ -39,26 +39,18 @@ class StockUtils:
 
         ticker = str(ticker).strip().upper()
 
-        # 中国A股：6位数字
-        if re.match(r'^\d{6}$', ticker):
-            return StockMarket.CHINA_A
-
-        # 港股：4-5位数字.HK
         if re.match(r'^\d{4,5}\.HK$', ticker):
             return StockMarket.HONG_KONG
 
-        # 5位纯数字：港股（如00700）
         if re.match(r'^\d{5}$', ticker):
             return StockMarket.HONG_KONG
 
-        # 4位纯数字：可能是港股或A股代码截断
-        # 以A股前缀(00/30/60/68)开头的4位代码更可能是A股截断
+        if re.match(r'^\d{6}$', ticker):
+            return StockMarket.CHINA_A
+
         if re.match(r'^\d{4}$', ticker):
-            if re.match(r'^(00|30|60|68)', ticker):
-                return StockMarket.CHINA_A
             return StockMarket.HONG_KONG
 
-        # 美股：1-5位字母
         if re.match(r'^[A-Z]{1,5}$', ticker):
             return StockMarket.US
 

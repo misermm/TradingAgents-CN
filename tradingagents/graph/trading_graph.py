@@ -743,6 +743,20 @@ class TradingAgentsGraph:
         # 根据是否有进度回调选择不同的stream_mode
         args = self.propagator.get_graph_args(use_progress_callback=bool(progress_callback))
 
+        try:
+            return self._propagate_inner(
+                company_name, trade_date, progress_callback, task_id,
+                init_agent_state, args, node_timings, total_start_time,
+                current_node_start, current_node_name
+            )
+        finally:
+            self._current_task_id = None
+
+    def _propagate_inner(
+        self, company_name, trade_date, progress_callback, task_id,
+        init_agent_state, args, node_timings, total_start_time,
+        current_node_start, current_node_name
+    ):
         if self.debug:
             # Debug mode with tracing and progress updates
             trace = []
@@ -938,14 +952,18 @@ class TradingAgentsGraph:
         # 构建性能数据
         performance_data = self._build_performance_data(node_timings, total_elapsed)
 
-        # 安全检查：确保 final_state 不为 None
-        if final_state is None:
-            logger.error(f"❌ [CRITICAL] final_state 为 None，图执行可能未产生任何输出")
+        # 安全检查：确保 final_state 不为 None 或空
+        if final_state is None or not final_state:
+            if final_state is None:
+                logger.error(f"❌ [CRITICAL] final_state 为 None，图执行可能未产生任何输出")
+            else:
+                logger.error(f"❌ [CRITICAL] final_state 为空字典，图执行未产生有效结果")
             final_state = {
                 "company_of_interest": company_name,
                 "trade_date": trade_date,
                 "final_trade_decision": "分析失败：图执行未产生有效结果",
                 "master_reports": {},
+                "error_report": "图执行返回空状态，可能所有节点均未成功执行",
                 "performance_metrics": performance_data,
             }
 
@@ -996,8 +1014,9 @@ class TradingAgentsGraph:
             logger.warning(f"⚠️ [Graph Stream] 分析流程异常，尝试返回已收集的状态")
 
             yield {
-                "_error_fallback": {
-                    "error_report": f"⚠️ 分析流程执行异常: {type(e).__name__}",
+                "error_handler": {
+                    "error_report": f"⚠️ 分析流程执行异常: {type(e).__name__}: {str(e)[:200]}",
+                    "final_trade_decision": f"分析异常中断: {type(e).__name__}",
                     "messages": [],
                 }
             }

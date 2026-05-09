@@ -1531,8 +1531,71 @@ class TushareProvider(BaseStockDataProvider):
                     break
 
             if not last_year_same:
-                # 缺少去年同期数据，无法准确计算 TTM
-                self.logger.warning(f"⚠️ TTM计算失败: 缺少去年同期数据（需要: {last_year_same_period}，最新期: {latest_period}）")
+                last_year_value = None
+                self.logger.warning(
+                    f"⚠️ TTM计算: 缺少去年同期数据（需要: {last_year_same_period}，最新期: {latest_period}），尝试降级计算"
+                )
+
+                annual_stmt = None
+                for stmt in income_statements:
+                    period = stmt.get('end_date')
+                    if period and period[4:8] == '1231':
+                        annual_stmt = stmt
+                        break
+
+                if annual_stmt:
+                    annual_value = self._safe_float(annual_stmt.get(field))
+                    annual_period = annual_stmt.get('end_date')
+                    if annual_value is not None:
+                        self.logger.info(
+                            f"✅ TTM降级计算: 使用最近年报 {annual_period} = {annual_value:.2f} 作为TTM近似值"
+                        )
+                        return annual_value
+                    else:
+                        self.logger.warning(
+                            f"⚠️ TTM降级计算: 最近年报 {annual_period} 的 {field} 值为空"
+                        )
+
+                available_quarters = []
+                for stmt in income_statements:
+                    period = stmt.get('end_date')
+                    val = self._safe_float(stmt.get(field))
+                    if period and val is not None and period[4:8] != '1231':
+                        available_quarters.append((period, val))
+
+                if available_quarters:
+                    available_quarters.sort(key=lambda x: x[0])
+                    quarters_in_year = [q for q in available_quarters if q[0][:4] == latest_year]
+                    if quarters_in_year:
+                        latest_quarter_md = max(q[0][4:8] for q in quarters_in_year)
+                        if latest_quarter_md == '0930' and len(quarters_in_year) == 3:
+                            estimated = sum(q[1] for q in quarters_in_year) / 3 * 4
+                            self.logger.info(
+                                f"✅ TTM降级计算: 基于当年3个季度数据年化估算 = {estimated:.2f}"
+                            )
+                            return estimated
+                        elif latest_quarter_md == '0630' and len(quarters_in_year) == 2:
+                            estimated = sum(q[1] for q in quarters_in_year) / 2 * 4
+                            self.logger.info(
+                                f"✅ TTM降级计算: 基于当年2个季度数据年化估算 = {estimated:.2f}"
+                            )
+                            return estimated
+                        elif latest_quarter_md == '0331' and len(quarters_in_year) == 1:
+                            estimated = quarters_in_year[0][1] * 4
+                            self.logger.info(
+                                f"✅ TTM降级计算: 基于当年1个季度数据年化估算 = {estimated:.2f}"
+                            )
+                            return estimated
+
+                    self.logger.warning(
+                        f"⚠️ TTM降级计算: 可用季度数据不足以进行年化估算"
+                        f"（可用期间: {[q[0] for q in available_quarters]}）"
+                    )
+
+                self.logger.warning(
+                    f"⚠️ TTM计算失败: 无任何可用数据（缺少去年同期: {last_year_same_period}，"
+                    f"无年报，无可用季度数据，最新期: {latest_period}）"
+                )
                 return None
 
             last_year_value = self._safe_float(last_year_same.get(field))
@@ -1576,42 +1639,79 @@ class TushareProvider(BaseStockDataProvider):
             return None
 
     def _determine_report_type(self, report_period: str) -> str:
-        """根据报告期确定报告类型"""
+        """根据报告期确定报告类型
+
+        报告期格式: YYYYMMDD
+        - 0331 → Q1 (一季报)
+        - 0630 → Q2/H1 (半年报)
+        - 0930 → Q3 (三季报)
+        - 1231 → Q4/Annual (年报)
+        """
         if not report_period:
             return "quarterly"
 
         try:
-            # 报告期格式: YYYYMMDD
-            month_day = report_period[4:8]
-            if month_day == "1231":
-                return "annual"  # 年报
-            else:
+            if len(report_period) < 8:
+                self.logger.warning(f"⚠️ 报告期格式异常: '{report_period}'，长度不足8位")
                 return "quarterly"
-        except Exception:
+
+            month_day = report_period[4:8]
+            report_type_map = {
+                "0331": "q1",
+                "0630": "semi_annual",
+                "0930": "q3",
+                "1231": "annual",
+            }
+
+            result = report_type_map.get(month_day)
+            if result is None:
+                self.logger.warning(
+                    f"⚠️ 报告期月份日无法识别: '{report_period}' (MMDD={month_day})，默认为quarterly"
+                )
+                return "quarterly"
+
+            return result
+        except Exception as e:
+            self.logger.warning(f"⚠️ 判断报告类型异常: {e}，report_period='{report_period}'")
             return "quarterly"
 
     def _safe_float(self, value) -> Optional[float]:
-        """安全转换为浮点数，处理各种异常情况"""
+        """安全转换为浮点数，处理各种异常情况
+
+        支持中文单位字符:
+        - '万' 后缀: 乘以 10000
+        - '亿' 后缀: 乘以 100000000
+        - '%' 后缀: 除以 100
+        """
         if value is None:
             return None
 
         try:
-            # 处理字符串类型
             if isinstance(value, str):
                 value = value.strip()
-                if not value or value.lower() in ['nan', 'null', 'none', '--', '']:
+                if not value or value.lower() in ['nan', 'null', 'none', '--', '-', 'n/a', '']:
                     return None
-                # 移除可能的单位符号
-                value = value.replace(',', '').replace('万', '').replace('亿', '')
 
-            # 处理数值类型
+                multiplier = 1.0
+                if value.endswith('亿'):
+                    multiplier = 100000000.0
+                    value = value[:-1]
+                elif value.endswith('万'):
+                    multiplier = 10000.0
+                    value = value[:-1]
+                elif value.endswith('%'):
+                    multiplier = 0.01
+                    value = value[:-1]
+
+                value = value.replace(',', '')
+
+                return float(value) * multiplier
+
             if isinstance(value, (int, float)):
-                # 检查是否为NaN
-                if isinstance(value, float) and (value != value):  # NaN检查
+                if isinstance(value, float) and (value != value):
                     return None
                 return float(value)
 
-            # 尝试转换
             return float(value)
 
         except (ValueError, TypeError, AttributeError):

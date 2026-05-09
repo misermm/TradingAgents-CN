@@ -119,16 +119,25 @@ class ChinaCapitalFlowProvider:
                 north_df = df
 
             if date_col:
+                try:
+                    north_df[date_col] = pd.to_datetime(north_df[date_col], errors="coerce")
+                    north_df = north_df.dropna(subset=[date_col])
+                except Exception as e:
+                    logger.debug(f"北向资金日期转换失败: {e}")
                 north_df = north_df.sort_values(by=date_col, ascending=False)
                 cutoff = datetime.now() - timedelta(days=days)
                 try:
-                    north_df[date_col] = pd.to_datetime(north_df[date_col], errors="coerce")
                     north_df = north_df[north_df[date_col] >= cutoff]
                 except Exception as e:
                     logger.debug(f"北向资金日期过滤失败: {e}")
 
             if north_df.empty:
                 return f"近{days}天无北向资金数据"
+
+            if net_col:
+                north_df[net_col] = pd.to_numeric(north_df[net_col], errors="coerce")
+            if inflow_col:
+                north_df[inflow_col] = pd.to_numeric(north_df[inflow_col], errors="coerce")
 
             if type_col and direction_col:
                 lines.append("| 日期 | 板块 | 成交净买额(亿) | 资金净流入(亿) |")

@@ -41,6 +41,7 @@ class AdaptiveCacheSystem:
         self.fallback_enabled = self.cache_config["fallback_enabled"]
         
         self.logger.info(f"自适应缓存系统初始化 - 主要后端: {self.primary_backend}")
+        self._save_failure_count = 0
     
     def _get_cache_key(self, symbol: str, start_date: str = "", end_date: str = "", 
                       data_source: str = "default", data_type: str = "stock_data") -> str:
@@ -106,6 +107,7 @@ class AdaptiveCacheSystem:
             
         except Exception as e:
             self.logger.error(f"文件缓存保存失败: {e}")
+            self._save_failure_count += 1
             return False
     
     def _load_from_file(self, cache_key: str) -> Optional[Dict]:
@@ -185,6 +187,7 @@ class AdaptiveCacheSystem:
             
         except Exception as e:
             self.logger.error(f"Redis缓存保存失败: {e}")
+            self._save_failure_count += 1
             return False
     
     def _load_from_redis(self, cache_key: str) -> Optional[Dict]:
@@ -246,6 +249,7 @@ class AdaptiveCacheSystem:
             
         except Exception as e:
             self.logger.error(f"MongoDB缓存保存失败: {e}")
+            self._save_failure_count += 1
             return False
     
     def _load_from_mongodb(self, cache_key: str) -> Optional[Dict]:
@@ -351,15 +355,14 @@ class AdaptiveCacheSystem:
         if not cache_data:
             return None
         
-        # 检查缓存是否有效（仅对文件缓存，数据库缓存有自己的TTL机制）
-        if cache_data.get('backend') == 'file':
-            symbol = cache_data['metadata'].get('symbol', '')
-            data_type = cache_data['metadata'].get('data_type', 'stock_data')
-            ttl_seconds = self._get_ttl_seconds(symbol, data_type)
-            
-            if not self._is_cache_valid(cache_data['timestamp'], ttl_seconds):
-                self.logger.debug(f"文件缓存已过期: {cache_key}")
-                return None
+        symbol = cache_data.get('metadata', {}).get('symbol', '')
+        data_type = cache_data.get('metadata', {}).get('data_type', 'stock_data')
+        ttl_seconds = self._get_ttl_seconds(symbol, data_type)
+        timestamp = cache_data.get('timestamp')
+
+        if timestamp is not None and not self._is_cache_valid(timestamp, ttl_seconds):
+            self.logger.debug(f"缓存已过期: {cache_key} (后端: {cache_data.get('backend')})")
+            return None
         
         return cache_data['data']
     

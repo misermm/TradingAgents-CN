@@ -438,19 +438,7 @@ class AKShareProvider(BaseStockDataProvider):
             logger.warning(f"⚠️ AKShare超时配置失败: {e}")
     
     def _try_multiple_apis(self, api_methods: List[Tuple[str, Callable]], **kwargs) -> Optional[pd.DataFrame]:
-        """
-        尝试多个API接口，按优先级依次调用
-        
-        当某个接口失败时自动切换到下一个备选接口，
-        确保关键数据类型的数据获取成功率
-        
-        Args:
-            api_methods: 接口列表，格式为 [(接口名称, 接口函数), ...]
-            **kwargs: 传递给接口函数的参数
-            
-        Returns:
-            成功时返回DataFrame，全部失败返回None
-        """
+        failed_apis = []
         for api_name, api_func in api_methods:
             try:
                 result = api_func(**kwargs)
@@ -459,10 +447,13 @@ class AKShareProvider(BaseStockDataProvider):
                     return result
                 else:
                     logger.warning(f"⚠️ AKShare接口 {api_name} 返回空数据，尝试下一个接口")
+                    failed_apis.append((api_name, "返回空数据"))
             except Exception as e:
                 logger.warning(f"⚠️ AKShare接口 {api_name} 失败: {e}")
+                failed_apis.append((api_name, str(e)))
                 continue
-        logger.error(f"❌ 所有AKShare备选接口均失败，参数: {kwargs}")
+        failure_details = "; ".join(f"{name}({reason})" for name, reason in failed_apis)
+        logger.error(f"❌ 所有AKShare备选接口均失败，参数: {kwargs}，失败详情: [{failure_details}]")
         return None
     
     async def connect(self) -> bool:
@@ -1194,8 +1185,10 @@ class AKShareProvider(BaseStockDataProvider):
         }
         ocf = result.get("operating_cash_flow")
         capex = result.get("capital_expenditure")
-        if ocf is not None and capex is not None:
+        if ocf is not None and capex is not None and capex != 0:
             result["free_cash_flow"] = ocf - abs(capex)
+        elif ocf is not None and capex is not None and capex == 0:
+            result["free_cash_flow"] = ocf
         return result
 
     def _parse_indicator_lg_row(self, row: pd.Series) -> Dict[str, Any]:
@@ -1228,15 +1221,22 @@ class AKShareProvider(BaseStockDataProvider):
         try:
             if value is None or (isinstance(value, float) and pd.isna(value)):
                 return None
+            if isinstance(value, str):
+                value = value.strip()
+                if value in ('--', '-', 'N/A', 'null', 'None', 'NaN', ''):
+                    return None
             return float(value)
         except (ValueError, TypeError):
             return None
     
     def _safe_int(self, value: Any) -> int:
-        """安全转换为整数"""
         try:
-            if pd.isna(value) or value is None:
+            if value is None or (isinstance(value, float) and pd.isna(value)):
                 return 0
+            if isinstance(value, str):
+                value = value.strip()
+                if value in ('--', '-', 'N/A', 'null', 'None', 'NaN', ''):
+                    return 0
             return int(float(value))
         except (ValueError, TypeError):
             return 0

@@ -52,6 +52,12 @@ class OptimizedChinaDataProvider:
 
     def _format_financial_data_to_fundamentals(self, financial_data: Dict[str, Any], symbol: str) -> str:
         """将MongoDB财务数据转换为基本面分析格式"""
+        if financial_data is None:
+            logger.warning(f"⚠️ 财务数据为None，无法格式化: {symbol}")
+            return f"# {symbol} 基本面数据\n\n❌ 财务数据为空"
+        if not isinstance(financial_data, dict):
+            logger.warning(f"⚠️ 财务数据类型错误: {type(financial_data)}，期望dict: {symbol}")
+            return f"# {symbol} 基本面数据\n\n❌ 财务数据格式错误"
         try:
             # 提取关键财务指标
             revenue = financial_data.get('total_revenue', 'N/A')
@@ -121,6 +127,15 @@ class OptimizedChinaDataProvider:
             格式化的股票数据字符串
         """
         logger.info(f"📈 获取A股数据: {symbol} ({start_date} 到 {end_date})")
+
+        if not symbol or not str(symbol).strip():
+            logger.error("❌ 股票代码不能为空")
+            return self._generate_fallback_data("", start_date or "", end_date or "", "股票代码为空")
+        symbol = str(symbol).strip()
+
+        if not start_date or not end_date:
+            logger.error(f"❌ 日期参数不能为空: start_date={start_date}, end_date={end_date}")
+            return self._generate_fallback_data(symbol, start_date or "", end_date or "", "日期参数为空")
 
         # 1. 优先尝试从MongoDB获取（如果启用了TA_USE_APP_CACHE）
         if not force_refresh:
@@ -212,6 +227,11 @@ class OptimizedChinaDataProvider:
             格式化的基本面数据字符串
         """
         logger.info(f"📊 获取A股基本面数据: {symbol}")
+
+        if not symbol or not str(symbol).strip():
+            logger.error("❌ 股票代码不能为空")
+            return self._generate_fallback_fundamentals("", "股票代码为空")
+        symbol = str(symbol).strip()
 
         # 1. 优先尝试从MongoDB获取财务数据（如果启用了TA_USE_APP_CACHE）
         if not force_refresh:
@@ -422,8 +442,16 @@ class OptimizedChinaDataProvider:
 
         # 根据股票代码判断行业和基本信息
         logger.debug(f"🔍 [股票代码追踪] 调用 _get_industry_info，传入参数: '{symbol}'")
-        industry_info = self._get_industry_info(symbol)
+        try:
+            industry_info = self._get_industry_info(symbol)
+        except Exception as e:
+            logger.warning(f"⚠️ 获取行业信息失败: {e}，使用默认值")
+            industry_info = {'industry': '未知', 'market': 'A股', 'analysis': '暂无行业分析', 'market_share': 'N/A', 'brand_value': 'N/A', 'tech_advantage': 'N/A'}
         logger.debug(f"🔍 [股票代码追踪] _get_industry_info 返回结果: {industry_info}")
+
+        for _key, _default in [('industry', '未知'), ('market', 'A股'), ('analysis', '暂无行业分析'), ('market_share', 'N/A'), ('brand_value', 'N/A'), ('tech_advantage', 'N/A')]:
+            if _key not in industry_info or industry_info[_key] is None:
+                industry_info[_key] = _default
 
         # 尝试获取财务指标，如果失败则返回简化的基本面报告
         logger.debug(f"🔍 [股票代码追踪] 调用 _estimate_financial_metrics，传入参数: '{symbol}'")
@@ -489,7 +517,31 @@ class OptimizedChinaDataProvider:
 
         # 根据分析模块级别调整报告内容
         logger.debug(f"🔍 [基本面分析] 使用分析模块级别: {analysis_modules}")
-        
+
+        try:
+            valuation_analysis = self._analyze_valuation(financial_estimates)
+        except Exception as e:
+            logger.warning(f"⚠️ 估值分析生成失败: {e}")
+            valuation_analysis = "估值分析暂不可用"
+
+        try:
+            growth_analysis = self._analyze_growth_potential(symbol, industry_info)
+        except Exception as e:
+            logger.warning(f"⚠️ 成长性分析生成失败: {e}")
+            growth_analysis = "成长性分析暂不可用"
+
+        try:
+            risk_analysis = self._analyze_risks(symbol, financial_estimates, industry_info)
+        except Exception as e:
+            logger.warning(f"⚠️ 风险评估生成失败: {e}")
+            risk_analysis = "风险评估暂不可用"
+
+        try:
+            investment_advice = self._generate_investment_advice(financial_estimates, industry_info)
+        except Exception as e:
+            logger.warning(f"⚠️ 投资建议生成失败: {e}")
+            investment_advice = "投资建议暂不可用"
+
         if analysis_modules == "basic":
             # 基础模式：只包含核心财务指标
             report = f"""# 中国A股基本面分析报告 - {symbol} (基础版)
@@ -510,8 +562,8 @@ class OptimizedChinaDataProvider:
 - **资产负债率**: {financial_estimates.get('debt_ratio', 'N/A')}
 
 ## 💡 基础评估
-- **基本面评分**: {financial_estimates['fundamental_score']}/10
-- **风险等级**: {financial_estimates['risk_level']}
+- **基本面评分**: {financial_estimates.get('fundamental_score', 'N/A')}/10
+- **风险等级**: {financial_estimates.get('risk_level', 'N/A')}
 
 ---
 **重要声明**: 本报告基于公开数据和模型估算生成，仅供参考，不构成投资建议。
@@ -525,80 +577,8 @@ class OptimizedChinaDataProvider:
 ## 📊 股票基本信息
 - **股票代码**: {symbol}
 - **股票名称**: {company_name}
-- **所属行业**: {industry_info['industry']}
-- **市场板块**: {industry_info['market']}
-- **当前股价**: {current_price}
-- **涨跌幅**: {change_pct}
-- **成交量**: {volume}
-- **分析日期**: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y年%m月%d日')}{data_source_note}
-
-## 💰 财务数据分析
-
-### 估值指标
-- **总市值**: {financial_estimates.get('total_mv', 'N/A')}
-- **市盈率(PE)**: {financial_estimates.get('pe', 'N/A')}
-- **市盈率TTM(PE_TTM)**: {financial_estimates.get('pe_ttm', 'N/A')}
-- **市净率(PB)**: {financial_estimates.get('pb', 'N/A')}
-- **市销率(PS)**: {financial_estimates.get('ps', 'N/A')}
-- **股息收益率**: {financial_estimates.get('dividend_yield', 'N/A')}
-
-### 盈利能力指标
-- **净资产收益率(ROE)**: {financial_estimates['roe']}
-- **总资产收益率(ROA)**: {financial_estimates['roa']}
-- **毛利率**: {financial_estimates['gross_margin']}
-- **净利率**: {financial_estimates['net_margin']}
-- **营收增长率**: {financial_estimates.get('revenue_growth', 'N/A')}
-- **每股收益(EPS)**: {financial_estimates.get('eps', 'N/A')}
-- **每股净资产**: {financial_estimates.get('book_value_per_share', 'N/A')}
-- **营业收入**: {financial_estimates.get('revenue', 'N/A')}
-- **净利润**: {financial_estimates.get('net_profit', 'N/A')}
-
-### 财务健康度
-- **资产负债率**: {financial_estimates['debt_ratio']}
-- **流动比率**: {financial_estimates['current_ratio']}
-- **速动比率**: {financial_estimates['quick_ratio']}
-- **现金比率**: {financial_estimates['cash_ratio']}
-- **总资产**: {financial_estimates.get('total_assets', 'N/A')}
-- **总负债**: {financial_estimates.get('total_liabilities', 'N/A')}
-- **流动资产**: {financial_estimates.get('current_assets', 'N/A')}
-- **流动负债**: {financial_estimates.get('current_liabilities', 'N/A')}
-
-### 现金流指标
-- **经营现金流量净额**: {financial_estimates.get('operating_cash_flow', 'N/A')}
-- **每股自由现金流**: {financial_estimates.get('free_cash_flow_per_share', 'N/A')}
-
-## 📈 行业分析
-{industry_info['analysis']}
-
-## 🎯 投资价值评估
-### 估值水平分析
-{self._analyze_valuation(financial_estimates)}
-
-### 成长性分析
-{self._analyze_growth_potential(symbol, industry_info)}
-
-## 💡 投资建议
-- **基本面评分**: {financial_estimates['fundamental_score']}/10
-- **估值吸引力**: {financial_estimates['valuation_score']}/10
-- **成长潜力**: {financial_estimates['growth_score']}/10
-- **风险等级**: {financial_estimates['risk_level']}
-
-{self._generate_investment_advice(financial_estimates, industry_info)}
-
----
-**重要声明**: 本报告基于公开数据和模型估算生成，仅供参考，不构成投资建议。
-**数据来源**: {data_source if data_source else "多源数据"}数据接口
-**生成时间**: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        else:  # detailed, comprehensive
-            # 详细/全面模式：包含最完整的分析
-            report = f"""# 中国A股基本面分析报告 - {symbol} (全面版)
-
-## 📊 股票基本信息
-- **股票代码**: {symbol}
-- **股票名称**: {company_name}
-- **所属行业**: {industry_info['industry']}
-- **市场板块**: {industry_info['market']}
+- **所属行业**: {industry_info.get('industry', '未知')}
+- **市场板块**: {industry_info.get('market', 'A股')}
 - **当前股价**: {current_price}
 - **涨跌幅**: {change_pct}
 - **成交量**: {volume}
@@ -626,10 +606,82 @@ class OptimizedChinaDataProvider:
 - **净利润**: {financial_estimates.get('net_profit', 'N/A')}
 
 ### 财务健康度
-- **资产负债率**: {financial_estimates['debt_ratio']}
-- **流动比率**: {financial_estimates['current_ratio']}
-- **速动比率**: {financial_estimates['quick_ratio']}
-- **现金比率**: {financial_estimates['cash_ratio']}
+- **资产负债率**: {financial_estimates.get('debt_ratio', 'N/A')}
+- **流动比率**: {financial_estimates.get('current_ratio', 'N/A')}
+- **速动比率**: {financial_estimates.get('quick_ratio', 'N/A')}
+- **现金比率**: {financial_estimates.get('cash_ratio', 'N/A')}
+- **总资产**: {financial_estimates.get('total_assets', 'N/A')}
+- **总负债**: {financial_estimates.get('total_liabilities', 'N/A')}
+- **流动资产**: {financial_estimates.get('current_assets', 'N/A')}
+- **流动负债**: {financial_estimates.get('current_liabilities', 'N/A')}
+
+### 现金流指标
+- **经营现金流量净额**: {financial_estimates.get('operating_cash_flow', 'N/A')}
+- **每股自由现金流**: {financial_estimates.get('free_cash_flow_per_share', 'N/A')}
+
+## 📈 行业分析
+{industry_info.get('analysis', '暂无行业分析')}
+
+## 🎯 投资价值评估
+### 估值水平分析
+{valuation_analysis}
+
+### 成长性分析
+{growth_analysis}
+
+## 💡 投资建议
+- **基本面评分**: {financial_estimates.get('fundamental_score', 'N/A')}/10
+- **估值吸引力**: {financial_estimates.get('valuation_score', 'N/A')}/10
+- **成长潜力**: {financial_estimates.get('growth_score', 'N/A')}/10
+- **风险等级**: {financial_estimates.get('risk_level', 'N/A')}
+
+{investment_advice}
+
+---
+**重要声明**: 本报告基于公开数据和模型估算生成，仅供参考，不构成投资建议。
+**数据来源**: {data_source if data_source else "多源数据"}数据接口
+**生成时间**: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        else:  # detailed, comprehensive
+            # 详细/全面模式：包含最完整的分析
+            report = f"""# 中国A股基本面分析报告 - {symbol} (全面版)
+
+## 📊 股票基本信息
+- **股票代码**: {symbol}
+- **股票名称**: {company_name}
+- **所属行业**: {industry_info.get('industry', '未知')}
+- **市场板块**: {industry_info.get('market', 'A股')}
+- **当前股价**: {current_price}
+- **涨跌幅**: {change_pct}
+- **成交量**: {volume}
+- **分析日期**: {datetime.now(ZoneInfo(get_timezone_name())).strftime('%Y年%m月%d日')}{data_source_note}
+
+## 💰 财务数据分析
+
+### 估值指标
+- **总市值**: {financial_estimates.get('total_mv', 'N/A')}
+- **市盈率(PE)**: {financial_estimates.get('pe', 'N/A')}
+- **市盈率TTM(PE_TTM)**: {financial_estimates.get('pe_ttm', 'N/A')}
+- **市净率(PB)**: {financial_estimates.get('pb', 'N/A')}
+- **市销率(PS)**: {financial_estimates.get('ps', 'N/A')}
+- **股息收益率**: {financial_estimates.get('dividend_yield', 'N/A')}
+
+### 盈利能力指标
+- **净资产收益率(ROE)**: {financial_estimates.get('roe', 'N/A')}
+- **总资产收益率(ROA)**: {financial_estimates.get('roa', 'N/A')}
+- **毛利率**: {financial_estimates.get('gross_margin', 'N/A')}
+- **净利率**: {financial_estimates.get('net_margin', 'N/A')}
+- **营收增长率**: {financial_estimates.get('revenue_growth', 'N/A')}
+- **每股收益(EPS)**: {financial_estimates.get('eps', 'N/A')}
+- **每股净资产**: {financial_estimates.get('book_value_per_share', 'N/A')}
+- **营业收入**: {financial_estimates.get('revenue', 'N/A')}
+- **净利润**: {financial_estimates.get('net_profit', 'N/A')}
+
+### 财务健康度
+- **资产负债率**: {financial_estimates.get('debt_ratio', 'N/A')}
+- **流动比率**: {financial_estimates.get('current_ratio', 'N/A')}
+- **速动比率**: {financial_estimates.get('quick_ratio', 'N/A')}
+- **现金比率**: {financial_estimates.get('cash_ratio', 'N/A')}
 - **总资产**: {financial_estimates.get('total_assets', 'N/A')}
 - **总负债**: {financial_estimates.get('total_liabilities', 'N/A')}
 - **流动资产**: {financial_estimates.get('current_assets', 'N/A')}
@@ -642,34 +694,34 @@ class OptimizedChinaDataProvider:
 ## 📈 行业分析
 
 ### 行业地位
-{industry_info['analysis']}
+{industry_info.get('analysis', '暂无行业分析')}
 
 ### 竞争优势
-- **市场份额**: {industry_info['market_share']}
-- **品牌价值**: {industry_info['brand_value']}
-- **技术优势**: {industry_info['tech_advantage']}
+- **市场份额**: {industry_info.get('market_share', 'N/A')}
+- **品牌价值**: {industry_info.get('brand_value', 'N/A')}
+- **技术优势**: {industry_info.get('tech_advantage', 'N/A')}
 
 ## 🎯 投资价值评估
 
 ### 估值水平分析
-{self._analyze_valuation(financial_estimates)}
+{valuation_analysis}
 
 ### 成长性分析
-{self._analyze_growth_potential(symbol, industry_info)}
+{growth_analysis}
 
 ### 风险评估
-{self._analyze_risks(symbol, financial_estimates, industry_info)}
+{risk_analysis}
 
 ## 💡 投资建议
 
 ### 综合评分
-- **基本面评分**: {financial_estimates['fundamental_score']}/10
-- **估值吸引力**: {financial_estimates['valuation_score']}/10
-- **成长潜力**: {financial_estimates['growth_score']}/10
-- **风险等级**: {financial_estimates['risk_level']}
+- **基本面评分**: {financial_estimates.get('fundamental_score', 'N/A')}/10
+- **估值吸引力**: {financial_estimates.get('valuation_score', 'N/A')}/10
+- **成长潜力**: {financial_estimates.get('growth_score', 'N/A')}/10
+- **风险等级**: {financial_estimates.get('risk_level', 'N/A')}
 
 ### 操作建议
-{self._generate_investment_advice(financial_estimates, industry_info)}
+{investment_advice}
 
 ### 绝对估值
 - **DCF估值**：基于现金流贴现的内在价值
@@ -1149,6 +1201,12 @@ class OptimizedChinaDataProvider:
 
     def _parse_mongodb_financial_data(self, financial_data: dict, price_value: float) -> dict:
         """解析 MongoDB 标准化的财务数据为指标"""
+        if financial_data is None:
+            logger.warning("⚠️ MongoDB财务数据为None，无法解析")
+            return None
+        if not isinstance(financial_data, dict):
+            logger.warning(f"⚠️ MongoDB财务数据类型错误: {type(financial_data)}，期望dict")
+            return None
         try:
             logger.debug(f"📊 [财务数据] 开始解析 MongoDB 财务数据，包含字段: {list(financial_data.keys())}")
 
@@ -1653,6 +1711,13 @@ class OptimizedChinaDataProvider:
     def _parse_akshare_financial_data(self, financial_data: dict, stock_info: dict, price_value: float) -> dict:
         """解析AKShare财务数据为指标"""
         metrics = {}
+
+        if financial_data is None:
+            logger.warning("⚠️ AKShare财务数据为None，无法解析")
+            return None
+        if not isinstance(financial_data, dict):
+            logger.warning(f"⚠️ AKShare财务数据类型错误: {type(financial_data)}，期望dict")
+            return None
 
         try:
             balance_sheet = financial_data.get('balance_sheet', [])
@@ -2278,6 +2343,12 @@ class OptimizedChinaDataProvider:
 
     def _parse_financial_data(self, financial_data: dict, stock_info: dict, price_value: float) -> dict:
         """解析财务数据为指标"""
+        if financial_data is None:
+            logger.warning("⚠️ 财务数据为None，无法解析")
+            return None
+        if not isinstance(financial_data, dict):
+            logger.warning(f"⚠️ 财务数据类型错误: {type(financial_data)}，期望dict")
+            return None
         try:
             # 获取最新的财务数据
             balance_sheet = financial_data.get('balance_sheet', [])
@@ -2526,6 +2597,12 @@ class OptimizedChinaDataProvider:
 
     def _parse_eastmoney_direct_financial_data(self, financial_data: dict, quote_data: dict, price_value: float) -> dict:
         """解析东方财富直接API财务数据为指标"""
+        if financial_data is None:
+            logger.warning("⚠️ 东方财富直接API财务数据为None，无法解析")
+            return None
+        if not isinstance(financial_data, dict):
+            logger.warning(f"⚠️ 东方财富直接API财务数据类型错误: {type(financial_data)}，期望dict")
+            return None
         try:
             latest = financial_data.get('latest', {})
             if not latest:
@@ -2777,6 +2854,12 @@ class OptimizedChinaDataProvider:
 
     def _parse_baostock_financial_data(self, financial_data: dict, stock_info: dict, price_value: float) -> dict:
         """解析BaoStock财务数据为指标"""
+        if financial_data is None:
+            logger.warning("⚠️ BaoStock财务数据为None，无法解析")
+            return None
+        if not isinstance(financial_data, dict):
+            logger.warning(f"⚠️ BaoStock财务数据类型错误: {type(financial_data)}，期望dict")
+            return None
         try:
             profit_data = financial_data.get('profit_data', {})
             operation_data = financial_data.get('operation_data', {})

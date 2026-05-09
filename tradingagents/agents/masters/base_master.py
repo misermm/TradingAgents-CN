@@ -578,13 +578,44 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
             if quant_result:
                 quant_context = quant_result.get("formatted_summary", "")
             if current_data_quality["is_applicable"] and not current_data_quality["is_sufficient"]:
-                report = _build_data_insufficient_report(
-                    master_id=master_id,
-                    company_name=company_name,
-                    ticker=ticker,
-                    current_date=current_date,
-                    data_quality=current_data_quality,
-                )
+                completeness = current_data_quality.get("completeness", 0.0)
+                if completeness > 0 and raw_data_str and len(raw_data_str) > 50:
+                    warning_header = _build_data_insufficient_report(
+                        master_id=master_id,
+                        company_name=company_name,
+                        ticker=ticker,
+                        current_date=current_date,
+                        data_quality=current_data_quality,
+                    )
+                    try:
+                        report = _generate_report_from_prefetched(
+                            llm,
+                            name_cn,
+                            name_en,
+                            company_name,
+                            ticker,
+                            current_date,
+                            philosophy,
+                            framework,
+                            output_format,
+                            raw_data_str,
+                            quant_context,
+                            currency_info,
+                            market_info,
+                            consistency_warnings=consistency_warnings,
+                        )
+                        report = f"{warning_header}\n\n---\n\n⚠️ 以下为基于部分可用数据的有限分析，请谨慎参考：\n\n{report}"
+                    except Exception as e:
+                        logger.error(f"{log_tag} 数据不足时生成有限报告失败: {type(e).__name__}: {str(e)[:200]}")
+                        report = warning_header
+                else:
+                    report = _build_data_insufficient_report(
+                        master_id=master_id,
+                        company_name=company_name,
+                        ticker=ticker,
+                        current_date=current_date,
+                        data_quality=current_data_quality,
+                    )
                 return {
                     "master_reports": {master_id: report},
                     "master_tool_call_counts": {master_id: tool_call_count + 1},

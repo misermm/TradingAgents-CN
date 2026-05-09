@@ -3,6 +3,7 @@ OpenAI兼容适配器基类
 为所有支持OpenAI接口的LLM提供商提供统一的基础实现
 """
 
+import copy
 import os
 import time
 from typing import Any, Dict, List, Optional, Union
@@ -18,6 +19,20 @@ from tradingagents.utils.logging_init import setup_llm_logging
 from tradingagents.utils.logging_manager import get_logger, get_logger_manager
 logger = get_logger('agents')
 logger = setup_llm_logging()
+
+_PROVIDER_KEY_FORMATS = {
+    "deepseek": "sk-xxx (以sk-开头)",
+    "dashscope": "sk-xxx (阿里百炼DashScope API Key)",
+    "qianfan": "bce-v3/ALTAK-xxx/xxx (百度千帆V3格式)",
+    "zhipu": "xxx.yyy (智谱AI API Key，格式: id.secret)",
+    "openai": "sk-xxx (以sk-开头，通常48位以上)",
+    "google": "AIzaSyxxx (Google AI API Key，以AIzaSy开头)",
+    "custom_openai": "根据自定义端点要求提供",
+}
+
+
+def _get_api_key_format_hint(provider: str) -> str:
+    return _PROVIDER_KEY_FORMATS.get(provider.lower(), "有效的API Key字符串")
 
 # 导入token跟踪器
 try:
@@ -96,10 +111,10 @@ class OpenAICompatibleBase(ChatOpenAI):
                 logger.info(f"✅ [{provider_name}初始化] 环境变量中的 API Key 有效，长度: {len(env_api_key)}, 前10位: {env_api_key[:10]}...")
                 api_key = env_api_key
             elif env_api_key:
-                logger.warning(f"⚠️ [{provider_name}初始化] 环境变量中的 API Key 无效（可能是占位符），将被忽略")
+                logger.warning(f"⚠️ [{provider_name}初始化] 环境变量中的 API Key 无效（可能是占位符），将被忽略。期望格式: {_get_api_key_format_hint(provider_name)}")
                 api_key = None
             else:
-                logger.warning(f"⚠️ [{provider_name}初始化] {api_key_env_var} 环境变量为空")
+                logger.warning(f"⚠️ [{provider_name}初始化] {api_key_env_var} 环境变量为空。期望格式: {_get_api_key_format_hint(provider_name)}")
                 api_key = None
 
             if not api_key:
@@ -110,7 +125,8 @@ class OpenAICompatibleBase(ChatOpenAI):
                 else:
                     logger.error(f"❌ [{provider_name}初始化] API Key 检查失败，即将抛出异常")
                     raise ValueError(
-                        f"{provider_name} API密钥未找到。"
+                        f"[{provider_name}] API密钥未找到或无效。"
+                        f"期望格式: {_get_api_key_format_hint(provider_name)}。"
                         f"请在 Web 界面配置 API Key (设置 -> 大模型厂家) 或设置 {api_key_env_var} 环境变量。"
                     )
         else:
@@ -224,8 +240,23 @@ class ChatDeepSeekOpenAI(OpenAICompatibleBase):
     def _estimate_input_tokens(self, messages: List[BaseMessage]) -> int:
         total_chars = 0
         for msg in messages:
-            if hasattr(msg, 'content'):
+            if hasattr(msg, 'content') and msg.content:
                 total_chars += len(str(msg.content))
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    if isinstance(tc, dict):
+                        total_chars += len(str(tc.get('args', '')))
+                        total_chars += len(str(tc.get('name', '')))
+                    else:
+                        total_chars += len(str(getattr(tc, 'args', '')))
+                        total_chars += len(str(getattr(tc, 'name', '')))
+            if hasattr(msg, 'function_call') and msg.function_call:
+                if isinstance(msg.function_call, dict):
+                    total_chars += len(str(msg.function_call.get('arguments', '')))
+                    total_chars += len(str(msg.function_call.get('name', '')))
+                else:
+                    total_chars += len(str(getattr(msg.function_call, 'arguments', '')))
+                    total_chars += len(str(getattr(msg.function_call, 'name', '')))
         return max(1, total_chars // 2)
 
     def _estimate_output_tokens(self, result: ChatResult) -> int:
@@ -233,8 +264,16 @@ class ChatDeepSeekOpenAI(OpenAICompatibleBase):
             return 1
         total_chars = 0
         for generation in result.generations:
-            if hasattr(generation, 'message') and hasattr(generation.message, 'content'):
+            if hasattr(generation, 'message') and hasattr(generation.message, 'content') and generation.message.content:
                 total_chars += len(str(generation.message.content))
+            if hasattr(generation, 'message') and hasattr(generation.message, 'tool_calls') and generation.message.tool_calls:
+                for tc in generation.message.tool_calls:
+                    if isinstance(tc, dict):
+                        total_chars += len(str(tc.get('args', '')))
+                        total_chars += len(str(tc.get('name', '')))
+                    else:
+                        total_chars += len(str(getattr(tc, 'args', '')))
+                        total_chars += len(str(getattr(tc, 'name', '')))
         return max(1, total_chars // 2)
 
     def _generate(
@@ -373,29 +412,26 @@ class ChatQianfanOpenAI(OpenAICompatibleBase):
     
     def _truncate_messages(self, messages: List[BaseMessage], max_tokens: int = 4500) -> List[BaseMessage]:
         """截断消息以适应千帆模型的token限制"""
-        # 为千帆模型预留一些token空间，使用4500而不是5120
         truncated_messages = []
         total_tokens = 0
         
-        # 从最后一条消息开始，向前保留消息
         for message in reversed(messages):
             content = str(message.content) if hasattr(message, 'content') else str(message)
             message_tokens = self._estimate_tokens(content)
             
             if total_tokens + message_tokens <= max_tokens:
-                truncated_messages.insert(0, message)
+                truncated_messages.insert(0, copy.deepcopy(message))
                 total_tokens += message_tokens
             else:
-                # 如果是第一条消息且超长，进行内容截断
                 if not truncated_messages:
-                    remaining_tokens = max_tokens - 100  # 预留100个token
-                    max_chars = remaining_tokens * 2  # 2字符/token
+                    remaining_tokens = max_tokens - 100
+                    max_chars = remaining_tokens * 2
                     truncated_content = content[:max_chars] + "...(内容已截断)"
                     
-                    # 创建截断后的消息
-                    if hasattr(message, 'content'):
-                        message.content = truncated_content
-                    truncated_messages.insert(0, message)
+                    msg_copy = copy.deepcopy(message)
+                    if hasattr(msg_copy, 'content'):
+                        msg_copy.content = truncated_content
+                    truncated_messages.insert(0, msg_copy)
                 break
         
         if len(truncated_messages) < len(messages):

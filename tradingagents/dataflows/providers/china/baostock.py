@@ -550,6 +550,12 @@ class BaoStockProvider(BaseStockDataProvider):
             latest_row = data_list[-1]
             row_dict = dict(zip(fields, latest_row)) if fields else {}
 
+            numeric_fields = ["close", "peTTM", "pbMRQ", "psTTM", "pcfNcfTTM"]
+            for field in numeric_fields:
+                val = row_dict.get(field)
+                if val is not None and not isinstance(val, (int, float)):
+                    row_dict[field] = self._safe_float(val)
+
             # 解析数据（fields: date, code, close, peTTM, pbMRQ, psTTM, pcfNcfTTM）
             valuation_data = {
                 "date": row_dict.get("date"),
@@ -788,17 +794,24 @@ class BaoStockProvider(BaseStockDataProvider):
     
     def _safe_float(self, value: Any) -> Optional[float]:
         try:
-            if value is None or value == '' or value == 'None':
+            if value is None or (isinstance(value, float) and value != value):
                 return None
+            if isinstance(value, str):
+                value = value.strip()
+                if value in ('--', '-', 'N/A', 'null', 'None', 'NaN', ''):
+                    return None
             return float(value)
         except (ValueError, TypeError):
             return None
     
     def _safe_int(self, value: Any) -> int:
-        """安全转换为整数"""
         try:
-            if value is None or value == '' or value == 'None':
+            if value is None or (isinstance(value, float) and value != value):
                 return 0
+            if isinstance(value, str):
+                value = value.strip()
+                if value in ('--', '-', 'N/A', 'null', 'None', 'NaN', ''):
+                    return 0
             return int(float(value))
         except (ValueError, TypeError):
             return 0

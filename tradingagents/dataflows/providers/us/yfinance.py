@@ -188,8 +188,7 @@ def get_stock_data_with_indicators(
         # 获取历史数据
         data = ticker.history(start=start_date, end=end_date)
 
-        # 检查数据是否为空
-        if data.empty:
+        if data is None or data.empty:
             return f"No data found for symbol '{symbol}' between {start_date} and {end_date}"
 
         # 移除时区信息
@@ -329,7 +328,7 @@ def get_technical_indicator(
         ticker = yf.Ticker(symbol.upper())
         data = ticker.history(start=start_date, end=curr_date)
 
-        if data.empty:
+        if data is None or data.empty:
             return f"❌ 未找到 {symbol} 的数据"
 
         # 重置索引，将日期作为列

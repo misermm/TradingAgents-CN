@@ -1,3 +1,4 @@
+import re
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.agents.masters.base_master import MASTER_ANALYST_CONFIG, QUANTITATIVE_ANALYZERS, _init_quantitative_analyzers
 from tradingagents.agents.masters import MASTER_ANALYST_INFO
@@ -117,6 +118,10 @@ def create_master_consensus(llm=None):
                 try:
                     raw_data = prefetched_data if prefetched_data else reports_data.get(master_id, {}).get("report", "")
                     result = quant_func(raw_data)
+                    if not isinstance(result, dict):
+                        logger.warning(f"[MasterConsensus] Quant analysis for {master_id} returned non-dict: {type(result).__name__}")
+                        quant_signals[master_id] = {"signal": "neutral", "score": 0, "max_score": 1, "quality_guard": {}}
+                        continue
                     quant_signals[master_id] = {
                         "signal": result.get("signal", "neutral"),
                         "score": result.get("score", 0),
@@ -124,7 +129,7 @@ def create_master_consensus(llm=None):
                         "quality_guard": result.get("quality_guard", {}),
                     }
                 except Exception as e:
-                    logger.debug(f"[MasterConsensus] Quant analysis failed for {master_id}: {e}")
+                    logger.warning(f"[MasterConsensus] Quant analysis failed for {master_id}: {type(e).__name__}: {e}")
                     quant_signals[master_id] = {"signal": "neutral", "score": 0, "max_score": 1, "quality_guard": {}}
 
         bullish_count = sum(1 for s in quant_signals.values() if s["signal"] == "bullish")
@@ -154,7 +159,8 @@ def create_master_consensus(llm=None):
 
         if llm is not None:
             try:
-                prompt = MASTER_CONSENSUS_PROMPT.replace("{master_reports_section}", master_reports_section).replace("{bullish_count}", str(bullish_count)).replace("{neutral_count}", str(neutral_count)).replace("{bearish_count}", str(bearish_count)).replace("{avg_score}", f"{avg_score:.1f}").replace("{avg_max}", f"{avg_max:.1f}")
+                prompt = MASTER_CONSENSUS_PROMPT.replace("{master_reports_section}", master_reports_section).replace("{bullish_count}", str(bullish_count)).replace("{neutral_count}", str(neutral_count)).replace("{bearish_count}", str(bearish_count)).replace("{avg_score:.1f}", f"{avg_score:.1f}").replace("{avg_max:.1f}", f"{avg_max:.1f}")
+                prompt = re.sub(r'\{[^{}]+\}', 'N/A', prompt)
                 from langchain_core.messages import HumanMessage
                 result = llm.invoke([HumanMessage(content=prompt)])
                 consensus_report = result.content if hasattr(result, 'content') else str(result)
@@ -205,8 +211,8 @@ def _generate_statistical_consensus(master_reports, quant_signals, bullish_count
     report_summaries = []
     for master_id, data in master_reports.items():
         report = data["report"]
-        if len(report) > 500:
-            report = report[:500] + "..."
+        if len(report) > 2000:
+            report = report[:2000] + "...[truncated]"
         quant_str = ""
         if master_id in quant_signals:
             qs = quant_signals[master_id]

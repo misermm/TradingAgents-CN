@@ -102,13 +102,18 @@ class DataCompletenessChecker:
                 latest_trade_dt = datetime.strptime(latest_trade_date, '%Y-%m-%d')
                 details["has_latest_trade_date"] = data_end_date.date() >= latest_trade_dt.date()
             
-            # 6. 计算预期交易日数量（粗略估算）
+            # 6. 计算预期交易日数量（按市场类型精确估算）
             start_dt = datetime.strptime(start_date, '%Y-%m-%d')
             end_dt = datetime.strptime(end_date, '%Y-%m-%d')
             total_days = (end_dt - start_dt).days + 1
             
-            # 假设交易日约占总天数的 70%（考虑周末和节假日）
-            expected_trade_days = int(total_days * 0.7)
+            trading_days_per_year = {
+                "CN": 242,
+                "US": 252,
+                "HK": 245,
+            }
+            annual_trading_days = trading_days_per_year.get(market.upper(), 242)
+            expected_trade_days = int(total_days * annual_trading_days / 365)
             details["expected_rows"] = expected_trade_days
             
             # 7. 计算完整性比率

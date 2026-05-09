@@ -204,7 +204,12 @@ class ChatGoogleOpenAI(ChatGoogleGenerativeAI):
     def _optimize_message_content(self, message: BaseMessage):
         """优化消息内容格式，确保包含新闻特征关键词"""
         
-        if not isinstance(message, AIMessage) or not message.content:
+        if not isinstance(message, AIMessage):
+            return
+        
+        if not message.content:
+            if hasattr(message, 'tool_calls') and message.tool_calls:
+                message.content = "[Tool call response]"
             return
         
         content = message.content

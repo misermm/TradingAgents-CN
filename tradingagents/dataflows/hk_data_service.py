@@ -75,8 +75,9 @@ def get_hk_stock_data_unified(symbol: str, start_date: str = None, end_date: str
         for source in enabled_sources:
             if source == 'akshare' and AKSHARE_HK_AVAILABLE:
                 try:
-                    logger.info(f"🔄 使用AKShare获取港股数据: {symbol}")
-                    result = get_hk_stock_data_akshare(symbol, start_date, end_date)
+                    ak_symbol = _normalize_hk_symbol_for_akshare(symbol)
+                    logger.info(f"🔄 使用AKShare获取港股数据: {ak_symbol}")
+                    result = get_hk_stock_data_akshare(ak_symbol, start_date, end_date)
                     if result and "❌" not in result:
                         logger.info(f"✅ AKShare港股数据获取成功: {symbol}")
                         return result
@@ -127,10 +128,22 @@ def get_hk_stock_data_unified(symbol: str, start_date: str = None, end_date: str
 
 
 def _normalize_hk_symbol_for_yfinance(symbol: str) -> str:
+    if not symbol or not str(symbol).strip():
+        return symbol
     clean = str(symbol).strip().upper().replace('.HK', '').replace('.hk', '')
     if clean.isdigit():
         clean_code = clean.lstrip('0') or '0'
         return f"{clean_code.zfill(4)}.HK"
+    return symbol
+
+
+def _normalize_hk_symbol_for_akshare(symbol: str) -> str:
+    if not symbol or not str(symbol).strip():
+        return symbol
+    clean = str(symbol).strip().upper().replace('.HK', '').replace('.hk', '')
+    if clean.isdigit():
+        clean_code = clean.lstrip('0') or '0'
+        return clean_code.zfill(5)
     return symbol
 
 
@@ -141,8 +154,9 @@ def get_hk_stock_info_unified(symbol: str) -> Dict:
         for source in enabled_sources:
             if source == 'akshare' and AKSHARE_HK_AVAILABLE:
                 try:
-                    logger.info(f"🔄 使用AKShare获取港股信息: {symbol}")
-                    result = get_hk_stock_info_akshare(symbol)
+                    ak_symbol = _normalize_hk_symbol_for_akshare(symbol)
+                    logger.info(f"🔄 使用AKShare获取港股信息: {ak_symbol}")
+                    result = get_hk_stock_info_akshare(ak_symbol)
                     if result and 'error' not in result and not result.get('name', '').startswith('港股'):
                         logger.info(f"✅ AKShare成功获取港股信息: {symbol} -> {result.get('name', 'N/A')}")
                         return result

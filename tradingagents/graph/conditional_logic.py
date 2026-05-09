@@ -184,7 +184,7 @@ class ConditionalLogic:
 
         logger.info(f"🔍 [投资辩论控制] 当前发言次数: {current_count}, 最大次数: {max_count}")
 
-        if current_count >= max_count:
+        if current_count > max_count:
             return "Research Manager"
 
         next_speaker = "Bear Researcher" if current_speaker.startswith("Bull") else "Bull Researcher"

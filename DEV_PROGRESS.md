@@ -1,13 +1,284 @@
 # 开发进度文档
-**更新时间**: 2026-05-09 (第六轮 - 续)
+**更新时间**: 2026-05-09 (第二十轮 - Ralph Loop 全链路Bug修复续)
 **当前项目目标**: 全链路数据准确性修复 + A股/港股/美股分析逻辑Bug修复
 
 ---
 
 ## 当前状态概要
 
-**最近完成的改动**: 第六轮 Ralph Loop - 共22个Bug修复（新闻时间/缓存/评分/数据合并/百分比转换/单位统一/代码格式）
-**下一步从哪接着做**: 继续深度搜索数据提供层API对接准确性 + LLM适配层响应解析
+**最近完成的改动**: 第二十轮 Ralph Loop - 共修复19个Bug（LLM适配层5个+新闻层5个+图执行4个+风险管理4个+东方财富3个+美股数据5个+股票工具3个+Tushare TTM 3个）
+**下一步从哪接着做**: 继续深度搜索端到端分析测试 + 更多数据层边界条件
+
+### 本轮修复汇总 (2026-05-09 第二十轮 — Ralph Loop 全链路Bug修复续)
+
+通过10轮迭代对LLM适配层、新闻层、图执行层、风险管理层、美股数据层、股票工具层、Tushare TTM计算进行深度审查和修复：
+
+#### 🔴 严重Bug修复 (8个)
+
+| # | 文件 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 1 | `validators.py` L13-22 | `validate_model`逻辑错误：未知provider返回True，无实际验证作用 | 未知provider记录警告返回True，已知provider但未知model返回False | 所有模型绕过验证 |
+| 2 | `openai_compatible_base.py` L374-404 | `_truncate_messages`未深拷贝，截断操作污染原始消息 | 添加`copy.deepcopy`创建副本再截断 | 后续调用消息被截断 |
+| 3 | `stock_utils.py` L40-65 | 港股5位代码(00700)被`^(00\|30\|60\|68)`误判为A股 | 重排检测优先级：港股优先(.HK后缀→5位→6位A股→4位港股) | 港股数据源选择错误 |
+| 4 | `conditional_logic.py` L187 | `>=`导致辩论最后一轮刚发言就被终止 | 改为`>`确保最后一轮辩论完整 | 辩论不充分影响分析质量 |
+| 5 | `master_consensus.py` L162-163 | 模板占位符`{avg_score:.1f}`与`.replace('{avg_score}')`不匹配 | 修正replace匹配+添加re.sub清理残留占位符 | LLM收到未解析模板 |
+| 6 | `tushare.py` L1476-1576 | TTM计算去年数据缺失时直接返回None | 三级降级：年报→季度年化→返回None | PE等估值指标无法计算 |
+| 7 | `tushare.py` L1593-1618 | `_safe_float`删除'万'/'亿'而非换算，"1.5亿"→1.5(应为1.5亿) | 检测后缀→提取乘数→转浮点→乘以倍数 | 财务数值缩小数万倍 |
+| 8 | `trading_graph.py` L740-750 | 进度追踪器缓存未清理，并发场景下后续任务读取错误task_id | try/finally确保`_current_task_id=None` | 并发分析状态混乱 |
+
+#### 🟡 中等Bug修复 (7个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 9 | `openai_compatible_base.py` L224-239 | Token估算遗漏tool_calls/function_call参数 | 遍历tool_calls和function_call计算字符数 |
+| 10 | `google_openai_adapter.py` L204-221 | AI消息content为空但有tool_calls时下游异常 | 设置占位内容"[Tool call response]" |
+| 11 | `openai_compatible_base.py` L94-103 | API Key验证错误信息缺少provider和格式提示 | 新增`_PROVIDER_KEY_FORMATS`和`_get_api_key_format_hint` |
+| 12 | `optimized.py` L153-154 | Finnhub `stock_candles`返回`s:"no_data"`未检查 | 添加`s`字段检查，非ok返回None |
+| 13 | `data_prefetch.py` L45-58 | 扩展日期范围后未重新验证数据质量 | 重试数据质量≥原始才替换，否则保留原始 |
+| 14 | `fundamentals_analyst.py` L514-522 | 工具调用达上限时跳过数据获取 | 从消息历史提取已有ToolMessage生成部分分析 |
+| 15 | `news_analyst.py` L353-405 | 工具调用失败时无回退路径 | 从state获取prefetched数据生成有限分析 |
+
+#### 🟢 改进 (4个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 16 | `signal_processing.py` L8-35 | 目标价格正则冗余+0值误当有效 | 合并为模块级常量，0值视为无效返回None |
+| 17 | `master_consensus.py` L300-320 | 报告截断限制500字符丢失关键信息 | 截断限制500→2000字符 |
+| 18 | `alpha_vantage_fundamentals.py` L140-145 | Dividend Per Share未格式化 | 添加decimals=4参数 |
+| 19 | `alpha_vantage_fundamentals.py` L180 | 异常上下文缺失 | 错误信息加入type(e).__name__ |
+
+#### 🔧 风险管理/社交/东方财富/数据层修复 (8个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 20 | `aggresive_debator.py` L10-12 | risk_debate_state为None时KeyError | `state.get("risk_debate_state") or {}` |
+| 21 | `conservative_debator.py` L11-17 | 同上 | 同上 |
+| 22 | `neutral_debator.py` L10-16 | 同上 | 同上 |
+| 23 | `social_media_analyst.py` L194-207 | 错误路径缺少sentiment_report+计数器不一致 | 添加报告字段+统一计数器递增 |
+| 24 | `eastmoney_direct.py` L138-172 | `_get_secid`格式校验过松+无效代码默认沪市 | 3位前缀精确匹配+6位长度验证+B股支持 |
+| 25 | `optimized_china_data.py` L1-20 | 8个入口函数缺少None/类型检查 | 添加输入验证和默认返回 |
+| 26 | `optimized_china_data.py` L350-360 | merge_stocks_data缺少错误处理 | try/except+financial_estimates用.get() |
+| 27 | `tushare.py` L1578-1590 | `_determine_report_type`只区分年报和其他 | 细分为q1/semi_annual/q3/annual四类 |
+
+**验证结果**:
+- ✅ **76/76 单元测试全部通过**（0失败）
+- ✅ 所有核心模块导入正常
+- ✅ 修复覆盖LLM适配层、新闻层、图执行层、风险管理层、美股数据层、股票工具层、Tushare TTM计算
+
+### 本轮修复汇总 (2026-05-09 第十九轮 — Trading Graph执行与数据服务Bug修复)
+
+修复4个影响股票分析准确性的Bug，涉及图执行状态管理和数据服务降级机制：
+
+| # | 文件 | 位置 | 问题 | 修复方案 | 影响 |
+|---|------|------|------|---------|------|
+| 1 | `trading_graph.py` L740-753 | `propagate` | `_current_task_id` 设置后无论分析成功或失败均未清理，导致后续任务可能读取到错误的task_id | 将分析逻辑提取到 `_propagate_inner`，用 `try/finally` 包裹确保 `_current_task_id = None` 始终执行 | 并发任务间task_id串扰，性能数据记录到错误任务 |
+| 2 | `trading_graph.py` L955-968 | `propagate` | 仅检查 `final_state is None`，空字典 `{}` 未处理，导致下游访问缺失字段时KeyError | 扩展检查为 `final_state is None or not final_state`，空字典时也生成包含 `error_report` 的兜底状态 | 图执行返回空状态时下游崩溃 |
+| 3 | `trading_graph.py` L1004-1022 | `_safe_stream` | 异常时yield的 `_error_fallback` 键以 `_` 开头，被流循环跳过；缺少 `final_trade_decision` 字段 | 改键名为 `error_handler`（不以 `_` 开头），增加 `final_trade_decision` 和详细错误信息 | 流异常时状态不更新，程序挂起或显示错误状态 |
+| 4 | `stock_data_service.py` L216-238 | `_get_fallback_data` | 无stock_code时只返回error/suggestion，缺少可用数据结构；有stock_code时category硬编码为"未知" | 无stock_code时返回含 `stocks`/`total`/`source`/`warning` 的完整结构；有stock_code时用 `_get_stock_category()` 替代硬编码，增加 `warning` 字段 | 降级数据不可用，调用方无法区分数据质量 |
+
+**验证结果**:
+- ✅ 两个文件语法编译通过
+- ✅ 修改仅涉及指定2个文件，未创建新文件
+
+**关键文件入口**:
+- Trading Graph: `tradingagents/graph/trading_graph.py`
+- 股票数据服务: `tradingagents/dataflows/stock_data_service.py`
+
+### 本轮修复汇总 (2026-05-09 第十五轮 — 风险管理辩论器与社交媒体分析师Bug修复)
+
+修复4个影响股票分析准确性的Bug，涉及风险管理辩论状态初始化和社交媒体分析师错误处理：
+
+| # | 文件 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 1 | `aggresive_debator.py` L11/L64-65 | `state["risk_debate_state"]`可能为None导致KeyError/AttributeError；`risk_debate_state["count"]`无默认值 | 改为`state.get("risk_debate_state") or {}`防御性初始化；`count`改用`.get("count", 0)` | 辩论状态为空时崩溃；计数器KeyError |
+| 2 | `conservative_debator.py` L12/L64-65 | 同上，`risk_debate_state`可能为None | 同上，防御性初始化 + `.get("count", 0)` | 同上 |
+| 3 | `neutral_debator.py` L11/L68-69 | 同上，`risk_debate_state`可能为None | 同上，防御性初始化 + `.get("count", 0)` | 同上 |
+| 4 | `social_media_analyst.py` L206/L209-282 | 错误路径`sentiment_tool_call_count`未递增（与正常路径不一致）；Google模型路径无异常保护，异常时`report`未定义导致崩溃 | 错误路径计数器改为`tool_call_count + 1`；外层添加try/except保护所有报告生成路径，确保`sentiment_report`始终存在 | 计数器不一致导致死循环防护失效；Google模型异常时整个分析节点崩溃 |
+
+**验证结果**:
+- ✅ 4个文件语法编译全部通过
+- ✅ 修改仅涉及指定4个文件，未创建新文件
+
+**关键文件入口**:
+- 激进辩论器: `tradingagents/agents/risk_mgmt/aggresive_debator.py`
+- 保守辩论器: `tradingagents/agents/risk_mgmt/conservative_debator.py`
+- 中性辩论器: `tradingagents/agents/risk_mgmt/neutral_debator.py`
+- 社交媒体分析师: `tradingagents/agents/analysts/social_media_analyst.py`
+
+### 本轮修复汇总 (2026-05-09 第十三轮 — Ralph Loop 全链路Bug修复续)
+
+通过4个并行探索Agent对港股层、美股层、缓存层、质量引擎、A股路由、Agent状态链、技术指标、数据帧标准化进行深度审查，修复了以下Bug：
+
+#### 🔴 严重Bug修复 (10个)
+
+| # | 文件 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 1 | `hk_data_service.py` L129-147 | 港股代码标准化不一致：AKShare需5位(00700)，yfinance需4位+.HK(0700.HK)，调用AKShare前未归一化 | 新增`_normalize_hk_symbol_for_akshare`函数，调用前归一化 | AKShare港股API调用失败 |
+| 2 | `hk_stock.py` L275-280 | RSI使用SMA计算，与improved_hk.py的EMA不一致，且loss=0时RSI=NaN | 改为EMA方法，添加loss=0/gain=0分支处理 | 港股RSI指标不一致/NaN |
+| 3 | `improved_hk.py` L568/571/587/588/603/605 | Python truthiness bug：`if eps_ttm and eps_ttm > 0`当eps_ttm=0时误判为None | 改为`if eps_ttm is not None and eps_ttm > 0` | 港股PE/PB/营收/净利润为0时显示N/A |
+| 4 | `yfinance.py` L192/332 | `ticker.history()`可能返回None，`data.empty`对None抛AttributeError | 改为`data is None or data.empty` | 美股数据获取崩溃 |
+| 5 | `optimized.py` L443 | 同上，yfinance数据None未处理 | 同上 | 美股数据获取崩溃 |
+| 6 | `adaptive.py` L352-362 | 缓存过期只检查file后端，Redis/MongoDB缓存可能使用过期数据 | 移除`backend=='file'`条件，统一检查所有后端 | 过期缓存数据被使用 |
+| 7 | `data_quality_engine.py` L107-114 | 质量评分只检查`is not None`，"N/A"/"--"/""等无效值仍计为"存在" | 新增`_is_valid_value`方法，统一过滤无效值 | 数据质量评分虚高 |
+| 8 | `agent_states.py` L25-33 | `investment_debate_state`/`risk_debate_state`无reducer，LangGraph整体替换导致字段丢失 | 新增`merge_debate_state` reducer，合并新旧状态 | 辩论状态字段丢失 |
+| 9 | `indicators.py` L119-121 | RSI计算avg_loss=0时除零产生NaN | 添加np.where分支：loss=0&gain>0→100，both=0→50 | 技术指标RSI为NaN |
+| 10 | `akshare.py` L1220-1230 | `_safe_float`不处理'--'/'N/A'/'null'等中国金融API常见占位符 | 显式检查并过滤特殊字符串 | 财务数据解析失败 |
+
+#### 🟡 中等Bug修复 (8个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 11 | `alpha_vantage_fundamentals.py` L83-92 | API返回None或错误字典未检查，直接解析崩溃 | 添加None检查和Error Message/Note键检查 |
+| 12 | `us_data_service.py` L40-44 | 数据提供器返回None未检查，异常信息缺少类型名 | 添加None检查，异常消息加入type(e).__name__ |
+| 13 | `cn_data_service.py` L142-164 | 数据源切换后残留错误状态，可能污染后续判断 | 每次切换前重置result=None和error_state=None |
+| 14 | `data_orchestrator.py` L113-140 | 所有数据源失败时仅返回None，无失败详情 | 收集failed_details列表，拼接详细错误摘要 |
+| 15 | `data_completeness_checker.py` L105-115 | 交易日估算统一用0.7系数，不区分市场 | 按市场类型使用不同年交易日数(A股242/美股252/港股245) |
+| 16 | `base_master.py` L580-610 | 数据质量门控过严，部分可用数据被完全丢弃 | completeness>0时仍生成有限分析报告+警告前缀 |
+| 17 | `bear_researcher.py` L21-46 | master_consensus可能为None，调用.strip()崩溃；curr_situation缺少共识上下文 | 使用or""确保非None；追加共识内容到curr_situation |
+| 18 | `trader.py` L88-91 | 港股货币硬编码为美元$，实际应为港币HK$ | 替换硬编码为动态变量`{currency}({currency_symbol})` |
+
+#### 🟢 改进 (4个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 19 | `tushare.py` L1602 | `_safe_float`缺少'-'和'N/A'过滤 | 补充特殊字符到过滤列表 |
+| 20 | `baostock.py` L520-540 | `_safe_float`不处理'--'/'N/A'，pd.isna对字符串可能异常 | 增强特殊字符过滤，用value!=value检查NaN |
+| 21 | `akshare.py` L440-453 | `_try_multiple_apis`失败时无详情日志 | 收集failed_apis列表，输出完整失败详情 |
+| 22 | `stockstats.py` L89-107 | 日期匹配仅用startswith，格式不一致时匹配失败 | 三级降级：精确→前缀→最近5天容差 |
+
+#### 🔧 数据流修复 (4个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 23 | `capital_flow.py` L160-170 | 日期列排序前未转datetime，数值列未做类型转换 | 先pd.to_datetime+dropna，数值列pd.to_numeric |
+| 24 | `china_fundamental_snapshot.py` L1300-1320 | validate_data_consistency不检查时间戳，过期数据视为有效 | 新增90天过期阈值检查 |
+| 25 | `china_fundamental_snapshot.py` L1100-1120 | _apply_trend_fields零值产生误导性趋势 | 新增_safe_trend辅助函数，cur/prev为0时返回None |
+| 26 | `unified_dataframe.py` L160-166 | fill_missing_values仅ffill，序列开头NaN残留 | ffill后增加bfill，仍有残留NaN时填0并记录warning |
+
+**验证结果**:
+- ✅ **76/76 单元测试全部通过**（0失败）
+- ✅ 所有核心模块导入正常
+- ✅ 修复覆盖港股层、美股层、缓存层、质量引擎、A股路由、Agent状态链、技术指标、数据帧标准化
+
+**关键文件入口**:
+- 港股数据服务: `tradingagents/dataflows/hk_data_service.py`
+- 港股yfinance: `tradingagents/dataflows/providers/hk/hk_stock.py`
+- 港股AKShare: `tradingagents/dataflows/providers/hk/improved_hk.py`
+- 美股yfinance: `tradingagents/dataflows/providers/us/yfinance.py`
+- 美股优化: `tradingagents/dataflows/providers/us/optimized.py`
+- Alpha Vantage: `tradingagents/dataflows/providers/us/alpha_vantage_fundamentals.py`
+- 美股服务: `tradingagents/dataflows/us_data_service.py`
+- 缓存系统: `tradingagents/dataflows/cache/adaptive.py`
+- 质量引擎: `tradingagents/dataflows/data_quality_engine.py`
+- 完整性检查: `tradingagents/dataflows/data_completeness_checker.py`
+- A股服务: `tradingagents/dataflows/cn_data_service.py`
+- 数据编排: `tradingagents/dataflows/data_orchestrator.py`
+- 大师基类: `tradingagents/agents/masters/base_master.py`
+- 看空研究员: `tradingagents/agents/researchers/bear_researcher.py`
+- 交易员: `tradingagents/agents/trader/trader.py`
+- 智能体状态: `tradingagents/agents/utils/agent_states.py`
+- 技术指标: `tradingagents/tools/analysis/indicators.py`
+- AKShare: `tradingagents/dataflows/providers/china/akshare.py`
+- Tushare: `tradingagents/dataflows/providers/china/tushare.py`
+- BaoStock: `tradingagents/dataflows/providers/china/baostock.py`
+- 资金流: `tradingagents/dataflows/capital_flow.py`
+- 基本面快照: `tradingagents/dataflows/china_fundamental_snapshot.py`
+- 统一数据帧: `tradingagents/dataflows/unified_dataframe.py`
+- 日期工具: `tradingagents/utils/dataflow_utils.py`
+- StockStats: `tradingagents/dataflows/technical/stockstats.py`
+
+### 本轮修复汇总 (2026-05-09 第十二轮 — 指标计算与数据流工具Bug修复)
+
+修复4个指标计算和数据流工具中的关键Bug：
+
+| # | 文件 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 1 | `indicators.py` L119-125 | RSI计算中 `avg_loss` 为0时除法产生NaN/Inf | 新增零值检查：`avg_loss==0 & avg_gain>0` → RSI=100；`avg_loss==0 & avg_gain==0` → RSI=50 | RSI在持续上涨/横盘时不再返回NaN |
+| 2 | `dataflow_utils.py` L163-170 | `get_trading_date_range` 计算的起始日期可能早于历史数据边界，无警告 | 新增2010-01-01边界校验，过早时自动调整并记录warning日志 | 避免查询不存在的早期数据导致空结果 |
+| 3 | `stockstats.py` L91-107 | 日期匹配仅用 `startswith()`，格式不匹配时指标值丢失 | 三级降级匹配：精确匹配 → 前缀匹配 → 最近日期匹配（5天容差） | 不同日期格式的数据源都能正确匹配 |
+| 4 | `unified_dataframe.py` L160-166 | `fill_missing_values` 仅做ffill，序列开头NaN无法填充 | ffill后增加bfill；非估值列仍存在NaN时记录warning再填0 | 消除序列开头的NaN残留，下游计算不再出错 |
+
+**关键文件入口**:
+- 技术指标计算: `tradingagents/tools/analysis/indicators.py`
+- 数据流工具函数: `tradingagents/utils/dataflow_utils.py`
+- Stockstats技术指标: `tradingagents/dataflows/technical/stockstats.py`
+- 统一DataFrame标准化: `tradingagents/dataflows/unified_dataframe.py`
+
+### 本轮修复汇总 (2026-05-09 第十轮 — 美股数据提供层空数据/异常处理Bug修复)
+
+修复美股4个数据提供文件中空数据/None返回值未正确处理的Bug：
+
+| # | 文件 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 1 | `yfinance.py` L189-192 | `ticker.history()` 可能返回 `None`，`data.empty` 对 `None` 抛 `AttributeError` | `data.empty` → `data is None or data.empty` | 防止无效股票代码/网络异常时崩溃 |
+| 2 | `yfinance.py` L330-332 | `get_technical_indicator` 中同样问题 | 同上 | 技术指标获取不再因空数据崩溃 |
+| 3 | `optimized.py` L441-443 | `_get_data_from_yfinance` 中 `data.empty` 未考虑 `None` | `data.empty` → `data is None or data.empty` | yfinance通道空数据安全返回None |
+| 4 | `alpha_vantage_fundamentals.py` L82-85 | `_make_api_request` 返回 `None` 时走 else 分支调用 `format_response_as_string(None,...)` 可能出错 | 新增 `data is None` 检查提前返回错误信息 | 防止None传入格式化函数 |
+| 5 | `alpha_vantage_fundamentals.py` L85+ | API返回 `"Error Message"` 或 `"Note"` 的错误字典未检查，直接当正常数据解析 | 新增 `"Error Message"` 和 `"Note"` 键检查 | API错误/限流时返回明确错误而非解析异常 |
+| 6 | `us_data_service.py` L29-40 | 数据提供器返回 `None` 未检查直接返回调用方；异常信息缺少类型名 | 新增 `result is None` 检查；异常消息加入 `type(e).__name__` 和 `exc_info=True` | 空结果有明确提示；异常信息更利于调试 |
+
+**关键文件入口**:
+- yfinance数据提供: `tradingagents/dataflows/providers/us/yfinance.py`
+- 优化美股数据提供: `tradingagents/dataflows/providers/us/optimized.py`
+- Alpha Vantage基本面: `tradingagents/dataflows/providers/us/alpha_vantage_fundamentals.py`
+- 美股数据服务: `tradingagents/dataflows/us_data_service.py`
+
+修复 A股数据获取流程中数据源切换残留错误状态、数据验证缺失、降级错误信息不清晰三个问题：
+
+| # | 位置 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 1 | `cn_data_service.py` L142-164 | 数据源切换后残留前次错误状态(result/error_state)，可能污染后续数据流 | 每次尝试新数据源前重置 result=None, error_state=None | 切换数据源时状态干净，不会传递前次错误 |
+| 2 | `cn_data_service.py` L18-32 | 无数据验证，仅靠 `"❌" not in result` 判断，无法识别空数据/纯错误消息 | 新增 `_validate_stock_data()` 函数：检查非空、非错误消息、包含日期/价格/股票代码等预期内容 | 无效数据不会被当作有效结果返回 |
+| 3 | `data_orchestrator.py` L113-140 | 所有数据源失败时仅返回 None，无诊断信息 | 收集每个源的失败详情（返回错误预览/异常信息），拼接为完整错误摘要返回 | 用户可明确知道哪些源被尝试、各自失败原因 |
+
+**关键文件入口**:
+- A股数据服务: `tradingagents/dataflows/cn_data_service.py`
+- 数据编排器: `tradingagents/dataflows/data_orchestrator.py`
+
+### 本轮修复汇总 (2026-05-09 第八轮 — 港股财务数据 truthiness bug 修复)
+
+修复 `improved_hk.py` 中 Python truthiness 检查导致的数值为0时数据丢失问题：
+
+| # | 位置 | 问题 | 修复方案 | 影响 |
+|---|------|------|---------|------|
+| 1 | L603 | `if financial_indicators.get('operate_income')` 当营业收入为0时falsy，跳过除法返回None | 改为 `is not None` | 营业收入为0的公司（如停业）显示N/A而非0.00亿港元 |
+| 2 | L605 | `if financial_indicators.get('holder_profit')` 同上 | 改为 `is not None` | 归母净利润为0时显示N/A |
+| 3 | L587 | `if pe_ratio else 'N/A'` 当PE为0.0时falsy | 改为 `if pe_ratio is not None` | PE=0时错误显示N/A |
+| 4 | L588 | `if pb_ratio else 'N/A'` 同上 | 改为 `if pb_ratio is not None` | PB=0时错误显示N/A |
+| 5 | L568 | `if eps_ttm and eps_ttm > 0` 依赖truthiness | 改为 `if eps_ttm is not None and eps_ttm > 0` | 逻辑碰巧正确但代码不清晰 |
+| 6 | L571 | `if bps and bps > 0` 同上 | 改为 `if bps is not None and bps > 0` | 同上 |
+
+**关键文件入口**:
+- 港股数据提供器: `tradingagents/dataflows/providers/hk/improved_hk.py`
+
+### 本轮修复汇总 (2026-05-09 第七轮 — 港股代码归一化不一致Bug修复)
+
+**问题**: `hk_data_service.py` 调用 AKShare 接口时直接传入原始 symbol，未做 AKShare 格式（5位数字无后缀如 `00700`）的归一化，而 yfinance 通道有归一化（4位+.HK如 `0700.HK`），导致 AKShare 数据源可能收到错误格式的代码。
+
+**修复内容**:
+
+| # | 位置 | 修复 | 影响 |
+|---|------|------|------|
+| 1 | `hk_data_service.py` L140-147 | 新增 `_normalize_hk_symbol_for_akshare` 函数，将港股代码转为5位数字格式 | AKShare通道代码格式正确 |
+| 2 | `hk_data_service.py` L78-80 | `get_hk_stock_data_unified` 中 AKShare 调用前先归一化 | 数据获取不再因代码格式失败 |
+| 3 | `hk_data_service.py` L157-159 | `get_hk_stock_info_unified` 中 AKShare 调用前先归一化 | 信息获取不再因代码格式失败 |
+| 4 | `hk_data_service.py` L131-132 | `_normalize_hk_symbol_for_yfinance` 增加空字符串/None验证 | 边界情况安全 |
+| 5 | `hk_data_service.py` L141-142 | `_normalize_hk_symbol_for_akshare` 增加空字符串/None验证 | 边界情况安全 |
+
+**归一化对照表**:
+| 输入 | AKShare (5位) | yfinance (4位+.HK) |
+|------|---------------|---------------------|
+| `700` | `00700` | `0700.HK` |
+| `0700.HK` | `00700` | `0700.HK` |
+| `00700` | `00700` | `0700.HK` |
+| `9988` | `09988` | `9988.HK` |
+
+**关键文件入口**:
+- 港股数据服务: `tradingagents/dataflows/hk_data_service.py`
+- AKShare港股: `tradingagents/dataflows/providers/hk/improved_hk.py`
+- yfinance港股: `tradingagents/dataflows/providers/hk/hk_stock.py`
+
+---
 
 ### 本轮修复汇总 (2026-05-09 第六轮 — Ralph Loop 全链路Bug修复)
 
@@ -80,10 +351,10 @@
 
 | # | 文件 | 问题描述 | 建议 |
 |---|------|---------|------|
-| 1 | `improved_hk.py` L160-175 vs `hk_stock.py` L208-237 | 港股代码标准化不一致：5位无后缀 vs 4位+.HK | 统一标准化函数 |
+| 1 | ~~`improved_hk.py` L160-175 vs `hk_stock.py` L208-237~~ | ~~港股代码标准化不一致：5位无后缀 vs 4位+.HK~~ | ~~✅ 第七轮已修复：`hk_data_service.py` 新增双通道归一化~~ |
 | 2 | `optimized.py` L348-403 | Finnhub只返回实时快照不返回历史数据 | 使用stock_candles接口 |
 | 3 | `base_master.py` | 一致性修正后的数据没有传给LLM | 修正数据传递链 |
-| 4 | `improved_hk.py` L603-605 | AKShare财务数据单位转换可能错误 | 确认原始单位后修正 |
+| 4 | ~~`improved_hk.py` L603-605~~ | ~~AKShare财务数据单位转换可能错误~~ | ~~✅ 第八轮已修复：truthiness bug，`if value` → `if value is not None`~~ |
 
 ### 中优先级待观察
 

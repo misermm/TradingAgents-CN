@@ -5,6 +5,7 @@ A股数据服务模块
 从 interface.py 拆分出的中国市场数据获取逻辑
 """
 
+import re
 import time
 from datetime import datetime
 from typing import Annotated
@@ -12,6 +13,23 @@ from typing import Annotated
 from tradingagents.utils.logging_init import setup_dataflow_logging
 
 logger = setup_dataflow_logging()
+
+
+def _validate_stock_data(result: str, ticker: str) -> bool:
+    if not result or not isinstance(result, str):
+        return False
+    stripped = result.strip()
+    if not stripped:
+        return False
+    error_markers = ("❌", "错误：", "Error:", "失败：", "FAILED", "Traceback", "Exception")
+    if any(m in stripped[:200] for m in error_markers):
+        return False
+    has_date = bool(re.search(r'\d{4}-\d{2}-\d{2}', stripped))
+    has_price = bool(re.search(r'\d+\.\d{2}', stripped))
+    has_ticker_ref = ticker in stripped
+    if not (has_date or has_price or has_ticker_ref):
+        return False
+    return True
 
 
 def get_china_stock_data_tushare(
@@ -115,32 +133,73 @@ def get_china_stock_data_unified(
 
     try:
         from .data_source_manager import get_china_stock_data_unified as _get_data
+        from .data_source_manager import get_data_source_manager, ChinaDataSource
+
+        manager = get_data_source_manager()
+        current_source = manager.current_source
+        available_sources = [s for s in manager.available_sources if s != current_source]
+
+        result = None
+        error_state = None
 
         result = _get_data(ticker, start_date, end_date)
 
-        duration = time.time() - start_time
-        result_length = len(result) if result else 0
-        is_success = result and "❌" not in result and "错误" not in result
-
-        if is_success:
+        if _validate_stock_data(result, ticker):
+            duration = time.time() - start_time
             logger.info(f"✅ [统一接口] 中国股票数据获取成功",
                        extra={
                            'function': 'get_china_stock_data_unified',
                            'ticker': ticker,
                            'duration': duration,
-                           'result_length': result_length,
+                           'result_length': len(result),
                            'event_type': 'unified_data_call_success'
                        })
-        else:
-            logger.warning(f"⚠️ [统一接口] 中国股票数据质量异常",
-                          extra={
-                              'function': 'get_china_stock_data_unified',
-                              'ticker': ticker,
-                              'duration': duration,
-                              'event_type': 'unified_data_call_warning'
-                          })
+            return result
 
-        return result
+        error_state = result
+        logger.warning(f"⚠️ [统一接口] 主数据源 {current_source.value} 返回无效数据，尝试切换数据源")
+
+        for fallback_source in available_sources:
+            result = None
+            error_state = None
+
+            try:
+                original_source = manager.current_source
+                manager.current_source = fallback_source
+                logger.info(f"🔄 [统一接口] 切换到备用数据源: {fallback_source.value}")
+
+                result = _get_data(ticker, start_date, end_date)
+
+                if _validate_stock_data(result, ticker):
+                    duration = time.time() - start_time
+                    logger.info(f"✅ [统一接口] 备用数据源 {fallback_source.value} 获取成功",
+                               extra={
+                                   'function': 'get_china_stock_data_unified',
+                                   'ticker': ticker,
+                                   'duration': duration,
+                                   'result_length': len(result),
+                                   'event_type': 'unified_data_call_fallback_success'
+                               })
+                    return result
+
+                error_state = result
+                logger.warning(f"⚠️ [统一接口] 备用数据源 {fallback_source.value} 返回无效数据")
+            except Exception as fallback_err:
+                error_state = f"❌ {fallback_source.value} 异常: {fallback_err}"
+                logger.warning(f"⚠️ [统一接口] 备用数据源 {fallback_source.value} 异常: {fallback_err}")
+            finally:
+                manager.current_source = original_source
+
+        duration = time.time() - start_time
+        logger.warning(f"⚠️ [统一接口] 所有数据源均返回无效数据",
+                      extra={
+                          'function': 'get_china_stock_data_unified',
+                          'ticker': ticker,
+                          'duration': duration,
+                          'event_type': 'unified_data_call_warning'
+                      })
+
+        return result if result else f"❌ 获取{ticker}股票数据失败: 所有数据源均返回无效数据"
 
     except Exception as e:
         duration = time.time() - start_time

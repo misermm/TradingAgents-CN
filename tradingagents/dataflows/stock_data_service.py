@@ -214,20 +214,26 @@ class StockDataService:
             return False
     
     def _get_fallback_data(self, stock_code: str = None) -> Dict[str, Any]:
-        """最后的降级数据"""
+        """最后的降级数据，返回最小可用数据结构"""
         if stock_code:
             return {
                 'code': stock_code,
                 'name': f'股票{stock_code}',
                 'market': self._get_market_name(stock_code),
-                'category': '未知',
+                'category': self._get_stock_category(stock_code),
                 'source': 'fallback',
                 'updated_at': datetime.now().isoformat(),
-                'error': '所有数据源都不可用'
+                'error': '所有数据源都不可用',
+                'warning': '数据为降级兜底结果，信息可能不完整，请检查数据库和网络配置'
             }
         else:
             return {
+                'stocks': [],
+                'total': 0,
+                'source': 'fallback',
+                'updated_at': datetime.now().isoformat(),
                 'error': '无法获取股票列表，请检查网络连接和数据库配置',
+                'warning': '数据为降级兜底结果，所有数据源均不可用',
                 'suggestion': '请确保MongoDB已配置或网络连接正常以访问Tushare数据接口'
             }
     

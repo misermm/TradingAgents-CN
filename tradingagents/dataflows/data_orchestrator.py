@@ -110,6 +110,7 @@ class DataOrchestrator:
             成功的结果字符串，或 None
         """
         health_tracker = self._get_health_tracker()
+        failed_details = []
 
         for source in sources:
             try:
@@ -122,16 +123,21 @@ class DataOrchestrator:
                         health_tracker.record_success(source)
                     return result
                 else:
+                    error_preview = result[:200] if result else "空结果"
+                    failed_details.append(f"{source}: 返回错误 - {error_preview}")
                     logger.warning(f"⚠️ {source} 返回错误结果，尝试下一个数据源")
                     if health_tracker:
                         health_tracker.record_failure(source)
 
             except Exception as e:
+                failed_details.append(f"{source}: 异常 - {e}")
                 logger.error(f"⚠️ {source} 数据获取失败: {e}")
                 if health_tracker:
                     health_tracker.record_failure(source)
 
-        return None
+        error_summary = f"所有数据源均失败 ({symbol}): " + "; ".join(failed_details)
+        logger.error(f"❌ {error_summary}")
+        return f"❌ {error_summary}"
 
 
 _orchestrator = None

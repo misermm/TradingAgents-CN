@@ -104,6 +104,14 @@ class DataQualityEngine:
                 logger.warning(f"BaoStock provider 不可用: {e}")
         return self._baostock_provider
 
+    @staticmethod
+    def _is_valid_value(val) -> bool:
+        if val is None:
+            return False
+        if isinstance(val, str) and val.strip() in ("", "N/A", "--", "-", "None", "null", "NaN"):
+            return False
+        return True
+
     def score_quality(self, data: Dict[str, Any], market: str = "cn") -> int:
         """
         评估数据质量评分 (0-5)
@@ -124,9 +132,9 @@ class DataQualityEngine:
         else:
             return 5
 
-        core_present = sum(1 for f in core_fields if data.get(f) is not None)
+        core_present = sum(1 for f in core_fields if self._is_valid_value(data.get(f)))
         core_total = len(core_fields)
-        secondary_present = sum(1 for f in secondary_fields if data.get(f) is not None)
+        secondary_present = sum(1 for f in secondary_fields if self._is_valid_value(data.get(f)))
         secondary_total = len(secondary_fields)
 
         core_ratio = core_present / core_total if core_total > 0 else 0
@@ -157,8 +165,7 @@ class DataQualityEngine:
 
         missing = []
         for f in all_fields:
-            val = data.get(f)
-            if val is None or val == "" or val == "None":
+            if not self._is_valid_value(data.get(f)):
                 missing.append(f)
         return missing
 

@@ -169,6 +169,7 @@ def create_china_market_analyst(llm, toolkit):
         prompt = prompt.partial(ticker=ticker)
         
         chain = prompt | llm.bind_tools(tools)
+        tool_call_count = 0
         try:
             result = chain.invoke(state["messages"])
         except Exception as llm_err:
@@ -181,11 +182,14 @@ def create_china_market_analyst(llm, toolkit):
             return {
                 "china_market_report": fallback,
                 "messages": [],
+                "china_market_tool_call_count": 0,
             }
         
         # 使用统一的Google工具调用处理器
         if GoogleToolCallHandler.is_google_model(llm):
             logger.info(f"📊 [中国市场分析师] 检测到Google模型，使用统一工具调用处理器")
+            google_tool_calls = getattr(result, 'tool_calls', [])
+            tool_call_count = len(google_tool_calls) if google_tool_calls else 0
             
             # 创建分析提示词
             analysis_prompt_template = GoogleToolCallHandler.create_analysis_prompt(
@@ -209,6 +213,7 @@ def create_china_market_analyst(llm, toolkit):
             logger.debug(f"📊 [DEBUG] 非Google模型 ({llm.__class__.__name__})，使用标准处理逻辑")
             
             tool_calls = getattr(result, 'tool_calls', [])
+            tool_call_count = len(tool_calls)
             report = ""
             if len(tool_calls) == 0:
                 report = result.content
@@ -245,6 +250,7 @@ def create_china_market_analyst(llm, toolkit):
             "messages": [result],
             "china_market_report": report,
             "sender": "ChinaMarketAnalyst",
+            "china_market_tool_call_count": tool_call_count,
         }
     
     return china_market_analyst_node

@@ -116,8 +116,12 @@ def rsi(close: pd.Series, n: int = 14, method: str = 'ema') -> pd.Series:
     else:
         raise ValueError(f"不支持的RSI计算方法: {method}，支持的方法: 'ema', 'sma', 'china'")
 
-    rs = avg_gain / (avg_loss.replace(0, np.nan))
+    rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi_val = 100 - (100 / (1 + rs))
+    zero_loss = avg_loss == 0
+    rsi_val = np.where(zero_loss & (avg_gain > 0), 100.0, rsi_val)
+    rsi_val = np.where(zero_loss & (avg_gain == 0), 50.0, rsi_val)
+    rsi_val = pd.Series(rsi_val, index=close.index)
     return rsi_val
 
 

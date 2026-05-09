@@ -203,82 +203,83 @@ def create_social_media_analyst(llm, toolkit):
             return {
                 "messages": [],
                 "sentiment_report": fallback,
-                "sentiment_tool_call_count": tool_call_count
+                "sentiment_tool_call_count": tool_call_count + 1
             }
 
-        # 使用统一的Google工具调用处理器
-        if GoogleToolCallHandler.is_google_model(llm):
-            logger.info(f"📊 [社交媒体分析师] 检测到Google模型，使用统一工具调用处理器")
-            
-            # 创建分析提示词
-            analysis_prompt_template = GoogleToolCallHandler.create_analysis_prompt(
-                ticker=ticker,
-                company_name=company_name,
-                analyst_type="社交媒体情绪分析",
-                specific_requirements="重点关注投资者情绪、社交媒体讨论热度、舆论影响等。"
-            )
-            
-            # 处理Google模型工具调用
-            report, messages = GoogleToolCallHandler.handle_google_tool_calls(
-                result=result,
-                llm=llm,
-                tools=tools,
-                state=state,
-                analysis_prompt_template=analysis_prompt_template,
-                analyst_name="社交媒体分析师"
-            )
-        else:
-            logger.debug(f"📊 [DEBUG] 非Google模型 ({llm.__class__.__name__})，使用标准处理逻辑")
-            
-            tool_calls = getattr(result, 'tool_calls', [])
-            report = ""
-            if len(tool_calls) == 0:
-                content_str = result.content if hasattr(result, 'content') else ""
+        report = ""
+        try:
+            if GoogleToolCallHandler.is_google_model(llm):
+                logger.info(f"📊 [社交媒体分析师] 检测到Google模型，使用统一工具调用处理器")
+                
+                analysis_prompt_template = GoogleToolCallHandler.create_analysis_prompt(
+                    ticker=ticker,
+                    company_name=company_name,
+                    analyst_type="社交媒体情绪分析",
+                    specific_requirements="重点关注投资者情绪、社交媒体讨论热度、舆论影响等。"
+                )
+                
+                report, messages = GoogleToolCallHandler.handle_google_tool_calls(
+                    result=result,
+                    llm=llm,
+                    tools=tools,
+                    state=state,
+                    analysis_prompt_template=analysis_prompt_template,
+                    analyst_name="社交媒体分析师"
+                )
+            else:
+                logger.debug(f"📊 [DEBUG] 非Google模型 ({llm.__class__.__name__})，使用标准处理逻辑")
+                
+                tool_calls = getattr(result, 'tool_calls', [])
+                if len(tool_calls) == 0:
+                    content_str = result.content if hasattr(result, 'content') else ""
 
-                if TextToolCallParser.detect_text_tool_call(content_str):
-                    logger.info(f"🔧 [社媒分析师] 检测到文本格式工具调用，启动解析执行")
-                    parsed_report = TextToolCallParser.execute_and_generate_report(
-                        content=content_str,
-                        available_tools=tools,
-                        llm=llm,
-                        analyst_name="社交媒体分析师",
-                    )
-                    if parsed_report:
-                        report = parsed_report
-                        logger.info(f"✅ [社媒分析师] 文本工具调用解析成功，报告长度: {len(report)}")
+                    if TextToolCallParser.detect_text_tool_call(content_str):
+                        logger.info(f"🔧 [社媒分析师] 检测到文本格式工具调用，启动解析执行")
+                        parsed_report = TextToolCallParser.execute_and_generate_report(
+                            content=content_str,
+                            available_tools=tools,
+                            llm=llm,
+                            analyst_name="社交媒体分析师",
+                        )
+                        if parsed_report:
+                            report = parsed_report
+                            logger.info(f"✅ [社媒分析师] 文本工具调用解析成功，报告长度: {len(report)}")
+                        else:
+                            logger.warning(f"⚠️ [社媒分析师] 文本工具调用解析失败，使用原始内容")
+                            report = content_str
                     else:
-                        logger.warning(f"⚠️ [社媒分析师] 文本工具调用解析失败，使用原始内容")
                         report = content_str
                 else:
-                    report = content_str
-            else:
-                logger.info(f"💭 [社媒分析师] 检测到工具调用，执行工具并生成报告")
-                try:
-                    from langchain_core.messages import ToolMessage, HumanMessage
-                    tool_messages = []
-                    for tool_call in tool_calls:
-                        tool_name = tool_call.get('name')
-                        tool_args = tool_call.get('args', {})
-                        tool_id = tool_call.get('id')
-                        tool_result = None
-                        for tool in tools:
-                            current_tool_name = getattr(tool, 'name', None) or getattr(tool, '__name__', None)
-                            if current_tool_name == tool_name:
-                                try:
-                                    tool_result = tool.invoke(tool_args)
-                                except Exception as e:
-                                    tool_result = f"工具执行错误: {str(e)}"
-                                break
-                        if tool_result is not None:
-                            tool_messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_id))
-                    
-                    all_messages = state["messages"] + [result] + tool_messages
-                    analysis_result = llm.invoke(all_messages)
-                    report = analysis_result.content if hasattr(analysis_result, 'content') else str(analysis_result)
-                    logger.info(f"💭 [社媒分析师] 工具调用后生成报告，长度: {len(report)}")
-                except Exception as e:
-                    logger.error(f"💭 [社媒分析师] 工具调用处理失败: {e}")
-                    report = result.content if result.content else "社交媒体分析完成，但报告生成失败。"
+                    logger.info(f"💭 [社媒分析师] 检测到工具调用，执行工具并生成报告")
+                    try:
+                        from langchain_core.messages import ToolMessage, HumanMessage
+                        tool_messages = []
+                        for tool_call in tool_calls:
+                            tool_name = tool_call.get('name')
+                            tool_args = tool_call.get('args', {})
+                            tool_id = tool_call.get('id')
+                            tool_result = None
+                            for tool in tools:
+                                current_tool_name = getattr(tool, 'name', None) or getattr(tool, '__name__', None)
+                                if current_tool_name == tool_name:
+                                    try:
+                                        tool_result = tool.invoke(tool_args)
+                                    except Exception as e:
+                                        tool_result = f"工具执行错误: {str(e)}"
+                                    break
+                            if tool_result is not None:
+                                tool_messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_id))
+                        
+                        all_messages = state["messages"] + [result] + tool_messages
+                        analysis_result = llm.invoke(all_messages)
+                        report = analysis_result.content if hasattr(analysis_result, 'content') else str(analysis_result)
+                        logger.info(f"💭 [社媒分析师] 工具调用后生成报告，长度: {len(report)}")
+                    except Exception as e:
+                        logger.error(f"💭 [社媒分析师] 工具调用处理失败: {e}")
+                        report = result.content if result.content else "社交媒体分析完成，但报告生成失败。"
+        except Exception as e:
+            logger.error(f"❌ [社交媒体分析师] 报告生成过程异常: {e}")
+            report = report or f"## 社交媒体情绪分析\n\n⚠️ 分析过程出现异常，无法生成完整报告。"
 
         # 🔧 更新工具调用计数器
         return {

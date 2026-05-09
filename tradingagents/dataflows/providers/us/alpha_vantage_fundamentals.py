@@ -36,14 +36,14 @@ def _format_large_number(val_str) -> str:
         return str(val_str)
 
 
-def _safe_format_pct(val_str, is_pct: bool = False) -> str:
+def _safe_format_pct(val_str, is_pct: bool = False, decimals: int = 2) -> str:
     if val_str is None or val_str == 'None' or val_str == 'N/A':
         return 'N/A'
     try:
         val = float(val_str)
         if is_pct:
             return f"{val:.2%}"
-        return f"{val:.2f}"
+        return f"{val:.{decimals}f}"
     except (ValueError, TypeError):
         return str(val_str)
 
@@ -80,9 +80,18 @@ def get_fundamentals(
         
         # 发起 API 请求
         data = _make_api_request("OVERVIEW", params)
-        
-        # 格式化响应
+
+        if data is None:
+            logger.warning(f"⚠️ [Alpha Vantage] 基本面数据返回为空: {ticker}")
+            return f"No fundamentals data available for {ticker}"
+
         if isinstance(data, dict) and data:
+            if "Error Message" in data:
+                logger.error(f"❌ [Alpha Vantage] API错误: {data['Error Message']}")
+                return f"Error from Alpha Vantage for {ticker}: {data['Error Message']}"
+            if "Note" in data:
+                logger.warning(f"⚠️ [Alpha Vantage] API限制: {data['Note']}")
+                return f"Alpha Vantage API rate limit for {ticker}: {data['Note']}"
             # 提取关键指标
             result = f"# Company Overview: {ticker.upper()}\n"
             result += f"# Retrieved on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
@@ -131,7 +140,7 @@ def get_fundamentals(
             
             # 股息信息
             result += "## Dividend Information\n"
-            result += f"**Dividend Per Share**: ${_safe_format_pct(data.get('DividendPerShare'))}\n"
+            result += f"**Dividend Per Share**: ${_safe_format_pct(data.get('DividendPerShare'), decimals=4)}\n"
             result += f"**Dividend Yield**: {_safe_format_pct(data.get('DividendYield'), is_pct=True)}\n"
             result += f"**Dividend Date**: {data.get('DividendDate', 'N/A')}\n"
             result += f"**Ex-Dividend Date**: {data.get('ExDividendDate', 'N/A')}\n\n"
@@ -168,7 +177,7 @@ def get_fundamentals(
             
     except Exception as e:
         logger.error(f"❌ [Alpha Vantage] 获取基本面数据失败 {ticker}: {e}")
-        return f"Error retrieving fundamentals for {ticker}: {str(e)}"
+        return f"Error retrieving fundamentals for {ticker}: {type(e).__name__}: {str(e)}"
 
 
 def get_balance_sheet(

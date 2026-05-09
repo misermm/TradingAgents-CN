@@ -52,11 +52,20 @@ def create_data_prefetch_node(toolkit):
                     log_tag, "基本面(扩展范围)"
                 )
                 if retry_data and len(str(retry_data)) > len(str(fundamentals_data)):
-                    fundamentals_data = retry_data
-                    data_quality = _check_data_quality(fundamentals_data, market_info)
-                    logger.info(f"{log_tag} ✅ 扩展范围后数据质量提升: {data_quality['score']}/5")
+                    retry_quality = _check_data_quality(retry_data, market_info)
+                    if retry_quality["score"] >= data_quality["score"]:
+                        fundamentals_data = retry_data
+                        data_quality = retry_quality
+                        logger.info(f"{log_tag} ✅ 扩展范围后数据质量提升: {data_quality['score']}/5")
+                    else:
+                        logger.warning(f"{log_tag} ⚠️ 扩展范围后数据质量未提升(重试:{retry_quality['score']}/5 vs 原始:{data_quality['score']}/5)，保留原始数据")
+                else:
+                    logger.warning(f"{log_tag} ⚠️ 扩展范围后数据未变长，保留原始数据")
             except Exception as e:
                 logger.warning(f"{log_tag} 扩展范围重试失败: {e}")
+
+            if data_quality["score"] < 3:
+                logger.warning(f"{log_tag} ⚠️ 数据质量仍然较低({data_quality['score']}/5)，下游分析可能受影响")
 
         industry_context = _get_industry_context(ticker, market_info, log_tag)
 

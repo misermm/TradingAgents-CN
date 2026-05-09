@@ -18,9 +18,8 @@ def create_bear_researcher(llm, memory):
         sentiment_report = state.get("sentiment_report", "")
         news_report = state.get("news_report", "")
         fundamentals_report = state.get("fundamentals_report", "")
-        master_consensus = state.get("master_consensus_report", "")
+        master_consensus = state.get("master_consensus_report", "") or ""
 
-        # 使用统一的股票类型检测
         ticker = state.get('company_of_interest', 'Unknown')
         from tradingagents.utils.stock_utils import StockUtils
         market_info = StockUtils.get_market_info(ticker)
@@ -40,8 +39,10 @@ def create_bear_researcher(llm, memory):
         currency_symbol = market_info['currency_symbol']
 
         curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        if master_consensus and str(master_consensus).strip():
+            curr_situation += f"\n\n{master_consensus}"
 
-        if master_consensus and master_consensus.strip():
+        if master_consensus and str(master_consensus).strip():
             master_consensus_section = f"""
 **投资大师共识意见：**
 {master_consensus}

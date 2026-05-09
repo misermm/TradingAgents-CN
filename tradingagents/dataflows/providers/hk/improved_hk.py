@@ -565,10 +565,10 @@ def get_hk_stock_data_akshare(symbol: str, start_date: str = None, end_date: str
             eps_ttm = financial_indicators.get('eps_ttm')
             bps = financial_indicators.get('bps')
 
-            if eps_ttm and eps_ttm > 0:
+            if eps_ttm is not None and eps_ttm > 0:
                 pe_ratio = current_price / eps_ttm
 
-            if bps and bps > 0:
+            if bps is not None and bps > 0:
                 pb_ratio = current_price / bps
 
             # 构建财务指标部分（处理 None 值）
@@ -584,8 +584,8 @@ def get_hk_stock_data_akshare(symbol: str, start_date: str = None, end_date: str
             financial_section = f"""
 ### 财务指标（最新报告期：{financial_indicators.get('report_date', 'N/A')}）
 **估值指标**:
-- PE (市盈率): {f'{pe_ratio:.2f}' if pe_ratio else 'N/A'} (当前价 / EPS_TTM)
-- PB (市净率): {f'{pb_ratio:.2f}' if pb_ratio else 'N/A'} (当前价 / BPS)
+- PE (市盈率): {f'{pe_ratio:.2f}' if pe_ratio is not None else 'N/A'} (当前价 / EPS_TTM)
+- PB (市净率): {f'{pb_ratio:.2f}' if pb_ratio is not None else 'N/A'} (当前价 / BPS)
 
 **每股指标**:
 - 基本每股收益 (EPS): HK${format_value(financial_indicators.get('eps_basic'))}
@@ -600,9 +600,9 @@ def get_hk_stock_data_akshare(symbol: str, start_date: str = None, end_date: str
 - 毛利率: {format_value(financial_indicators.get('gross_profit_ratio'), suffix='%')}
 
 **营收情况**:
-- 营业收入: {format_value(financial_indicators.get('operate_income') / 1e8 if financial_indicators.get('operate_income') else None, suffix=' 亿港元')}
+- 营业收入: {format_value(financial_indicators.get('operate_income') / 1e8 if financial_indicators.get('operate_income') is not None else None, suffix=' 亿港元')}
 - 营收同比增长: {format_value(financial_indicators.get('operate_income_yoy'), suffix='%')}
-- 归母净利润: {format_value(financial_indicators.get('holder_profit') / 1e8 if financial_indicators.get('holder_profit') else None, suffix=' 亿港元')}
+- 归母净利润: {format_value(financial_indicators.get('holder_profit') / 1e8 if financial_indicators.get('holder_profit') is not None else None, suffix=' 亿港元')}
 - 净利润同比增长: {format_value(financial_indicators.get('holder_profit_yoy'), suffix='%')}
 
 **偿债能力**:

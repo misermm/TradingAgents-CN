@@ -160,6 +160,15 @@ def get_trading_date_range(target_date=None, lookback_days=10):
     # 计算开始日期（向前推N天）
     start_date = target_date - timedelta(days=lookback_days)
 
+    # 校验历史数据边界：如果起始日期过早，调整并记录警告
+    min_historical_date = datetime(2010, 1, 1)
+    if start_date.date() < min_historical_date.date():
+        logger.warning(
+            f"计算出的起始日期 {start_date.strftime('%Y-%m-%d')} 早于合理历史数据边界 "
+            f"2010-01-01，已自动调整。原始lookback_days={lookback_days}"
+        )
+        start_date = min_historical_date
+
     # 返回日期范围
     return start_date.strftime("%Y-%m-%d"), target_date.strftime("%Y-%m-%d")
 

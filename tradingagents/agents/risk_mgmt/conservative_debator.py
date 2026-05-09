@@ -9,7 +9,7 @@ logger = get_logger("default")
 
 def create_safe_debator(llm):
     def safe_node(state) -> dict:
-        risk_debate_state = state["risk_debate_state"]
+        risk_debate_state = state.get("risk_debate_state") or {}
         history = risk_debate_state.get("history", "")
         safe_history = risk_debate_state.get("safe_history", "")
 
@@ -61,8 +61,8 @@ def create_safe_debator(llm):
 
         argument = f"Safe Analyst: {response.content}"
 
-        new_count = risk_debate_state["count"] + 1
-        logger.info(f"🛡️ [保守风险分析师] 发言完成，计数: {risk_debate_state['count']} -> {new_count}")
+        new_count = risk_debate_state.get("count", 0) + 1
+        logger.info(f"🛡️ [保守风险分析师] 发言完成，计数: {risk_debate_state.get('count', 0)} -> {new_count}")
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

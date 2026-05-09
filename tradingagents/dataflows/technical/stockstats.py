@@ -87,7 +87,24 @@ class StockstatsUtils:
             curr_date = curr_date.strftime("%Y-%m-%d")
 
         df[indicator]  # trigger stockstats to calculate the indicator
-        matching_rows = df[df["Date"].str.startswith(curr_date)]
+
+        # 逐步降级的日期匹配策略
+        # 1. 精确匹配
+        matching_rows = df[df["Date"] == curr_date]
+
+        # 2. 前缀匹配（兼容带时间的日期格式）
+        if matching_rows.empty:
+            matching_rows = df[df["Date"].str.startswith(curr_date)]
+
+        # 3. 最近日期匹配（处理非交易日）
+        if matching_rows.empty:
+            date_col = pd.to_datetime(df["Date"], errors="coerce")
+            curr_dt = pd.to_datetime(curr_date, errors="coerce")
+            if not pd.isna(curr_dt) and date_col.notna().any():
+                diffs = (date_col - curr_dt).abs()
+                nearest_idx = diffs.idxmin()
+                if diffs.iloc[nearest_idx - date_col.index[0]] <= pd.Timedelta(days=5):
+                    matching_rows = df.iloc[[nearest_idx - date_col.index[0]]]
 
         if not matching_rows.empty:
             indicator_value = matching_rows[indicator].values[0]

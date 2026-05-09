@@ -2,10 +2,36 @@
 
 from langchain_openai import ChatOpenAI
 
-# 导入统一日志系统和图处理模块日志装饰器
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.tool_logging import log_graph_module
 logger = get_logger("graph.signal_processing")
+
+_TARGET_PRICE_PATTERNS = [
+    r'目标价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'\*\*目标价[位格]?\*\*[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'目标[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'合理[价位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'合理估值[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'建议买入价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'建议卖出价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'建议[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'预期[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'估值[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'价格[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'价位[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'看[到至]\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'上涨[到至]\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'[¥\$](\d+(?:\.\d+)?)',
+    r'(\d+(?:\.\d+)?)元',
+    r'(\d+(?:\.\d+)?)美元',
+    r'(\d+(?:\.\d+)?)\s*[¥\$]',
+]
+
+_CURRENT_PRICE_PATTERNS = [
+    r'当前价[格位]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'现价[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+    r'股价[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
+]
 
 
 class SignalProcessor:
@@ -144,56 +170,39 @@ class SignalProcessor:
 
                 # 处理目标价格，确保正确提取
                 target_price = decision_data.get('target_price')
-                if target_price is None or target_price == "null" or target_price == "":
-                    # 如果JSON中没有目标价格，尝试从reasoning和完整文本中提取
+                if target_price is None or target_price == "null" or target_price == "" or target_price == 0:
                     reasoning = decision_data.get('reasoning', '')
-                    full_text = f"{reasoning} {full_signal}"  # 扩大搜索范围
+                    full_text = f"{reasoning} {full_signal}"
                     
-                    # 增强的价格匹配模式
-                    price_patterns = [
-                        r'目标价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',  # 目标价位: 45.50
-                        r'目标[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',         # 目标: 45.50
-                        r'价格[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',         # 价格: 45.50
-                        r'价位[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',         # 价位: 45.50
-                        r'合理[价位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)', # 合理价位: 45.50
-                        r'估值[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',         # 估值: 45.50
-                        r'[¥\$](\d+(?:\.\d+)?)',                      # ¥45.50 或 $190
-                        r'(\d+(?:\.\d+)?)元',                         # 45.50元
-                        r'(\d+(?:\.\d+)?)美元',                       # 190美元
-                        r'建议[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',        # 建议: 45.50
-                        r'预期[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',        # 预期: 45.50
-                        r'看[到至]\s*[¥\$]?(\d+(?:\.\d+)?)',          # 看到45.50
-                        r'上涨[到至]\s*[¥\$]?(\d+(?:\.\d+)?)',        # 上涨到45.50
-                        r'(\d+(?:\.\d+)?)\s*[¥\$]',                  # 45.50¥
-                    ]
-                    
-                    for pattern in price_patterns:
+                    for pattern in _TARGET_PRICE_PATTERNS:
                         price_match = re.search(pattern, full_text, re.IGNORECASE)
                         if price_match:
                             try:
-                                target_price = float(price_match.group(1))
-                                logger.debug(f"🔍 [SignalProcessor] 从文本中提取到目标价格: {target_price} (模式: {pattern})")
-                                break
+                                extracted = float(price_match.group(1))
+                                if extracted > 0:
+                                    target_price = extracted
+                                    logger.debug(f"🔍 [SignalProcessor] 从文本中提取到目标价格: {target_price} (模式: {pattern})")
+                                    break
                             except (ValueError, IndexError):
                                 continue
 
-                    # 如果仍然没有找到价格，尝试智能推算
-                    if target_price is None or target_price == "null" or target_price == "":
+                    if target_price is None or target_price == 0:
                         target_price = self._smart_price_estimation(full_text, action, is_china)
-                        if target_price:
+                        if target_price is not None and target_price > 0:
                             logger.debug(f"🔍 [SignalProcessor] 智能推算目标价格: {target_price}")
                         else:
                             target_price = None
-                            logger.warning(f"🔍 [SignalProcessor] 未能提取到目标价格，设置为None")
+                            logger.warning(f"🔍 [SignalProcessor] 未能提取到有效目标价格，设置为None")
                 else:
-                    # 确保价格是数值类型
                     try:
                         if isinstance(target_price, str):
-                            # 清理字符串格式的价格
                             clean_price = target_price.replace('$', '').replace('¥', '').replace('￥', '').replace('元', '').replace('美元', '').strip()
                             target_price = float(clean_price) if clean_price and clean_price.lower() not in ['none', 'null', ''] else None
                         elif isinstance(target_price, (int, float)):
                             target_price = float(target_price)
+                        if target_price is not None and target_price == 0:
+                            target_price = None
+                            logger.warning(f"🔍 [SignalProcessor] 目标价格为0，视为无效，设置为None")
                         logger.debug(f"🔍 [SignalProcessor] 处理后的目标价格: {target_price}")
                     except (ValueError, TypeError):
                         target_price = None
@@ -231,31 +240,18 @@ class SignalProcessor:
         """从文本中提取真实目标价，不编造假数据"""
         import re
 
-        target_price_patterns = [
-            r'目标价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'\*\*目标价[位格]?\*\*[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'目标[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'建议买入价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'建议卖出价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'合理价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'合理估值[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-        ]
-
-        for pattern in target_price_patterns:
+        for pattern in _TARGET_PRICE_PATTERNS:
             match = re.search(pattern, text)
             if match:
                 try:
-                    return float(match.group(1))
+                    price = float(match.group(1))
+                    if price > 0:
+                        return price
                 except ValueError:
                     continue
 
         current_price = None
-        current_price_patterns = [
-            r'当前价[格位]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'现价[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-            r'股价[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',
-        ]
-        for pattern in current_price_patterns:
+        for pattern in _CURRENT_PRICE_PATTERNS:
             match = re.search(pattern, text)
             if match:
                 try:
@@ -290,8 +286,7 @@ class SignalProcessor:
         """简单的决策提取方法作为备用"""
         import re
 
-        # 提取动作
-        action = '持有'  # 默认
+        action = '持有'
         if re.search(r'买入|BUY', text, re.IGNORECASE):
             action = '买入'
         elif re.search(r'卖出|SELL', text, re.IGNORECASE):
@@ -299,28 +294,22 @@ class SignalProcessor:
         elif re.search(r'持有|HOLD', text, re.IGNORECASE):
             action = '持有'
 
-        # 尝试提取目标价格（使用增强的模式）
         target_price = None
-        price_patterns = [
-            r'目标价[位格]?[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',  # 目标价位: 45.50
-            r'\*\*目标价[位格]?\*\*[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',  # **目标价位**: 45.50
-            r'目标[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',         # 目标: 45.50
-            r'价格[：:]?\s*[¥\$]?(\d+(?:\.\d+)?)',         # 价格: 45.50
-            r'[¥\$](\d+(?:\.\d+)?)',                      # ¥45.50 或 $190
-            r'(\d+(?:\.\d+)?)元',                         # 45.50元
-        ]
-
-        for pattern in price_patterns:
+        for pattern in _TARGET_PRICE_PATTERNS:
             price_match = re.search(pattern, text)
             if price_match:
                 try:
-                    target_price = float(price_match.group(1))
-                    break
+                    extracted = float(price_match.group(1))
+                    if extracted > 0:
+                        target_price = extracted
+                        break
                 except ValueError:
                     continue
 
         if target_price is None:
             target_price = self._smart_price_estimation(text, action, is_china=is_china)
+            if target_price is not None and target_price == 0:
+                target_price = None
 
         return {
             'action': action,

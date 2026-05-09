@@ -135,6 +135,9 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
             except ImportError:
                 self.logger.warning("⚠️ requests和curl_cffi均未安装，东方财富直接API不可用")
 
+    _SZ_PREFIXES = ("000", "001", "002", "003", "300", "301")
+    _SH_PREFIXES = ("600", "601", "603", "605", "688", "689")
+
     def _get_secid(self, symbol: str) -> str:
         """
         将股票代码转换为东方财富secid格式
@@ -149,8 +152,14 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
 
         Returns:
             secid字符串（如 1.600519, 0.000001）
+
+        Raises:
+            ValueError: 股票代码格式无效时抛出
         """
         symbol = str(symbol).strip()
+
+        if not symbol:
+            raise ValueError("股票代码不能为空")
 
         if "." in symbol:
             parts = symbol.split(".")
@@ -160,14 +169,30 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
                 symbol = parts[0]
             elif symbol.endswith((".SZ", ".XSHE")):
                 symbol = parts[0]
+            else:
+                self.logger.warning(f"⚠️ 无法识别的股票代码后缀: {symbol}")
 
-        if symbol.startswith(("60", "68", "90")):
+        if not symbol.isdigit():
+            raise ValueError(f"股票代码必须为数字: '{symbol}'")
+
+        if len(symbol) != 6:
+            raise ValueError(f"股票代码必须为6位数字: '{symbol}' (当前{len(symbol)}位)")
+
+        if symbol.startswith(self._SH_PREFIXES):
             return f"1.{symbol}"
-        elif symbol.startswith(("00", "30", "20")):
+        elif symbol.startswith(self._SZ_PREFIXES):
             return f"0.{symbol}"
         elif symbol.startswith(("8", "4")):
             return f"0.{symbol}"
+        elif symbol.startswith("900"):
+            return f"1.{symbol}"
+        elif symbol.startswith("200"):
+            return f"0.{symbol}"
         else:
+            self.logger.warning(
+                f"⚠️ 股票代码 {symbol} 前缀不在已知市场范围内，"
+                f"尝试按沪市处理"
+            )
             return f"1.{symbol}"
 
     def _http_get(self, url: str, **kwargs) -> Any:
@@ -241,7 +266,11 @@ class EastMoneyDirectProvider(BaseStockDataProvider):
         Returns:
             行情数据字典，失败返回None
         """
-        secid = self._get_secid(symbol)
+        try:
+            secid = self._get_secid(symbol)
+        except ValueError as e:
+            self.logger.warning(f"⚠️ 股票代码格式无效 {symbol}: {e}")
+            return None
         url = self.QUOTE_URL.format(secid=secid)
 
         try:
