@@ -363,7 +363,8 @@ class OptimizedChinaDataProvider:
                         if change_pct == "N/A" and row_q.get('pct_chg') is not None:
                             try:
                                 change_pct = f"{float(row_q.get('pct_chg')):+.2f}%"
-                            except Exception:
+                            except (ValueError, TypeError) as e:
+                                logger.debug(f"涨跌幅解析失败: {e}")
                                 change_pct = str(row_q.get('pct_chg'))
                             logger.debug(f"🔍 [股票代码追踪] 从market_quotes补齐涨跌幅: {change_pct}")
                         if volume == "N/A" and row_q.get('volume') is not None:
@@ -1008,10 +1009,13 @@ class OptimizedChinaDataProvider:
 
                     # 从 market_quotes 获取实时股价
                     quote = db.market_quotes.find_one({"code": code6})
-                    if quote and quote.get("close"):
-                        realtime_price = float(quote.get("close"))
-                        logger.info(f"✅ 从 market_quotes 获取实时股价: {code6} = {realtime_price}元 (原价格: {price_value}元)")
-                        price_value = realtime_price
+                    if quote and quote.get("close") is not None:
+                        try:
+                            realtime_price = float(quote.get("close"))
+                            logger.info(f"✅ 从 market_quotes 获取实时股价: {code6} = {realtime_price}元 (原价格: {price_value}元)")
+                            price_value = realtime_price
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"⚠️ market_quotes 价格转换失败: {e}，使用传入价格: {price_value}元")
                     else:
                         logger.info(f"⚠️ market_quotes 中未找到{code6}的实时股价，使用传入价格: {price_value}元")
                 except Exception as e:
@@ -2794,7 +2798,8 @@ class OptimizedChinaDataProvider:
             if net_profit_ratio and str(net_profit_ratio) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['net_margin'] = f"{float(net_profit_ratio):.1f}%"
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"净利率解析失败: {e}")
                     metrics['net_margin'] = "N/A"
             else:
                 metrics['net_margin'] = "N/A"
@@ -2812,7 +2817,8 @@ class OptimizedChinaDataProvider:
             if eps and str(eps) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['eps'] = float(eps)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"EPS解析失败: {e}")
                     metrics['eps'] = "N/A"
             else:
                 metrics['eps'] = "N/A"
@@ -2822,7 +2828,8 @@ class OptimizedChinaDataProvider:
             if revenue_growth and str(revenue_growth) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['revenue_growth'] = f"{float(revenue_growth):.1f}%"
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"营收增长率解析失败: {e}")
                     metrics['revenue_growth'] = "N/A"
             else:
                 metrics['revenue_growth'] = "N/A"
@@ -2841,7 +2848,8 @@ class OptimizedChinaDataProvider:
             if quick_ratio and str(quick_ratio) not in ['None', 'nan', '--', '']:
                 try:
                     metrics['quick_ratio'] = float(quick_ratio)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"速动比率解析失败: {e}")
                     metrics['quick_ratio'] = "N/A"
             else:
                 metrics['quick_ratio'] = "N/A"
@@ -2890,7 +2898,8 @@ class OptimizedChinaDataProvider:
                             metrics['pe'] = f"{(price_value / eps_val):.1f}倍"
                         else:
                             metrics['pe'] = "N/A（亏损）"
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"PE计算失败: {e}")
                         metrics['pe'] = "N/A"
                 else:
                     metrics['pe'] = "N/A"

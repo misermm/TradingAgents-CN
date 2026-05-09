@@ -442,16 +442,16 @@ class BaoStockProvider(BaseStockDataProvider):
                 name = row_dict.get('code_name', row[1] if len(row) > 1 else '')
                 stock_type = row_dict.get('type', row[4] if len(row) > 4 else '0')
                 status = row_dict.get('status', row[5] if len(row) > 5 else '0')
-                    
-                    # 只保留A股股票 (type=1, status=1)
-                    if stock_type == '1' and status == '1':
-                        # 转换代码格式 sh.600000 -> 600000
-                        clean_code = code.replace('sh.', '').replace('sz.', '')
-                        stock_list.append({
-                            "code": clean_code,
-                            "name": str(name),
-                            "source": "baostock"
-                        })
+                
+                # 只保留A股股票 (type=1, status=1)
+                if stock_type == '1' and status == '1':
+                    # 转换代码格式 sh.600000 -> 600000
+                    clean_code = code.replace('sh.', '').replace('sz.', '')
+                    stock_list.append({
+                        "code": clean_code,
+                        "name": str(name),
+                        "source": "baostock"
+                    })
             
             logger.info(f"✅ BaoStock股票列表获取成功: {len(stock_list)}只股票")
             return stock_list
