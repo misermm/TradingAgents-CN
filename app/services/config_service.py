@@ -3,6 +3,7 @@
 """
 
 import time
+import os
 import asyncio
 import logging
 import re
@@ -1027,22 +1028,34 @@ class ConfigService:
                     "Authorization": f"Bearer {api_key}"
                 }
 
+                if provider_str == "openrouter":
+                    headers["HTTP-Referer"] = "https://tradingagents.cn"
+                    headers["X-Title"] = "TradingAgents-CN"
+
                 data = {
                     "model": llm_config.model_name,
                     "messages": [
                         {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
                     ],
-                    "max_tokens": 200,  # 增加到200，给推理模型（如o1/gpt-5）足够空间
+                    "max_tokens": 200,
                     "temperature": 0.1
                 }
+
+                proxies = {}
+                http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+                https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+                if http_proxy:
+                    proxies["http"] = http_proxy
+                if https_proxy:
+                    proxies["https"] = https_proxy
 
                 logger.info(f"🌐 发送测试请求到: {url}")
                 logger.info(f"📦 使用模型: {llm_config.model_name}")
                 logger.info(f"📦 请求数据: {data}")
 
-                # 发送测试请求
                 response = await asyncio.to_thread(
-                    requests.post, url, json=data, headers=headers, timeout=15
+                    requests.post, url, json=data, headers=headers, timeout=20,
+                    proxies=proxies if proxies else None
                 )
                 response_time = time.time() - start_time
 
@@ -1129,12 +1142,28 @@ class ConfigService:
                             "details": None
                         }
                     except Exception:
+                        if response.status_code >= 500:
+                            content_type = response.headers.get("Content-Type", "")
+                            body_text = response.text[:200] if response.text else ""
+                            if provider_str == "openrouter" and ("text/plain" in content_type or body_text.strip() == "Internal Server Error"):
+                                return {
+                                    "success": False,
+                                    "message": "API测试失败: API Key可能无效或已过期（OpenRouter对无效Key返回500错误），请检查Key是否正确",
+                                    "response_time": response_time,
+                                    "details": None
+                                }
+                            return {
+                                "success": False,
+                                "message": f"API测试失败: 服务器内部错误(HTTP {response.status_code})，请稍后重试",
+                                "response_time": response_time,
+                                "details": None
+                            }
                         return {
-                        "success": False,
-                        "message": f"API测试失败: HTTP {response.status_code}",
-                        "response_time": response_time,
-                        "details": None
-                    }
+                            "success": False,
+                            "message": f"API测试失败: HTTP {response.status_code}",
+                            "response_time": response_time,
+                            "details": None
+                        }
 
         except requests.exceptions.Timeout:
             response_time = time.time() - start_time
@@ -3434,6 +3463,15 @@ class ConfigService:
         """测试Google AI API"""
         try:
             import requests
+            import os
+
+            proxies = {}
+            http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+            https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+            if http_proxy:
+                proxies["http"] = http_proxy
+            if https_proxy:
+                proxies["https"] = https_proxy
 
             # 如果没有指定模型，使用默认模型
             if not model_name:
@@ -3482,7 +3520,7 @@ class ConfigService:
                 }
             }
 
-            response = requests.post(url, json=data, headers=headers, timeout=15)
+            response = requests.post(url, json=data, headers=headers, timeout=15, proxies=proxies if proxies else None)
 
             logger.info(f"📥 [Google AI 测试] 响应状态码: {response.status_code}")
 
@@ -3785,6 +3823,15 @@ class ConfigService:
         """测试OpenRouter API"""
         try:
             import requests
+            import os
+
+            proxies = {}
+            http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+            https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+            if http_proxy:
+                proxies["http"] = http_proxy
+            if https_proxy:
+                proxies["https"] = https_proxy
 
             headers = {
                 "Authorization": f"Bearer {api_key}",
@@ -3792,67 +3839,133 @@ class ConfigService:
                 "X-Title": "TradingAgents-CN"
             }
 
-            models_url = "https://openrouter.ai/api/v1/models"
-            models_resp = requests.get(models_url, headers=headers, timeout=10)
+            auth_url = "https://openrouter.ai/api/v1/auth/key"
+            try:
+                auth_resp = requests.get(auth_url, headers=headers, timeout=15, proxies=proxies if proxies else None)
+                if auth_resp.status_code == 200:
+                    auth_data = auth_resp.json()
+                    key_data = auth_data.get("data", {})
+                    label = key_data.get("label", "")
+                    limit = key_data.get("limit", "")
+                    usage = key_data.get("usage", "")
+                    rate_limit = key_data.get("rate_limit", {})
+                    msg = f"{display_name} API Key 验证成功"
+                    if label:
+                        msg += f"（标签: {label}）"
+                    if isinstance(limit, (int, float)) and limit > 0:
+                        msg += f"，额度: ${usage}/{limit}"
+                    elif isinstance(usage, (int, float)):
+                        msg += f"，已使用: ${usage}"
+                    if rate_limit:
+                        requests_per_min = rate_limit.get("requests", "")
+                        if requests_per_min:
+                            msg += f"，限速: {requests_per_min}次/分钟"
+                    return {
+                        "success": True,
+                        "message": msg
+                    }
+                elif auth_resp.status_code == 401:
+                    return {
+                        "success": False,
+                        "message": f"{display_name} API Key 无效或已过期，请检查后重试"
+                    }
+                elif auth_resp.status_code == 429:
+                    return {
+                        "success": True,
+                        "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                    }
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+                raise
+            except Exception as e:
+                logger.warning(f"OpenRouter auth接口异常，尝试chat测试: {e}")
 
-            if models_resp.status_code == 200:
-                models_data = models_resp.json()
-                model_count = len(models_data.get("data", []))
-                return {
-                    "success": True,
-                    "message": f"{display_name} API连接测试成功，可用模型 {model_count} 个"
-                }
-            elif models_resp.status_code == 401:
-                return {
-                    "success": False,
-                    "message": f"{display_name} API Key 无效，请检查后重试"
-                }
-            elif models_resp.status_code == 429:
-                return {
-                    "success": True,
-                    "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
-                }
-            else:
-                chat_url = "https://openrouter.ai/api/v1/chat/completions"
+            free_models = [
+                "meta-llama/llama-3.2-3b-instruct:free",
+                "google/gemma-2-9b-it:free",
+                "qwen/qwen-2-7b-instruct:free",
+            ]
+            chat_url = "https://openrouter.ai/api/v1/chat/completions"
+            last_error = ""
+            for model in free_models:
                 data = {
-                    "model": "meta-llama/llama-3.2-3b-instruct:free",
+                    "model": model,
                     "messages": [
                         {"role": "user", "content": "Hi"}
                     ],
                     "max_tokens": 5,
                     "temperature": 0.1
                 }
-                chat_resp = requests.post(chat_url, json=data, headers={**headers, "Content-Type": "application/json"}, timeout=15)
-                if chat_resp.status_code == 200:
-                    return {
-                        "success": True,
-                        "message": f"{display_name} API连接测试成功"
-                    }
-                elif chat_resp.status_code == 429:
-                    return {
-                        "success": True,
-                        "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
-                    }
-                elif chat_resp.status_code == 401:
-                    return {
-                        "success": False,
-                        "message": f"{display_name} API Key 无效，请检查后重试"
-                    }
-                else:
-                    error_msg = ""
-                    try:
-                        error_body = chat_resp.json()
-                        error_msg = error_body.get("error", {}).get("message", "")
-                    except Exception:
-                        pass
-                    msg = f"{display_name} API测试失败: HTTP {chat_resp.status_code}"
-                    if error_msg:
-                        msg += f" - {error_msg}"
-                    return {
-                        "success": False,
-                        "message": msg
-                    }
+                try:
+                    chat_resp = requests.post(
+                        chat_url, json=data,
+                        headers={**headers, "Content-Type": "application/json"},
+                        timeout=20, proxies=proxies if proxies else None
+                    )
+                    if chat_resp.status_code == 200:
+                        return {
+                            "success": True,
+                            "message": f"{display_name} API连接测试成功（模型: {model}）"
+                        }
+                    elif chat_resp.status_code == 429:
+                        return {
+                            "success": True,
+                            "message": f"{display_name} API Key 有效（当前请求频率受限，稍后可正常使用）"
+                        }
+                    elif chat_resp.status_code == 401:
+                        return {
+                            "success": False,
+                            "message": f"{display_name} API Key 无效，请检查后重试"
+                        }
+                    elif chat_resp.status_code == 403:
+                        return {
+                            "success": False,
+                            "message": f"{display_name} API Key 无权限访问，请检查Key状态和余额"
+                        }
+                    elif chat_resp.status_code in (400, 404, 422):
+                        try:
+                            err = chat_resp.json().get("error", {}).get("message", "")
+                        except Exception:
+                            err = ""
+                        last_error = f"模型 {model} 不可用" + (f": {err}" if err else "")
+                        continue
+                    elif chat_resp.status_code >= 500:
+                        is_plain_text = "text/plain" in chat_resp.headers.get("Content-Type", "")
+                        body_text = chat_resp.text[:200] if chat_resp.text else ""
+                        if is_plain_text or body_text == "Internal Server Error":
+                            last_error = "API Key 可能无效或已过期（服务器返回500错误，通常表示认证失败）"
+                            break
+                        last_error = f"OpenRouter服务器错误: HTTP {chat_resp.status_code}"
+                        continue
+                    else:
+                        last_error = f"HTTP {chat_resp.status_code}"
+                        break
+                except requests.exceptions.ConnectionError:
+                    last_error = "网络连接失败，请检查代理配置（HTTP_PROXY/HTTPS_PROXY）是否正确"
+                    break
+                except requests.exceptions.Timeout:
+                    last_error = "请求超时，请检查网络连接或代理配置"
+                    break
 
+            msg = f"{display_name} API测试失败"
+            if last_error:
+                msg += f": {last_error}"
+            if not proxies and not http_proxy and not https_proxy:
+                msg += "。提示: 未检测到代理配置，国内访问OpenRouter需设置HTTP_PROXY/HTTPS_PROXY"
+            return {
+                "success": False,
+                "message": msg
+            }
+
+        except requests.exceptions.ConnectionError:
+            return {
+                "success": False,
+                "message": f"{display_name} 网络连接失败，请检查网络或代理配置（HTTP_PROXY/HTTPS_PROXY）"
+            }
+        except requests.exceptions.Timeout:
+            return {
+                "success": False,
+                "message": f"{display_name} 请求超时，请检查网络连接"
+            }
         except Exception as e:
             return {
                 "success": False,
@@ -3863,13 +3976,22 @@ class ConfigService:
         """测试OpenAI API"""
         try:
             import requests
+            import os
+
+            proxies = {}
+            http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+            https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+            if http_proxy:
+                proxies["http"] = http_proxy
+            if https_proxy:
+                proxies["https"] = https_proxy
 
             headers = {
                 "Authorization": f"Bearer {api_key}"
             }
 
             models_url = "https://api.openai.com/v1/models"
-            models_resp = requests.get(models_url, headers=headers, timeout=10)
+            models_resp = requests.get(models_url, headers=headers, timeout=10, proxies=proxies if proxies else None)
 
             if models_resp.status_code == 200:
                 models_data = models_resp.json()
@@ -3898,7 +4020,7 @@ class ConfigService:
                     "max_tokens": 5,
                     "temperature": 0.1
                 }
-                response = requests.post(url, json=data, headers={**headers, "Content-Type": "application/json"}, timeout=10)
+                response = requests.post(url, json=data, headers={**headers, "Content-Type": "application/json"}, timeout=10, proxies=proxies if proxies else None)
                 if response.status_code == 200:
                     return {
                         "success": True,
@@ -3944,6 +4066,15 @@ class ConfigService:
         """测试Anthropic API"""
         try:
             import requests
+            import os
+
+            proxies = {}
+            http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+            https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+            if http_proxy:
+                proxies["http"] = http_proxy
+            if https_proxy:
+                proxies["https"] = https_proxy
 
             url = "https://api.anthropic.com/v1/messages"
 
@@ -3961,7 +4092,7 @@ class ConfigService:
                 ]
             }
 
-            response = requests.post(url, json=data, headers=headers, timeout=10)
+            response = requests.post(url, json=data, headers=headers, timeout=10, proxies=proxies if proxies else None)
 
             if response.status_code == 200:
                 result = response.json()
@@ -4035,7 +4166,7 @@ class ConfigService:
                 "temperature": 0.1
             }
 
-            response = requests.post(url, json=data, headers=headers, timeout=15)
+            response = requests.post(url, json=data, headers=headers, timeout=15, proxies=proxies if proxies else None)
 
             if response.status_code == 200:
                 result = response.json()
@@ -4711,6 +4842,15 @@ class ConfigService:
         """测试 OpenAI 兼容 API（用于聚合渠道和自定义厂家）"""
         try:
             import requests
+            import os
+
+            proxies = {}
+            http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+            https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+            if http_proxy:
+                proxies["http"] = http_proxy
+            if https_proxy:
+                proxies["https"] = https_proxy
 
             # 如果没有提供 base_url，使用默认值
             if not base_url:

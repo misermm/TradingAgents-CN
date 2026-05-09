@@ -1,13 +1,32 @@
 # 开发进度文档
-**更新时间**: 2026-05-09 (第二十七轮 - Ralph Loop 分析准确性优化续)
+**更新时间**: 2026-05-09 (第二十八轮 - LLM API 测试代理支持)
 **当前项目目标**: 全链路数据准确性修复 + A股/港股/美股分析逻辑Bug修复 + 分析准确性优化
 
 ---
 
 ## 当前状态概要
 
-**最近完成的改动**: 第二十七轮 Ralph Loop - 共修复22个Bug + 4项分析正确率优化
+**最近完成的改动**: 第二十八轮 - 为国外 LLM 供应商 API 测试方法添加 HTTP 代理支持
 **下一步从哪接着做**: 继续深度搜索端到端分析测试 + 更多数据层边界条件
+
+### 本轮修复汇总 (2026-05-09 第二十八轮 — LLM API 测试代理支持)
+
+为 `app/services/config_service.py` 中4个国外 LLM 供应商的 API 测试方法添加 HTTP 代理支持，使中国大陆用户在配置 HTTP_PROXY/HTTPS_PROXY 后可正常测试 Google、OpenAI、Anthropic 等国外 API 连接。
+
+#### 修改内容
+
+| # | 方法 | 修改内容 |
+|---|------|---------|
+| 1 | `_test_google_api` | 添加 `import os` + 代理构建 + `requests.post` 添加 `proxies` 参数 |
+| 2 | `_test_openai_api` | 添加 `import os` + 代理构建 + `requests.get` 和 `requests.post` 均添加 `proxies` 参数 |
+| 3 | `_test_anthropic_api` | 添加 `import os` + 代理构建 + `requests.post` 添加 `proxies` 参数 |
+| 4 | `_test_openai_compatible_api` | 添加 `import os` + 代理构建 + `requests.post` 添加 `proxies` 参数 |
+
+**未修改**: `_test_deepseek_api`、`_test_dashscope_api`、`_test_qianfan_api`（国内 API 无需代理）
+
+**代理模式**: 与已有的 `_test_openrouter_api` 完全一致，从环境变量 `HTTP_PROXY`/`HTTPS_PROXY` 读取代理配置
+
+**关键文件入口**: `app/services/config_service.py`
 
 ### 本轮修复汇总 (2026-05-09 第二十七轮 — Ralph Loop 分析准确性优化续)
 
