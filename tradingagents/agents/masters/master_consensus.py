@@ -1,5 +1,6 @@
 import re
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.agents.masters.base_master import MASTER_ANALYST_CONFIG, QUANTITATIVE_ANALYZERS, _init_quantitative_analyzers
 from tradingagents.agents.masters import MASTER_ANALYST_INFO
 
@@ -175,14 +176,14 @@ def create_master_consensus(llm=None):
                 prompt = MASTER_CONSENSUS_PROMPT.replace("{master_reports_section}", master_reports_section).replace("{bullish_count}", str(bullish_count)).replace("{neutral_count}", str(neutral_count)).replace("{bearish_count}", str(bearish_count)).replace("{avg_score:.1f}", f"{avg_score:.1f}").replace("{avg_max:.1f}", f"{avg_max:.1f}")
                 prompt = re.sub(r'\{[^{}]+\}', 'N/A', prompt)
                 from langchain_core.messages import HumanMessage
-                result = llm.invoke([HumanMessage(content=prompt)])
+                result = retry_llm_invoke(llm.invoke, [HumanMessage(content=prompt)], max_retries=2, base_delay=2.0)
                 consensus_report = result.content if hasattr(result, 'content') else str(result)
                 structured_data = _extract_structured_json(consensus_report)
                 if structured_data:
                     logger.info(f"[MasterConsensus] 结构化数据: signal={structured_data.get('consensus_signal')}, confidence={structured_data.get('confidence_level')}")
                 logger.info(f"[MasterConsensus] LLM-generated consensus report, length={len(consensus_report)}")
             except Exception as e:
-                logger.error(f"[MasterConsensus] LLM consensus generation failed, falling back to statistical: {e}")
+                logger.error(f"[MasterConsensus] LLM consensus generation failed(已重试), falling back to statistical: {e}")
                 consensus_report = _generate_statistical_consensus(
                     reports_data, quant_signals, bullish_count, neutral_count, bearish_count, avg_score, avg_max, total_quant
                 )

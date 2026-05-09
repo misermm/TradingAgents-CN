@@ -4,12 +4,25 @@
 """
 
 import re
+import unicodedata
 from typing import Dict, Tuple, Optional
 from enum import Enum
 
-# 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+
+
+def clean_stock_name(name: str) -> str:
+    if not name:
+        return name
+    name = re.sub(r'\s+', '', name)
+    name = name.replace('\u3000', '')
+    name = name.replace('\u00a0', '')
+    normalized = unicodedata.normalize('NFKC', name)
+    if normalized != name:
+        name = normalized
+        name = re.sub(r'\s+', '', name)
+    return name
 
 
 class StockMarket(Enum):

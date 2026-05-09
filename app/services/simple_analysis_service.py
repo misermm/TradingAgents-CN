@@ -1995,14 +1995,28 @@ class SimpleAnalysisService:
                 risk_level = "高"
 
             reasoning = formatted_decision.get("reasoning", "") if isinstance(formatted_decision, dict) else ""
-            key_points = []
-            if reasoning:
+            key_points = formatted_decision.get("key_points", []) if isinstance(formatted_decision, dict) else []
+            if not key_points and reasoning:
                 for line in reasoning.split("\n"):
                     stripped = line.strip()
                     if stripped and (stripped.startswith("-") or stripped.startswith("1") or stripped.startswith("2") or stripped.startswith("3") or stripped.startswith("4") or stripped.startswith("5")):
                         point = stripped.lstrip("-0123456789. ").strip()
                         if point and len(point) > 5:
                             key_points.append(point)
+                        if len(key_points) >= 5:
+                            break
+            if not key_points and not reasoning:
+                master_reports = state.get("master_reports", {}) if isinstance(state, dict) else {}
+                for master_id, report in master_reports.items():
+                    if isinstance(report, str) and len(report) > 50:
+                        for line in report.split("\n"):
+                            stripped = line.strip()
+                            if "建议" in stripped or "评级" in stripped or "结论" in stripped:
+                                point = stripped.lstrip("-*•0123456789. ").strip()
+                                if point and len(point) > 5:
+                                    key_points.append(f"[{master_id}] {point}")
+                                if len(key_points) >= 5:
+                                    break
                         if len(key_points) >= 5:
                             break
 
@@ -2836,6 +2850,8 @@ class SimpleAnalysisService:
 
                     if stock_info and "股票名称:" in stock_info:
                         stock_name = stock_info.split("股票名称:")[1].split("\n")[0].strip()
+                        from tradingagents.utils.stock_utils import clean_stock_name
+                        stock_name = clean_stock_name(stock_name)
                         logger.info(f"✅ 获取A股名称: {stock_symbol} -> {stock_name}")
                     else:
                         # 降级方案：尝试直接从数据源管理器获取

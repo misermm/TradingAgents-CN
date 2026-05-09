@@ -3,6 +3,7 @@ import time
 import json
 
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.utils.tool_logging import log_analyst_module
 logger = get_logger("analysts.social_media")
 
@@ -245,10 +246,10 @@ def create_social_media_analyst(llm, toolkit):
         chain = prompt | llm.bind_tools(tools)
 
         try:
-            result = chain.invoke({"messages": state["messages"]})
+            result = retry_llm_invoke(chain.invoke, {"messages": state["messages"]}, max_retries=3, base_delay=2.0)
         except Exception as llm_err:
             err_type = type(llm_err).__name__
-            logger.error(f"❌ [社交媒体分析师] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            logger.error(f"❌ [社交媒体分析师] LLM调用失败(已重试): {err_type}: {str(llm_err)[:200]}")
             if "RateLimit" in err_type or "429" in str(llm_err):
                 fallback = f"## 社交媒体情绪分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成情绪分析报告。建议稍后重试或更换模型。"
             else:
@@ -330,14 +331,14 @@ def create_social_media_analyst(llm, toolkit):
                                 tool_messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_id))
                         
                         all_messages = state["messages"] + [result] + tool_messages
-                        analysis_result = llm.invoke(all_messages)
+                        analysis_result = retry_llm_invoke(llm.invoke, all_messages, max_retries=2, base_delay=2.0)
                         report = analysis_result.content if hasattr(analysis_result, 'content') else str(analysis_result)
                         logger.info(f"💭 [社媒分析师] 工具调用后生成报告，长度: {len(report)}")
                     except Exception as e:
-                        logger.error(f"💭 [社媒分析师] 工具调用处理失败: {e}")
+                        logger.error(f"💭 [社媒分析师] 工具调用处理失败(已重试): {e}")
                         report = result.content if result.content else _generate_fallback_sentiment_report(ticker, company_name, state, current_date)
         except Exception as e:
-            logger.error(f"❌ [社交媒体分析师] 报告生成过程异常: {e}")
+            logger.error(f"❌ [社交媒体分析师] 报告生成过程异常(已重试): {e}")
             report = report or f"## 社交媒体情绪分析\n\n⚠️ 分析过程出现异常，无法生成完整报告。"
 
         # 🔧 更新工具调用计数器

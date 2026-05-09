@@ -11,6 +11,7 @@ from tradingagents.agents.utils.google_tool_handler import GoogleToolCallHandler
 from tradingagents.agents.utils.instrument_utils import build_instrument_context
 from tradingagents.llm_clients import create_llm_client
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.utils.tool_logging import log_analyst_module
 
 logger = get_logger("default")
@@ -456,22 +457,15 @@ def _generate_report_from_prefetched(
         ]
     )
     chain = prompt_template | llm
-    max_retries = 2
-    for attempt in range(max_retries + 1):
-        try:
-            result = chain.invoke({"analysis_request": analysis_prompt})
-            return _validate_report(result.content if hasattr(result, "content") else str(result), prefetched_data, name_cn)
-        except Exception as e:
-            if attempt < max_retries:
-                logger.warning(f"[{name_cn}] LLM调用失败(第{attempt+1}次)，重试中: {type(e).__name__}: {str(e)[:100]}")
-                import time
-                time.sleep(2 * (attempt + 1))
-            else:
-                logger.error(f"[{name_cn}] LLM调用失败(已重试{max_retries}次): {type(e).__name__}: {str(e)[:200]}")
-                return _validate_report(
-                    f"## {name_cn}投资大师分析\n\n⚠️ LLM调用失败，无法生成详细分析报告。\n\n错误类型: {type(e).__name__}\n建议: 检查模型配置或切换到其他大模型。",
-                    prefetched_data, name_cn
-                )
+    try:
+        result = retry_llm_invoke(chain.invoke, {"analysis_request": analysis_prompt}, max_retries=3, base_delay=2.0)
+        return _validate_report(result.content if hasattr(result, "content") else str(result), prefetched_data, name_cn)
+    except Exception as e:
+        logger.error(f"[{name_cn}] LLM调用失败(已重试): {type(e).__name__}: {str(e)[:200]}")
+        return _validate_report(
+            f"## {name_cn}投资大师分析\n\n⚠️ LLM调用失败(已重试)，无法生成详细分析报告。\n\n错误类型: {type(e).__name__}\n建议: 检查模型配置或切换到其他大模型。",
+            prefetched_data, name_cn
+        )
 
 
 def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framework: str, output_format: str, tools_list: Optional[List[Any]] = None):
@@ -686,7 +680,7 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
             chain = prompt | fresh_llm
 
         try:
-            result = chain.invoke(
+            result = retry_llm_invoke(chain.invoke,
                 {
                     "messages": state["messages"],
                     "tool_names": ", ".join(tool_names),
@@ -694,10 +688,10 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
                     "current_date": current_date,
                     "company_name": company_name,
                     "ticker": ticker,
-                }
+                }, max_retries=3, base_delay=2.0
             )
         except Exception as e:
-            logger.error(f"{log_tag} LLM调用失败(bind_tools模式): {type(e).__name__}: {str(e)[:200]}")
+            logger.error(f"{log_tag} LLM调用失败(已重试, bind_tools模式): {type(e).__name__}: {str(e)[:200]}")
             report = f"## {name_cn}投资大师分析\n\n⚠️ LLM调用失败: {type(e).__name__}\n\n基于已有数据的简化分析：\n{raw_data_str[:2000] if raw_data_str else '数据不可用'}"
             return {
                 "master_reports": {master_id: report},

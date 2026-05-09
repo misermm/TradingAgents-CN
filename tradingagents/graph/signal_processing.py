@@ -77,6 +77,19 @@ class SignalProcessor:
                 'reasoning': '信号内容为空，默认持有建议'
             }
 
+        error_indicators = ["分析异常中断", "LLM调用失败", "InternalServerError", "分析流程执行异常", "风控分析异常"]
+        is_error_signal = any(ind in full_signal for ind in error_indicators)
+        if is_error_signal:
+            logger.warning(f"⚠️ [SignalProcessor] 检测到异常信号，降低置信度")
+            return {
+                'action': '持有',
+                'target_price': None,
+                'confidence': 0.3,
+                'risk_score': 0.7,
+                'reasoning': f'分析过程出现异常，建议谨慎观望。{full_signal[:100]}',
+                'key_points': ['分析过程异常，结果不可靠', '建议检查模型配置后重试'],
+            }
+
         # 检测股票类型和货币
         from tradingagents.utils.stock_utils import StockUtils
 

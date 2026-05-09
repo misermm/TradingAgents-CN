@@ -6,9 +6,12 @@ import traceback
 # 导入分析模块日志装饰器
 from tradingagents.utils.tool_logging import log_analyst_module
 
-# 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+
+from tradingagents.utils.llm_retry import retry_llm_invoke
+
+from tradingagents.utils.stock_utils import clean_stock_name
 
 # 导入Google工具调用处理器
 from tradingagents.agents.utils.google_tool_handler import GoogleToolCallHandler
@@ -37,6 +40,7 @@ def _get_company_name(ticker: str, market_info: dict) -> str:
             # 解析股票名称
             if stock_info and "股票名称:" in stock_info:
                 company_name = stock_info.split("股票名称:")[1].split("\n")[0].strip()
+                company_name = clean_stock_name(company_name)
                 logger.info(f"✅ [市场分析师] 成功获取中国股票名称: {ticker} -> {company_name}")
                 return company_name
             else:
@@ -245,12 +249,12 @@ def create_market_analyst(llm, toolkit):
 
         chain = prompt | llm.bind_tools(tools)
 
-        logger.info(f"📊 [市场分析师] 开始调用LLM...")
+        logger.info(f"📊 [市场分析师] 开始调用LLM（带重试）...")
         try:
-            result = chain.invoke({"messages": state["messages"]})
+            result = retry_llm_invoke(chain.invoke, {"messages": state["messages"]}, max_retries=3, base_delay=2.0)
         except Exception as llm_err:
             err_type = type(llm_err).__name__
-            logger.error(f"❌ [市场分析师] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            logger.error(f"❌ [市场分析师] LLM调用失败(已重试): {err_type}: {str(llm_err)[:200]}")
             if "RateLimit" in err_type or "429" in str(llm_err):
                 fallback = f"## 市场技术分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成市场分析报告。建议稍后重试或更换模型。"
             else:
@@ -483,7 +487,7 @@ def create_market_analyst(llm, toolkit):
                     messages = state["messages"] + [result] + tool_messages + [HumanMessage(content=analysis_prompt)]
 
                     # 生成最终分析报告
-                    final_result = llm.invoke(messages)
+                    final_result = retry_llm_invoke(llm.invoke, messages, max_retries=2, base_delay=2.0)
                     report = final_result.content
 
                     logger.info(f"📊 [市场分析师] 生成完整分析报告，长度: {len(report)}")

@@ -117,6 +117,12 @@ def create_data_prefetch_node(toolkit):
                 snapshot_dict = {}
                 logger.warning(f"{log_tag} 量化数据获取失败: {e}")
 
+        moat_context = ""
+        try:
+            moat_context = _get_moat_context(ticker, market_info, fundamentals_data, snapshot_dict, log_tag)
+        except Exception as e:
+            logger.warning(f"{log_tag} 护城河分析上下文生成失败: {e}")
+
         logger.info(f"{log_tag} ===== 预获取完成 =====")
 
         fundamentals_with_industry = str(fundamentals_data) if fundamentals_data else ""
@@ -126,6 +132,8 @@ def create_data_prefetch_node(toolkit):
             fundamentals_with_industry += f"\n\n## 💰 资金面数据\n{capital_flow_data}"
         if announcement_data:
             fundamentals_with_industry += f"\n\n## 📋 公告信号数据\n{announcement_data}"
+        if moat_context:
+            fundamentals_with_industry += f"\n\n## 🏰 护城河定性分析参考\n{moat_context}"
 
         return {
             "prefetched_fundamentals_data": fundamentals_with_industry,
@@ -314,3 +322,112 @@ def _get_china_quant_data(ticker: str, log_tag: str) -> tuple:
     except Exception as e:
         logger.debug(f"{log_tag} 量化分析专用数据生成失败: {e}")
         return "", {}
+
+
+def _get_moat_context(ticker: str, market_info: dict, fundamentals_data: str, snapshot_dict: dict, log_tag: str) -> str:
+    if not market_info.get('is_china'):
+        return ""
+
+    lines = []
+    roe_value = None
+    gross_margin = None
+    revenue_growth = None
+
+    if snapshot_dict:
+        for key in ['roe', 'ROE', '净资产收益率', 'roe_trend']:
+            val = snapshot_dict.get(key)
+            if val is not None:
+                try:
+                    roe_value = float(str(val).replace('%', '').strip())
+                except (ValueError, TypeError):
+                    pass
+                break
+        for key in ['gross_margin', '毛利率', 'gross_profit_margin']:
+            val = snapshot_dict.get(key)
+            if val is not None:
+                try:
+                    gross_margin = float(str(val).replace('%', '').strip())
+                except (ValueError, TypeError):
+                    pass
+                break
+        for key in ['revenue_growth', '营收增长率', 'revenue_yoy']:
+            val = snapshot_dict.get(key)
+            if val is not None:
+                try:
+                    revenue_growth = float(str(val).replace('%', '').strip())
+                except (ValueError, TypeError):
+                    pass
+                break
+
+    data_str = str(fundamentals_data) if fundamentals_data else ""
+
+    if roe_value is None:
+        import re
+        roe_patterns = [r'ROE[：:]\s*([\d.]+)', r'净资产收益率[：:]\s*([\d.]+)', r'ROE.*?([\d.]+)%']
+        for pattern in roe_patterns:
+            match = re.search(pattern, data_str)
+            if match:
+                try:
+                    roe_value = float(match.group(1))
+                except ValueError:
+                    pass
+                break
+
+    if gross_margin is None:
+        import re
+        gm_patterns = [r'毛利率[：:]\s*([\d.]+)', r'gross_margin[：:]\s*([\d.]+)']
+        for pattern in gm_patterns:
+            match = re.search(pattern, data_str)
+            if match:
+                try:
+                    gross_margin = float(match.group(1))
+                except ValueError:
+                    pass
+                break
+
+    if roe_value is not None:
+        if roe_value > 20:
+            lines.append(f"- ROE={roe_value}%，持续高于15%阈值，暗示可能存在竞争优势（护城河）")
+        elif roe_value > 15:
+            lines.append(f"- ROE={roe_value}%，接近15%阈值，存在一定竞争壁垒")
+        else:
+            lines.append(f"- ROE={roe_value}%，低于15%阈值，护城河可能较窄或不存在")
+
+    if gross_margin is not None:
+        if gross_margin > 50:
+            lines.append(f"- 毛利率={gross_margin}%，显著高于行业均值，品牌溢价或成本优势明显")
+        elif gross_margin > 30:
+            lines.append(f"- 毛利率={gross_margin}%，处于中等水平，存在一定定价能力")
+        else:
+            lines.append(f"- 毛利率={gross_margin}%，偏低，定价能力有限")
+
+    if revenue_growth is not None:
+        if revenue_growth > 15:
+            lines.append(f"- 营收增长率={revenue_growth}%，增长强劲，市场份额可能扩张")
+        elif revenue_growth > 5:
+            lines.append(f"- 营收增长率={revenue_growth}%，稳定增长")
+        else:
+            lines.append(f"- 营收增长率={revenue_growth}%，增长乏力")
+
+    try:
+        import akshare as ak
+        stock_info_df = ak.stock_individual_info_em(symbol=ticker)
+        industry = ""
+        for _, row in stock_info_df.iterrows():
+            if "行业" in str(row.iloc[0]):
+                industry = str(row.iloc[1])
+                break
+        if industry:
+            lines.append(f"- 所属行业: {industry}")
+            moat_industries = ["白酒", "银行", "保险", "医药", "互联网", "软件", "半导体", "新能源", "食品饮料"]
+            for mi in moat_industries:
+                if mi in industry:
+                    lines.append(f"  行业'{mi}'通常具有较强护城河特征（品牌/许可/网络效应）")
+                    break
+    except Exception:
+        pass
+
+    if lines:
+        logger.info(f"{log_tag} ✅ 护城河分析上下文生成成功，{len(lines)}个指标")
+        return "\n".join(lines)
+    return ""

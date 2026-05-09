@@ -737,6 +737,12 @@ class TradingAgentsGraph:
         current_node_start = None  # 当前节点开始时间
         current_node_name = None  # 当前节点名称
 
+        try:
+            from tradingagents.utils.llm_retry import TokenCounter
+            TokenCounter.get().reset()
+        except Exception:
+            pass
+
         # 保存task_id用于后续保存性能数据
         self._current_task_id = task_id
 
@@ -998,6 +1004,16 @@ class TradingAgentsGraph:
         decision = self.process_signal(trade_decision, company_name)
         decision['model_info'] = model_info
 
+        try:
+            from tradingagents.utils.llm_retry import TokenCounter
+            tc = TokenCounter.get()
+            decision['tokens_used'] = tc.total_tokens
+            decision['token_details'] = tc.to_dict()
+            logger.info(f"📊 [Token] 总计: {tc.total_tokens} tokens (prompt={tc.prompt_tokens}, completion={tc.completion_tokens}, calls={tc.call_count})")
+            tc.reset()
+        except Exception:
+            decision['tokens_used'] = 0
+
         # Return decision and processed signal
         return final_state, decision
 
@@ -1011,12 +1027,15 @@ class TradingAgentsGraph:
             import traceback
             logger.error(f"❌ [Graph Stream] 堆栈:\n{traceback.format_exc()[:1000]}")
 
-            logger.warning(f"⚠️ [Graph Stream] 分析流程异常，尝试返回已收集的状态")
+            logger.warning(f"⚠️ [Graph Stream] 分析流程异常，生成降级决策")
 
             yield {
                 "error_handler": {
                     "error_report": f"⚠️ 分析流程执行异常: {type(e).__name__}: {str(e)[:200]}",
-                    "final_trade_decision": f"分析异常中断: {type(e).__name__}",
+                    "final_trade_decision": (
+                        f"⚠️ 分析异常中断({type(e).__name__})，部分分析可能不完整。\n"
+                        f"建议：1)检查模型配置是否正确 2)更换更稳定的模型 3)稍后重试"
+                    ),
                     "messages": [],
                 }
             }

@@ -2635,6 +2635,8 @@ class DataSourceManager:
                 doc = get_basics_from_cache(symbol)
                 if doc:
                     name = doc.get('name') or doc.get('stock_name') or ''
+                    from tradingagents.utils.stock_utils import clean_stock_name
+                    name = clean_stock_name(name)
                     # 规范化行业与板块（避免把“中小板/创业板”等板块值误作行业）
                     board_labels = {'主板', '中小板', '创业板', '科创板'}
                     raw_industry = (doc.get('industry') or doc.get('industry_name') or '').strip()

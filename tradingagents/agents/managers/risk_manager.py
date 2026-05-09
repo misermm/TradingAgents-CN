@@ -2,6 +2,7 @@ import time
 import json
 
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.agents.utils.instrument_utils import build_instrument_context
 from tradingagents.agents.utils.text_tool_call_parser import TextToolCallParser
 logger = get_logger("default")
@@ -18,43 +19,42 @@ def _sanitize_report(report: str, report_name: str) -> str:
 
 def create_risk_manager(llm, memory):
     def risk_manager_node(state) -> dict:
+        try:
+            company_name = state["company_of_interest"]
+            instrument_context = build_instrument_context(company_name)
 
-        company_name = state["company_of_interest"]
-        instrument_context = build_instrument_context(company_name)
+            history = state["risk_debate_state"]["history"]
+            risk_debate_state = state["risk_debate_state"]
+            market_research_report = _sanitize_report(state["market_report"], "市场分析")
+            news_report = _sanitize_report(state["news_report"], "新闻分析")
+            fundamentals_report = _sanitize_report(state["fundamentals_report"], "基本面分析")
+            sentiment_report = _sanitize_report(state["sentiment_report"], "情绪分析")
+            trader_plan = state["investment_plan"]
+            master_consensus = state.get("master_consensus_report", "")
 
-        history = state["risk_debate_state"]["history"]
-        risk_debate_state = state["risk_debate_state"]
-        market_research_report = _sanitize_report(state["market_report"], "市场分析")
-        news_report = _sanitize_report(state["news_report"], "新闻分析")
-        fundamentals_report = _sanitize_report(state["fundamentals_report"], "基本面分析")
-        sentiment_report = _sanitize_report(state["sentiment_report"], "情绪分析")
-        trader_plan = state["investment_plan"]
-        master_consensus = state.get("master_consensus_report", "")
+            curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
-
-        if master_consensus and master_consensus.strip():
-            master_consensus_section = f"""
+            if master_consensus and master_consensus.strip():
+                master_consensus_section = f"""
 **投资大师共识意见：**
 {master_consensus}
 
 **重要提示**：以上是投资大师团队（巴菲特、林奇、格雷厄姆等）的共识分析。请将大师共识作为重要参考，但不是唯一依据。当大师共识与常规分析结论冲突时，需在决策中明确说明并给出理由。
 """
-        else:
-            master_consensus_section = ""
+            else:
+                master_consensus_section = ""
 
-        # 安全检查：确保memory不为None
-        if memory is not None:
-            past_memories = memory.get_memories(curr_situation, n_matches=2)
-        else:
-            logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
-            past_memories = []
+            if memory is not None:
+                past_memories = memory.get_memories(curr_situation, n_matches=2)
+            else:
+                logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
+                past_memories = []
 
-        past_memory_str = ""
-        for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec["recommendation"] + "\n\n"
+            past_memory_str = ""
+            for i, rec in enumerate(past_memories, 1):
+                past_memory_str += rec["recommendation"] + "\n\n"
 
-        prompt = f"""作为风险管理委员会主席和辩论主持人，您的目标是评估三位风险分析师——激进、中性和安全/保守——之间的辩论，并确定交易员的最佳行动方案。您的决策必须产生明确的建议：买入、卖出或持有。只有在有具体论据强烈支持时才选择持有，而不是在所有方面都似乎有效时作为后备选择。力求清晰和果断。
+            prompt = f"""作为风险管理委员会主席和辩论主持人，您的目标是评估三位风险分析师——激进、中性和安全/保守——之间的辩论，并确定交易员的最佳行动方案。您的决策必须产生明确的建议：买入、卖出或持有。只有在有具体论据强烈支持时才选择持有，而不是在所有方面都似乎有效时作为后备选择。力求清晰和果断。
 
 决策指导原则：
 1. **总结关键论点**：提取每位分析师的最强观点，重点关注与背景的相关性。
@@ -79,76 +79,43 @@ def create_risk_manager(llm, memory):
 
 专注于可操作的见解和持续改进。建立在过去经验教训的基础上，批判性地评估所有观点，确保每个决策都能带来更好的结果。请用中文撰写所有分析内容和建议。"""
 
-        # 📊 统计 prompt 大小
-        prompt_length = len(prompt)
-        # 粗略估算 token 数量（中文约 1.5-2 字符/token，英文约 4 字符/token）
-        estimated_tokens = int(prompt_length / 1.8)  # 保守估计
+            prompt_length = len(prompt)
+            estimated_tokens = int(prompt_length / 1.8)
 
-        logger.info(f"📊 [Risk Manager] Prompt 统计:")
-        logger.info(f"   - 辩论历史长度: {len(history)} 字符")
-        logger.info(f"   - 交易员计划长度: {len(trader_plan)} 字符")
-        logger.info(f"   - 历史记忆长度: {len(past_memory_str)} 字符")
-        logger.info(f"   - 总 Prompt 长度: {prompt_length} 字符")
-        logger.info(f"   - 估算输入 Token: ~{estimated_tokens} tokens")
+            logger.info(f"📊 [Risk Manager] Prompt 统计:")
+            logger.info(f"   - 辩论历史长度: {len(history)} 字符")
+            logger.info(f"   - 交易员计划长度: {len(trader_plan)} 字符")
+            logger.info(f"   - 历史记忆长度: {len(past_memory_str)} 字符")
+            logger.info(f"   - 总 Prompt 长度: {prompt_length} 字符")
+            logger.info(f"   - 估算输入 Token: ~{estimated_tokens} tokens")
 
-        # 增强的LLM调用，包含错误处理和重试机制
-        max_retries = 3
-        retry_count = 0
-        response_content = ""
+            start_time = time.time()
 
-        while retry_count < max_retries:
-            start_time = time.time()  # 在 try 块之前初始化，确保 except 块中可用
-            try:
-                logger.info(f"🔄 [Risk Manager] 调用LLM生成交易决策 (尝试 {retry_count + 1}/{max_retries})")
+            logger.info(f"🔄 [Risk Manager] 调用LLM生成交易决策")
+            response = retry_llm_invoke(llm.invoke, prompt, max_retries=3, base_delay=2.0)
 
-                response = llm.invoke(prompt)
+            elapsed_time = time.time() - start_time
 
-                # ⏱️ 记录结束时间
-                elapsed_time = time.time() - start_time
-                
-                if response and hasattr(response, 'content') and response.content:
-                    response_content = response.content.strip()
+            response_content = ""
+            if response and hasattr(response, 'content') and response.content:
+                response_content = response.content.strip()
 
-                    # 📊 统计响应信息
-                    response_length = len(response_content)
-                    estimated_output_tokens = int(response_length / 1.8)
+                response_length = len(response_content)
+                estimated_output_tokens = int(response_length / 1.8)
 
-                    # 尝试获取实际的 token 使用情况（如果 LLM 返回了）
-                    usage_info = ""
-                    if hasattr(response, 'response_metadata') and response.response_metadata:
-                        metadata = response.response_metadata
-                        if 'token_usage' in metadata:
-                            token_usage = metadata['token_usage']
-                            usage_info = f", 实际Token: 输入={token_usage.get('prompt_tokens', 'N/A')} 输出={token_usage.get('completion_tokens', 'N/A')} 总计={token_usage.get('total_tokens', 'N/A')}"
+                usage_info = ""
+                if hasattr(response, 'response_metadata') and response.response_metadata:
+                    metadata = response.response_metadata
+                    if 'token_usage' in metadata:
+                        token_usage = metadata['token_usage']
+                        usage_info = f", 实际Token: 输入={token_usage.get('prompt_tokens', 'N/A')} 输出={token_usage.get('completion_tokens', 'N/A')} 总计={token_usage.get('total_tokens', 'N/A')}"
 
-                    logger.info(f"⏱️ [Risk Manager] LLM调用耗时: {elapsed_time:.2f}秒")
-                    logger.info(f"📊 [Risk Manager] 响应统计: {response_length} 字符, 估算~{estimated_output_tokens} tokens{usage_info}")
+                logger.info(f"⏱️ [Risk Manager] LLM调用耗时: {elapsed_time:.2f}秒")
+                logger.info(f"📊 [Risk Manager] 响应统计: {response_length} 字符, 估算~{estimated_output_tokens} tokens{usage_info}")
 
-                    if len(response_content) > 10:  # 确保响应有实质内容
-                        logger.info(f"✅ [Risk Manager] LLM调用成功")
-                        break
-                    else:
-                        logger.warning(f"⚠️ [Risk Manager] LLM响应内容过短: {len(response_content)} 字符")
-                        response_content = ""
-                else:
-                    logger.warning(f"⚠️ [Risk Manager] LLM响应为空或无效")
-                    response_content = ""
-
-            except Exception as e:
-                elapsed_time = time.time() - start_time
-                logger.error(f"❌ [Risk Manager] LLM调用失败 (尝试 {retry_count + 1}): {str(e)}")
-                logger.error(f"⏱️ [Risk Manager] 失败前耗时: {elapsed_time:.2f}秒")
-                response_content = ""
-            
-            retry_count += 1
-            if retry_count < max_retries and not response_content:
-                logger.info(f"🔄 [Risk Manager] 等待2秒后重试...")
-                time.sleep(2)
-        
-        # 如果所有重试都失败，生成默认决策
-        if not response_content:
-            logger.error(f"❌ [Risk Manager] 所有LLM调用尝试失败，使用默认决策")
-            response_content = f"""**默认建议：持有**
+            if not response_content:
+                logger.warning(f"⚠️ [Risk Manager] LLM响应为空，使用默认决策")
+                response_content = f"""**默认建议：持有**
 
 由于技术原因无法生成详细分析，基于当前市场状况和风险控制原则，建议对{company_name}采取持有策略。
 
@@ -164,24 +131,43 @@ def create_risk_manager(llm, memory):
 
 注意：此为系统默认建议，建议结合人工分析做出最终决策。"""
 
-        new_risk_debate_state = {
-            "judge_decision": response_content,
-            "history": risk_debate_state.get("history", ""),
-            "risky_history": risk_debate_state.get("risky_history", ""),
-            "safe_history": risk_debate_state.get("safe_history", ""),
-            "neutral_history": risk_debate_state.get("neutral_history", ""),
-            "latest_speaker": "Judge",
-            "current_risky_response": risk_debate_state.get("current_risky_response", ""),
-            "current_safe_response": risk_debate_state.get("current_safe_response", ""),
-            "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
-            "count": risk_debate_state.get("count", 0),
-        }
+            new_risk_debate_state = {
+                "judge_decision": response_content,
+                "history": risk_debate_state.get("history", ""),
+                "risky_history": risk_debate_state.get("risky_history", ""),
+                "safe_history": risk_debate_state.get("safe_history", ""),
+                "neutral_history": risk_debate_state.get("neutral_history", ""),
+                "latest_speaker": "Judge",
+                "current_risky_response": risk_debate_state.get("current_risky_response", ""),
+                "current_safe_response": risk_debate_state.get("current_safe_response", ""),
+                "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
+                "count": risk_debate_state.get("count", 0),
+            }
 
-        logger.info(f"📋 [Risk Manager] 最终决策生成完成，内容长度: {len(response_content)} 字符")
-        
-        return {
-            "risk_debate_state": new_risk_debate_state,
-            "final_trade_decision": response_content,
-        }
+            logger.info(f"📋 [Risk Manager] 最终决策生成完成，内容长度: {len(response_content)} 字符")
+
+            return {
+                "risk_debate_state": new_risk_debate_state,
+                "final_trade_decision": response_content,
+            }
+        except Exception as e:
+            logger.error(f"❌ [风控管理器] 节点执行异常: {type(e).__name__}: {str(e)[:200]}")
+            risk_debate_state = state.get("risk_debate_state", {})
+            return {
+                "risk_debate_state": {
+                    "judge_decision": "风控分析异常",
+                    "history": risk_debate_state.get("history", ""),
+                    "risky_history": risk_debate_state.get("risky_history", ""),
+                    "safe_history": risk_debate_state.get("safe_history", ""),
+                    "neutral_history": risk_debate_state.get("neutral_history", ""),
+                    "latest_speaker": "Judge",
+                    "current_risky_response": risk_debate_state.get("current_risky_response", ""),
+                    "current_safe_response": risk_debate_state.get("current_safe_response", ""),
+                    "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
+                    "count": risk_debate_state.get("count", 0),
+                },
+                "final_trade_decision": "风控分析异常，无法生成最终交易决策",
+                "messages": [],
+            }
 
     return risk_manager_node

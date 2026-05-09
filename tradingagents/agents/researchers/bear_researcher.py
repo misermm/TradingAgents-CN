@@ -2,68 +2,68 @@ from langchain_core.messages import AIMessage
 import time
 import json
 
-# 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.utils.llm_retry import retry_llm_invoke
 logger = get_logger("default")
 
 
 def create_bear_researcher(llm, memory):
     def bear_node(state) -> dict:
-        investment_debate_state = state["investment_debate_state"]
-        history = investment_debate_state.get("history", "")
-        bear_history = investment_debate_state.get("bear_history", "")
+        try:
+            investment_debate_state = state["investment_debate_state"]
+            history = investment_debate_state.get("history", "")
+            bear_history = investment_debate_state.get("bear_history", "")
 
-        current_response = investment_debate_state.get("current_response", "")
-        market_research_report = state.get("market_report", "")
-        sentiment_report = state.get("sentiment_report", "")
-        news_report = state.get("news_report", "")
-        fundamentals_report = state.get("fundamentals_report", "")
-        master_consensus = state.get("master_consensus_report", "") or ""
+            current_response = investment_debate_state.get("current_response", "")
+            market_research_report = state.get("market_report", "")
+            sentiment_report = state.get("sentiment_report", "")
+            news_report = state.get("news_report", "")
+            fundamentals_report = state.get("fundamentals_report", "")
+            master_consensus = state.get("master_consensus_report", "") or ""
 
-        ticker = state.get('company_of_interest', 'Unknown')
-        from tradingagents.utils.stock_utils import StockUtils
-        market_info = StockUtils.get_market_info(ticker)
-        is_china = market_info['is_china']
+            ticker = state.get('company_of_interest', 'Unknown')
+            from tradingagents.utils.stock_utils import StockUtils
+            market_info = StockUtils.get_market_info(ticker)
+            is_china = market_info['is_china']
 
-        company_name = state.get("company_name_resolved", "") or ticker
-        if not state.get("company_name_resolved"):
-            try:
-                from tradingagents.utils.company_utils import get_company_name
-                company_name = get_company_name(ticker)
-            except Exception:
-                company_name = ticker
-        is_hk = market_info['is_hk']
-        is_us = market_info['is_us']
+            company_name = state.get("company_name_resolved", "") or ticker
+            if not state.get("company_name_resolved"):
+                try:
+                    from tradingagents.utils.company_utils import get_company_name
+                    company_name = get_company_name(ticker)
+                except Exception:
+                    company_name = ticker
+            is_hk = market_info['is_hk']
+            is_us = market_info['is_us']
 
-        currency = market_info['currency_name']
-        currency_symbol = market_info['currency_symbol']
+            currency = market_info['currency_name']
+            currency_symbol = market_info['currency_symbol']
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
-        if master_consensus and str(master_consensus).strip():
-            curr_situation += f"\n\n{master_consensus}"
+            curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+            if master_consensus and str(master_consensus).strip():
+                curr_situation += f"\n\n{master_consensus}"
 
-        if master_consensus and str(master_consensus).strip():
-            master_consensus_section = f"""
+            if master_consensus and str(master_consensus).strip():
+                master_consensus_section = f"""
 **投资大师共识意见：**
 {master_consensus}
 
 **重要提示**：以上是投资大师团队的共识分析。在看跌论证中，你可以引用大师共识中支持看跌或提示风险的观点来加强你的论据，同时也需要回应大师共识中可能存在的看涨观点。
 """
-        else:
-            master_consensus_section = ""
+            else:
+                master_consensus_section = ""
 
-        # 安全检查：确保memory不为None
-        if memory is not None:
-            past_memories = memory.get_memories(curr_situation, n_matches=2)
-        else:
-            logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
-            past_memories = []
+            if memory is not None:
+                past_memories = memory.get_memories(curr_situation, n_matches=2)
+            else:
+                logger.warning(f"⚠️ [DEBUG] memory为None，跳过历史记忆检索")
+                past_memories = []
 
-        past_memory_str = ""
-        for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec.get("recommendation", str(rec)) + "\n\n"
+            past_memory_str = ""
+            for i, rec in enumerate(past_memories, 1):
+                past_memory_str += rec.get("recommendation", str(rec)) + "\n\n"
 
-        prompt = f"""你是一位看跌分析师，负责论证不投资股票 {company_name}（股票代码：{ticker}）的理由。
+            prompt = f"""你是一位看跌分析师，负责论证不投资股票 {company_name}（股票代码：{ticker}）的理由。
 
 ⚠️ 重要提醒：当前分析的是 {market_info['market_name']}，所有价格和估值请使用 {currency}（{currency_symbol}）作为单位。
 ⚠️ 在你的分析中，请始终使用公司名称"{company_name}"而不是股票代码"{ticker}"来称呼这家公司。
@@ -95,21 +95,34 @@ def create_bear_researcher(llm, memory):
 请确保所有回答都使用中文。
 """
 
-        response = llm.invoke(prompt)
+            response = retry_llm_invoke(llm.invoke, prompt, max_retries=2, base_delay=2.0)
 
-        argument = f"Bear Analyst: {response.content}"
+            argument = f"Bear Analyst: {response.content}"
 
-        new_count = investment_debate_state.get("count", 0) + 1
-        logger.info(f"🐻 [空头研究员] 发言完成，计数: {investment_debate_state.get('count', 0)} -> {new_count}")
+            new_count = investment_debate_state.get("count", 0) + 1
+            logger.info(f"🐻 [空头研究员] 发言完成，计数: {investment_debate_state.get('count', 0)} -> {new_count}")
 
-        new_investment_debate_state = {
-            "history": history + "\n" + argument,
-            "bear_history": bear_history + "\n" + argument,
-            "bull_history": investment_debate_state.get("bull_history", ""),
-            "current_response": argument,
-            "count": new_count,
-        }
+            new_investment_debate_state = {
+                "history": history + "\n" + argument,
+                "bear_history": bear_history + "\n" + argument,
+                "bull_history": investment_debate_state.get("bull_history", ""),
+                "current_response": argument,
+                "count": new_count,
+            }
 
-        return {"investment_debate_state": new_investment_debate_state}
+            return {"investment_debate_state": new_investment_debate_state}
+        except Exception as e:
+            logger.error(f"❌ [空头研究员] 节点执行异常: {type(e).__name__}: {str(e)[:200]}")
+            investment_debate_state = state.get("investment_debate_state", {})
+            return {
+                "investment_debate_state": {
+                    "history": investment_debate_state.get("history", ""),
+                    "bear_history": investment_debate_state.get("bear_history", ""),
+                    "bull_history": investment_debate_state.get("bull_history", ""),
+                    "current_response": "",
+                    "count": investment_debate_state.get("count", 0),
+                },
+                "messages": [],
+            }
 
     return bear_node

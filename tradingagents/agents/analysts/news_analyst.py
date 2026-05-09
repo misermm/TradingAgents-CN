@@ -5,6 +5,7 @@ from datetime import datetime
 
 # 导入统一日志系统和分析模块日志装饰器
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.utils.tool_logging import log_analyst_module
 # 导入统一新闻工具
 from tradingagents.tools.unified_news_tool import create_unified_news_tool
@@ -256,10 +257,10 @@ def create_news_analyst(llm, toolkit):
 
                     llm_start_time = datetime.now()
                     # 🔧 重要：传递系统消息和用户消息，不包含工具调用
-                    result = llm.invoke([
+                    result = retry_llm_invoke(llm.invoke, [
                         {"role": "system", "content": analysis_system_prompt},
                         {"role": "user", "content": enhanced_prompt}
-                    ])
+                    ], max_retries=2, base_delay=2.0)
 
                     llm_end_time = datetime.now()
                     llm_time_taken = (llm_end_time - llm_start_time).total_seconds()
@@ -293,7 +294,7 @@ def create_news_analyst(llm, toolkit):
                         logger.warning(f"[新闻分析师] 📄 失败的新闻内容: {pre_fetched_news}")
 
             except Exception as e:
-                logger.error(f"[新闻分析师] ❌ 预处理失败: {e}，回退到标准模式")
+                logger.error(f"[新闻分析师] ❌ 预处理失败(已重试): {e}，回退到标准模式")
                 import traceback
                 logger.error(f"[新闻分析师] 📋 异常堆栈: {traceback.format_exc()}")
         
@@ -302,10 +303,10 @@ def create_news_analyst(llm, toolkit):
         chain = prompt | llm.bind_tools(tools)
         logger.info(f"[新闻分析师] 开始LLM调用，分析 {ticker} 的新闻")
         try:
-            result = chain.invoke({"messages": state["messages"]})
+            result = retry_llm_invoke(chain.invoke, {"messages": state["messages"]}, max_retries=3, base_delay=2.0)
         except Exception as llm_err:
             err_type = type(llm_err).__name__
-            logger.error(f"❌ [新闻分析师] LLM调用失败: {err_type}: {str(llm_err)[:200]}")
+            logger.error(f"❌ [新闻分析师] LLM调用失败(已重试): {err_type}: {str(llm_err)[:200]}")
             if "RateLimit" in err_type or "429" in str(llm_err):
                 fallback = f"## 新闻分析\n\n⚠️ LLM调用达到速率限制（{err_type}），暂时无法生成新闻分析报告。建议稍后重试或更换模型。"
             else:
@@ -381,7 +382,7 @@ def create_news_analyst(llm, toolkit):
                         logger.info(f"[新闻分析师] 🔄 基于强制获取的新闻数据重新生成完整分析...")
                         logger.info(f"[新闻分析师] 📝 强制提示词长度: {len(forced_prompt)} 字符")
 
-                        forced_result = llm.invoke([{"role": "user", "content": forced_prompt}])
+                        forced_result = retry_llm_invoke(llm.invoke, [{"role": "user", "content": forced_prompt}], max_retries=2, base_delay=2.0)
 
                         if hasattr(forced_result, 'content') and forced_result.content:
                             report = forced_result.content
@@ -397,7 +398,7 @@ def create_news_analyst(llm, toolkit):
                         report = _generate_fallback_from_prefetched(state, ticker, company_name, llm, system_message)
 
                 except Exception as e:
-                    logger.error(f"[新闻分析师] ❌ 强制补救过程失败: {e}")
+                    logger.error(f"[新闻分析师] ❌ 强制补救过程失败(已重试): {e}")
                     import traceback
                     logger.error(f"[新闻分析师] 📋 异常堆栈: {traceback.format_exc()}")
                     report = _generate_fallback_from_prefetched(state, ticker, company_name, llm, system_message)
@@ -444,12 +445,12 @@ def _generate_fallback_from_prefetched(state, ticker, company_name, llm, system_
 
 {system_message}"""
         try:
-            fallback_result = llm.invoke([{"role": "user", "content": fallback_prompt}])
+            fallback_result = retry_llm_invoke(llm.invoke, [{"role": "user", "content": fallback_prompt}], max_retries=2, base_delay=2.0)
             if hasattr(fallback_result, 'content') and fallback_result.content:
                 logger.info(f"[新闻分析师] ✅ 基于预获取数据的回退分析生成成功，长度: {len(fallback_result.content)}字符")
                 return fallback_result.content
         except Exception as e:
-            logger.error(f"[新闻分析师] ❌ 基于预获取数据的回退分析也失败: {e}")
+            logger.error(f"[新闻分析师] ❌ 基于预获取数据的回退分析也失败(已重试): {e}")
     else:
         logger.warning(f"[新闻分析师] ⚠️ 无可用的预获取数据，生成数据缺失警告报告")
     return f"## 新闻分析\n\n⚠️ 数据质量警告：新闻数据获取失败且无可用的预获取数据，无法生成有效的新闻分析报告。建议检查新闻数据源连接后重试。"

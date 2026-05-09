@@ -1,13 +1,62 @@
 # 开发进度文档
-**更新时间**: 2026-05-09 (第二十八轮 - LLM API 测试代理支持)
+**更新时间**: 2026-05-09 (第三十轮 - 分析报告质量全面修复)
 **当前项目目标**: 全链路数据准确性修复 + A股/港股/美股分析逻辑Bug修复 + 分析准确性优化
 
 ---
 
 ## 当前状态概要
 
-**最近完成的改动**: 第二十八轮 - 为国外 LLM 供应商 API 测试方法添加 HTTP 代理支持
-**下一步从哪接着做**: 继续深度搜索端到端分析测试 + 更多数据层边界条件
+**最近完成的改动**: 第三十轮 - 基于000002分析报告问题，全面修复LLM重试、图容错、数据质量、决策质量等7个问题
+**下一步从哪接着做**: 重新运行分析验证修复效果 + 继续深度搜索端到端分析测试
+
+### 本轮修复汇总 (2026-05-09 第三十轮 — 分析报告质量全面修复)
+
+基于 `results/000002_分析报告_2026-05-09.json` 中发现的问题，逐一修复7个关键问题：
+
+#### 问题清单与修复
+
+| # | 问题 | 根因 | 修复方案 | 优先级 |
+|---|------|------|---------|--------|
+| 1 | LLM调用失败(InternalServerError) - market/sentiment/fundamentals/ben_graham/final_trade_decision | LLM调用无重试，一次失败即返回错误 | 新增 `llm_retry.py` 模块，所有LLM调用统一使用 `retry_llm_invoke`（指数退避+抖动，max_retries=3） | 高 |
+| 2 | Analyst节点执行时间异常(0.01s) - Market/Fundamentals/News/Social/Peter Lynch | LLM调用失败后立即返回fallback，未重试 | 同Fix1，重试后节点执行时间正常 | 高 |
+| 3 | Research/Trader/Risk团队未执行(total=0) | 图级异常中断，后续节点未执行 | 所有8个下游节点添加try-except兜底 + `_safe_stream`改进降级决策 | 高 |
+| 4 | 护城河定性分析缺失(巴菲特5/6完整度) | data_prefetch未提供护城河参考数据 | 新增 `_get_moat_context()` 函数，基于ROE/毛利率/营收增长率/行业特征生成护城河分析上下文 | 高 |
+| 5 | 股票名称格式异常 '万  科Ａ' | 数据源返回的名称含多余空格和全角字符 | 新增 `clean_stock_name()` 函数，在3处名称获取位置应用 | 中 |
+| 6 | tokens_used=0 | 未追踪LLM token使用量 | 新增 `TokenCounter` 单例类，自动从LLM响应提取token使用量，集成到决策输出 | 低 |
+| 7 | 决策结果过于笼统 - action=持有, reasoning=基于综合分析, key_points=[] | 异常信号被当作正常决策处理 | `process_signal` 增加异常信号检测，降低置信度(0.3) + key_points从大师报告提取 | 中 |
+
+#### 修改文件
+
+| # | 文件 | 修改内容 |
+|---|------|---------|
+| 1 | `tradingagents/utils/llm_retry.py` | **新增** - LLM重试机制(`retry_llm_invoke`) + TokenCounter单例 |
+| 2 | `tradingagents/utils/stock_utils.py` | 新增 `clean_stock_name()` 股票名称清理函数 |
+| 3 | `tradingagents/graph/trading_graph.py` | 分析开始时重置TokenCounter + 决策输出添加tokens_used/token_details + _safe_stream改进降级决策 |
+| 4 | `tradingagents/graph/signal_processing.py` | 增加异常信号检测，返回低置信度决策 |
+| 5 | `tradingagents/graph/data_prefetch.py` | 新增 `_get_moat_context()` 护城河分析上下文生成 |
+| 6 | `tradingagents/agents/analysts/market_analyst.py` | LLM调用添加retry + 名称清理 |
+| 7 | `tradingagents/agents/analysts/fundamentals_analyst.py` | LLM调用添加retry + 名称清理 |
+| 8 | `tradingagents/agents/analysts/news_analyst.py` | LLM调用添加retry |
+| 9 | `tradingagents/agents/analysts/social_media_analyst.py` | LLM调用添加retry |
+| 10 | `tradingagents/agents/masters/base_master.py` | LLM调用添加retry |
+| 11 | `tradingagents/agents/masters/master_consensus.py` | LLM调用添加retry |
+| 12 | `tradingagents/agents/researchers/bull_researcher.py` | LLM调用添加retry + try-except兜底 |
+| 13 | `tradingagents/agents/researchers/bear_researcher.py` | LLM调用添加retry + try-except兜底 |
+| 14 | `tradingagents/agents/managers/research_manager.py` | LLM调用添加retry + try-except兜底 |
+| 15 | `tradingagents/agents/trader/trader.py` | LLM调用添加retry + try-except兜底 |
+| 16 | `tradingagents/agents/risk_mgmt/aggresive_debator.py` | LLM调用添加retry + try-except兜底 |
+| 17 | `tradingagents/agents/risk_mgmt/conservative_debator.py` | LLM调用添加retry + try-except兜底 |
+| 18 | `tradingagents/agents/risk_mgmt/neutral_debator.py` | LLM调用添加retry + try-except兜底 |
+| 19 | `tradingagents/agents/managers/risk_manager.py` | LLM调用添加retry + try-except兜底 |
+| 20 | `tradingagents/dataflows/data_source_manager.py` | 股票名称清理 |
+| 21 | `app/services/simple_analysis_service.py` | 股票名称清理 + key_points从大师报告提取 |
+
+#### 测试验证
+- 6个自定义单元测试全部通过（TokenCounter、_is_retryable_error、retry_llm_invoke、clean_stock_name、SignalProcessor异常检测）
+- 50个pytest测试全部通过
+- 所有修改模块导入正常
+
+**关键文件入口**: `tradingagents/utils/llm_retry.py`（重试+Token计数）、`tradingagents/utils/stock_utils.py`（名称清理）、`tradingagents/graph/data_prefetch.py`（护城河数据）
 
 ### 本轮修复汇总 (2026-05-09 第二十八轮 — LLM API 测试代理支持)
 
