@@ -1,13 +1,51 @@
 # 开发进度文档
-**更新时间**: 2026-05-09 (第三十轮 - 分析报告质量全面修复)
+**更新时间**: 2026-05-09 (第三十一轮 - LLM错误信息通用解析)
 **当前项目目标**: 全链路数据准确性修复 + A股/港股/美股分析逻辑Bug修复 + 分析准确性优化
 
 ---
 
 ## 当前状态概要
 
-**最近完成的改动**: 第三十轮 - 基于000002分析报告问题，全面修复LLM重试、图容错、数据质量、决策质量等7个问题
-**下一步从哪接着做**: 重新运行分析验证修复效果 + 继续深度搜索端到端分析测试
+**最近完成的改动**: 第三十一轮 - 改进LLM错误处理，解析并显示所有LLM提供商的官方原始错误信息
+**下一步从哪接着做**: 验证错误信息显示效果
+
+### 本轮修复汇总 (2026-05-09 第三十一轮 — LLM错误信息通用解析)
+
+当任何 LLM 提供商返回错误时，现在会解析并显示官方原始错误信息，不再显示通用错误名。
+
+#### 修改文件
+
+| # | 文件 | 修改内容 |
+|---|------|---------|
+| 1 | `tradingagents/utils/llm_retry.py` | 新增 `_extract_openrouter_error()` 通用错误解析（支持所有提供商）、新增提供商识别、新增 `_format_error_for_display()` 格式化显示 |
+
+#### 支持的提供商识别
+
+| 提供商 | 识别关键词 | 错误码示例 |
+|--------|-----------|-----------|
+| OpenRouter | openrouter, sk-or-v1 | rate_limit_exceeded, invalid_api_key |
+| DeepSeek | deepseek, deepseek-api | rate_limit_error, insufficient_quota |
+| DashScope | dashscope, aliyun, qwen | InvalidAPIKey, Throttling |
+| Anthropic | anthropic, claude | rate_limit_error |
+| Google | google, gemini, aiplatform | 429, quota_exceeded |
+| Azure | azure, api.azure | - |
+
+#### 日志输出示例
+
+```
+⚠️ [LLM重试] [OPENROUTER] [rate_limit_exceeded] Rate limit exceeded
+   详细信息:
+      message: Rate limit exceeded
+      code: rate_limit_exceeded
+      type: rate_limit_error
+
+⚠️ [LLM重试] [DEEPSEEK] [insufficient_quota] Insufficient balance
+   详细信息:
+      message: Insufficient balance
+      code: insufficient_quota
+
+⚠️ [LLM重试] [ANTHROPIC] [rate_limit_error] Too many requests
+```
 
 ### 本轮修复汇总 (2026-05-09 第三十轮 — 分析报告质量全面修复)
 
