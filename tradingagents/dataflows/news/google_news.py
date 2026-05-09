@@ -43,92 +43,90 @@ def make_request(url, headers):
 
 def getNewsData(query, start_date, end_date):
     """
-    Scrape Google News search results for a given query and date range.
+    Scrape Google search results for a given query and date range.
     query: str - search query
     start_date: str - start date in the format yyyy-mm-dd or mm/dd/yyyy
-    end_date: str - end date in the format yyyy-mm-dd or mm/dd/yyyy
+    end_date: str - end date in the format mm/dd/yyyy
     """
-    if "-" in start_date:
-        start_date = datetime.strptime(start_date, "%Y-%m-%d")
-        start_date = start_date.strftime("%m/%d/%Y")
-    if "-" in end_date:
-        end_date = datetime.strptime(end_date, "%Y-%m-%d")
-        end_date = end_date.strftime("%m/%d/%Y")
+    try:
+        if "-" in start_date:
+            start_date = datetime.strptime(start_date, "%Y-%m-%d")
+            start_date = start_date.strftime("%m/%d/%Y")
+        if "-" in end_date:
+            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+            end_date = end_date.strftime("%m/%d/%Y")
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/101.0.4951.54 Safari/537.36"
-        )
-    }
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/101.0.4951.54 Safari/537.36"
+            )
+        }
 
-    news_results = []
-    page = 0
-    while True:
-        offset = page * 10
-        url = (
-            f"https://www.google.com/search?q={query}"
-            f"&tbs=cdr:1,cd_min:{start_date},cd_max:{end_date}"
-            f"&tbm=nws&start={offset}"
-        )
+        news_results = []
+        page = 0
+        while True:
+            offset = page * 10
+            url = (
+                f"https://www.google.com/search?q={query}"
+                f"&tbs=cdr:1,cd_min:{start_date},cd_max:{end_date}"
+                f"&tbm=nws&start={offset}"
+            )
 
-        try:
-            response = make_request(url, headers)
-            soup = BeautifulSoup(response.content, "html.parser")
-            results_on_page = soup.select("div.SoaBEf")
+            try:
+                response = make_request(url, headers)
+                soup = BeautifulSoup(response.content, "html.parser")
+                results_on_page = soup.select("div.SoaBEf")
 
-            if not results_on_page:
-                break  # No more results found
+                if not results_on_page:
+                    break
 
-            for el in results_on_page:
-                try:
-                    link = el.find("a")["href"]
-                    title = el.select_one("div.MBeuO").get_text()
-                    snippet = el.select_one(".GI74Re").get_text()
-                    date = el.select_one(".LfVVr").get_text()
-                    source = el.select_one(".NUnG9d span").get_text()
-                    news_results.append(
-                        {
-                            "link": link,
-                            "title": title,
-                            "snippet": snippet,
-                            "date": date,
-                            "source": source,
-                        }
-                    )
-                except Exception as e:
-                    logger.error(f"Error processing result: {e}")
-                    # If one of the fields is not found, skip this result
-                    continue
+                for el in results_on_page:
+                    try:
+                        link = el.find("a")["href"]
+                        title = el.select_one("div.MBeuO").get_text()
+                        snippet = el.select_one(".GI74Re").get_text()
+                        date = el.select_one(".LfVVr").get_text()
+                        source = el.select_one(".NUnG9d span").get_text()
+                        news_results.append(
+                            {
+                                "link": link,
+                                "title": title,
+                                "snippet": snippet,
+                                "date": date,
+                                "source": source,
+                            }
+                        )
+                    except Exception as e:
+                        logger.error(f"Error processing result: {e}")
+                        continue
 
-            # Update the progress bar with the current count of results scraped
+                next_link = soup.find("a", id="pnnext")
+                if not next_link:
+                    break
 
-            # Check for the "Next" link (pagination)
-            next_link = soup.find("a", id="pnnext")
-            if not next_link:
+                page += 1
+
+            except requests.exceptions.Timeout as e:
+                logger.error(f"连接超时: {e}")
+                page += 1
+                if page > 3:
+                    logger.error("多次连接超时，停止获取Google新闻")
+                    break
+                continue
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"连接错误: {e}")
+                page += 1
+                if page > 3:
+                    logger.error("多次连接错误，停止获取Google新闻")
+                    break
+                continue
+            except Exception as e:
+                logger.error(f"获取Google新闻失败: {e}")
                 break
 
-            page += 1
-
-        except requests.exceptions.Timeout as e:
-            logger.error(f"连接超时: {e}")
-            # 不立即中断，记录错误后继续尝试下一页
-            page += 1
-            if page > 3:  # 如果连续多页都超时，则退出循环
-                logger.error("多次连接超时，停止获取Google新闻")
-                break
-            continue
-        except requests.exceptions.ConnectionError as e:
-            logger.error(f"连接错误: {e}")
-            # 不立即中断，记录错误后继续尝试下一页
-            page += 1
-            if page > 3:  # 如果连续多页都连接错误，则退出循环
-                logger.error("多次连接错误，停止获取Google新闻")
-                break
-            continue
-        except Exception as e:
-            logger.error(f"获取Google新闻失败: {e}")
-            break
-
-    return news_results
+        return news_results
+    except Exception as e:
+        logger.warning(f"Google News获取失败，返回空结果: {e}")
+        return []

@@ -26,11 +26,13 @@ MASTER_CONSENSUS_PROMPT = """你是一位资深投资顾问，负责综合多位
 ## 请你完成以下任务：
 
 1. **共识信号**：综合所有大师的观点和量化评分，给出最终共识信号（看涨/看跌/中性）
-2. **核心共识**：列出所有大师都认同的关键观点（2-3条）
-3. **主要分歧**：列出大师之间的重要分歧点（1-2条），说明哪位大师持不同意见
-4. **关键洞察**：选择最有价值的1-2个独特观点，说明来自哪位大师
-5. **风险提示**：列出大师们提到的关键风险因素（1-2条）
-6. **综合建议**：基于以上分析，给出综合投资建议（2-3句话）
+2. **各大师核心观点**：用1-2句话概括每位大师的核心判断和关键理由，让读者快速了解每位大师的立场
+3. **核心共识**：列出所有大师都认同的关键观点（2-3条）
+4. **主要分歧**：列出大师之间的重要分歧点（1-2条），说明哪位大师持不同意见，并解释分歧背后的逻辑差异
+5. **关键洞察**：选择最有价值的1-2个独特观点，说明来自哪位大师
+6. **风险提示**：列出大师们提到的关键风险因素（1-2条）
+7. **共识推理**：解释最终共识信号是如何从各大师观点中推导出来的，说明哪些因素权重更大以及为什么
+8. **综合建议**：基于以上分析，给出综合投资建议（2-3句话）
 
 ## 输出格式（必须严格遵守）：
 
@@ -38,12 +40,16 @@ MASTER_CONSENSUS_PROMPT = """你是一位资深投资顾问，负责综合多位
 
 ## 共识信号：[看涨/看跌/中性]
 
+## 各大师核心观点
+- [大师名]：[1-2句核心判断和理由]
+- [大师名]：[1-2句核心判断和理由]
+
 ## 核心共识
 - [共识点1]
 - [共识点2]
 
 ## 主要分歧
-- [分歧点]：[大师A]认为X，[大师B]认为Y
+- [分歧点]：[大师A]认为X，[大师B]认为Y。逻辑差异：[解释为什么两位大师会得出不同结论]
 
 ## 关键洞察
 - [洞察点]（来源：[大师名]）
@@ -51,6 +57,9 @@ MASTER_CONSENSUS_PROMPT = """你是一位资深投资顾问，负责综合多位
 ## 风险提示
 - [风险因素1]
 - [风险因素2]
+
+## 共识推理
+最终共识为[看涨/看跌/中性]，主要因为：[解释推导过程，说明哪些因素权重更大以及为什么]
 
 ## 综合建议
 [2-3句综合建议]
@@ -65,10 +74,14 @@ MASTER_CONSENSUS_PROMPT = """你是一位资深投资顾问，负责综合多位
   "bullish_count": {bullish_count},
   "neutral_count": {neutral_count},
   "bearish_count": {bearish_count},
+  "individual_views": [
+    {{"master": "大师名", "view": "1-2句核心判断", "signal": "bullish/neutral/bearish"}}
+  ],
   "key_consensus": ["共识1", "共识2"],
-  "key_disagreements": ["分歧1"],
+  "key_disagreements": ["分歧1：大师A认为X，大师B认为Y"],
   "key_insights": ["洞察1"],
   "risk_factors": ["风险1"],
+  "consensus_reasoning": "共识推导过程说明",
   "recommendation": "综合建议"
 }}
 ```
@@ -225,7 +238,7 @@ def _generate_statistical_consensus(master_reports, quant_signals, bullish_count
 - 看涨：{bullish_count}位 | 中性：{neutral_count}位 | 看跌：{bearish_count}位
 - 量化平均得分：{avg_score:.1f}/{avg_max:.1f}
 
-## 各大师分析摘要
+## 各大师核心观点
 
 {chr(10).join(report_summaries)}
 
@@ -233,4 +246,7 @@ def _generate_statistical_consensus(master_reports, quant_signals, bullish_count
 - 参与大师：{len(master_reports)}位
 - 量化评估覆盖：{total_quant}位
 - 共识方向：{consensus_signal}
+
+## 共识推理
+共识信号为{consensus_signal}，基于{bullish_count}位看涨、{neutral_count}位中性、{bearish_count}位看跌的量化统计结果得出。
 """

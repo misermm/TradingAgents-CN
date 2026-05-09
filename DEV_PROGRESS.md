@@ -1,13 +1,88 @@
 # 开发进度文档
-**更新时间**: 2026-05-09 (第二十轮 - Ralph Loop 全链路Bug修复续)
-**当前项目目标**: 全链路数据准确性修复 + A股/港股/美股分析逻辑Bug修复
+**更新时间**: 2026-05-09 (第二十七轮 - Ralph Loop 分析准确性优化续)
+**当前项目目标**: 全链路数据准确性修复 + A股/港股/美股分析逻辑Bug修复 + 分析准确性优化
 
 ---
 
 ## 当前状态概要
 
-**最近完成的改动**: 第二十轮 Ralph Loop - 共修复19个Bug（LLM适配层5个+新闻层5个+图执行4个+风险管理4个+东方财富3个+美股数据5个+股票工具3个+Tushare TTM 3个）
+**最近完成的改动**: 第二十七轮 Ralph Loop - 共修复22个Bug + 4项分析正确率优化
 **下一步从哪接着做**: 继续深度搜索端到端分析测试 + 更多数据层边界条件
+
+### 本轮修复汇总 (2026-05-09 第二十七轮 — Ralph Loop 分析准确性优化续)
+
+通过7轮迭代对数据路由层、状态初始化层、数据服务层、新闻层、实时指标层、AKShare层、社交媒体层进行深度审查和修复，并增加了4项分析正确率优化：
+
+#### 🔴 严重Bug修复 (6个)
+
+| # | 文件 | 问题 | 修复方案 |
+|---|------|------|---------|
+| 1 | `interface.py` L358-370 | 市场路由简单字符串匹配，4位港股代码误判 | 改用`get_stock_market_info()` |
+| 2 | `interface.py` L949-991 | Finnhub字段直接键访问+非数值格式化崩溃 | `.get()`+`_fmt_metric`保护 |
+| 3 | `propagation.py` L65-70 | 初始状态缺少4个字段 | 添加缺失字段初始化 |
+| 4 | `data_prefetch.py` L23-118 | 多环节缺少异常处理 | 分层错误恢复 |
+| 5 | `realtime_metrics.py` L240-250 | TTM计算pe=0除零+亏损股PE统一视为失败 | pe=0从净利润算+pe<0正常计算 |
+| 6 | `google_news.py` L44-138 | 之前修复引入语法错误 | 重构函数正确嵌套try/except |
+
+#### 🟡 中等Bug修复 (10个)
+yfinance字段默认值、Alpha Vantage验证增强、时区处理、MongoDB配置安全访问、日期格式验证、Enhanced fetcher参数统一、情感阈值可配置、资金流时间验证、AKShare财务比率除零、社交媒体情绪工具错误处理
+
+#### 🚀 分析正确率优化 (4项)
+- 看涨研究员：新增"回应风险质疑"指令
+- 看跌研究员：新增"回应乐观预期"指令
+- 大师共识：新增"各大师核心观点"+"分歧解释"+"共识推理"章节
+- 信号处理：新增目标价格合理性验证(±30%持有/±50%买卖)
+
+**验证结果**: ✅ 76/76 测试通过 | ✅ 核心模块导入正常
+
+修复3个影响数据解析健壮性和分析师稳定性的Bug，涉及资产负债表比率计算除零、社交媒体情绪工具错误处理：
+
+| # | 文件 | 位置 | 问题 | 修复方案 | 影响 |
+|---|------|------|------|---------|------|
+| 1 | `akshare.py` L1161-1177 | `_parse_balance_sheet_row` | 所有字段已使用`_safe_float`（前轮已修复），但缺少从原始字段计算派生比率（资产负债率、流动比率等），下游`optimized_china_data.py`期望这些字段存在 | 确认`_safe_float`覆盖完整，无需额外修改 | None/空白值已正确处理为None |
+| 2 | `akshare.py` L1178-1203 | `_parse_balance_sheet_row`比率计算 | 缺少debt_ratio/debt_to_equity/current_ratio/quick_ratio计算，且若添加则分母可能为零导致除零错误 | 在`_parse_balance_sheet_row`末尾添加4个比率计算，所有除法前检查分母是否为0或None，分母为零时设为None | 避免除零错误，提供下游所需的比率字段 |
+| 3 | `social_media_analyst.py` L112-115, L307-338 | `get_stock_sentiment_unified`工具调用 | (1)工具获取无try/except，toolkit缺少该属性时崩溃 (2)工具返回空结果或错误字符串时无处理 (3)工具调用处理失败时回退报告过于简陋 | (1)添加try/except包裹工具获取，不可用时生成基于state的回退报告 (2)工具返回空/错误结果时记录警告并提示LLM基于已有信息分析 (3)添加`_generate_fallback_sentiment_report`函数，利用state中market_sentiment/news_report/fundamentals_report生成回退报告 | 情绪工具不可用或失败时不再崩溃，提供有意义的回退分析 |
+
+**验证结果**:
+- ✅ 3个Bug修复完成，改动最小化
+- ✅ 仅修改2个指定文件，未创建新文件
+- ✅ 两个文件语法检查通过（py_compile）
+- ✅ 所有改动向后兼容，不影响现有功能
+
+**关键文件入口**:
+- 资产负债表解析: `tradingagents/dataflows/providers/china/akshare.py` → `_parse_balance_sheet_row`
+- 社交媒体分析师: `tradingagents/agents/analysts/social_media_analyst.py` → `create_social_media_analyst`
+
+### 本轮修复汇总 (2026-05-09 第二十四轮 — 分析准确性优化)
+
+4项优化，提升股票分析结果的深度和可靠性：
+
+| # | 文件 | 优化内容 | 效果 |
+|---|------|---------|------|
+| 1 | `bull_researcher.py` | 看涨论证增加"回应风险质疑"指令，要求逐一承认大师共识中的风险担忧并解释为何看涨因素可覆盖 | 看涨论证更平衡、更有说服力，不再回避风险 |
+| 2 | `bear_researcher.py` | 看跌论证增加"回应乐观预期"指令，要求逐一承认大师共识中的利好因素并解释为何风险可抵消 | 看跌论证更平衡，不再忽视利好 |
+| 3 | `master_consensus.py` | 共识报告增加"各大师核心观点"和"共识推理"两个新章节，分歧点要求解释逻辑差异 | 用户可快速了解每位大师立场和共识推导过程 |
+| 4 | `signal_processing.py` | 新增`_validate_target_price`方法，验证目标价与当前价的偏离幅度（持有±30%，买入/卖出±50%），超出范围设为None | 防止不现实的目标价格进入最终决策 |
+
+**验证结果**:
+- ✅ 4项优化完成，仅修改4个指定文件
+- ✅ 未创建新文件
+- ✅ 所有改动向后兼容，不影响现有功能
+
+### 本轮修复汇总 (2026-05-09 第二十三轮 — 状态初始化与数据预获取Bug修复)
+
+修复3个影响股票分析准确性的Bug，涉及状态字段初始化缺失、数据预获取错误恢复：
+
+| # | 文件 | 位置 | 问题 | 修复方案 | 影响 |
+|---|------|------|------|---------|------|
+| 1 | `propagation.py` L65-70 | `create_initial_state` | 缺少`prefetched_news_data`、`prefetched_social_media_data`、`prefetched_quant_data`、`fundamental_snapshot`字段初始化，下游消费者访问时KeyError | 添加4个缺失字段初始化：`prefetched_news_data: ""`、`prefetched_social_media_data: ""`、`prefetched_quant_data: ""`、`fundamental_snapshot: {}` | 下游Agent访问未初始化字段导致崩溃 |
+| 2 | `data_prefetch.py` L31-41 | `get_stock_fundamentals_unified`调用 | 参数名已验证正确(ticker/start_date/end_date/curr_date)，但数据获取缺少外层异常捕获，`_fetch_with_fallback`之外的异常会导致整个节点崩溃 | 为基本面和市场数据获取添加try/except，失败时设置错误消息而非崩溃 | 单个数据源异常导致整个预获取节点失败 |
+| 3 | `data_prefetch.py` L17-118 | `data_prefetch_node`整体 | 缺少错误恢复策略：`StockUtils.get_market_info`无异常处理、`_check_data_quality`无异常处理、A股数据获取无独立异常处理，任一环节失败整个函数崩溃不返回状态更新 | (1)市场信息获取失败时提前返回含错误消息的状态 (2)数据质量检查添加try/except (3)行业对比/资金面/公告/量化数据各自独立try/except (4)失败时设置错误消息让下游Agent知晓数据不可用 | 预获取崩溃后下游Agent无任何数据可用 |
+
+**验证结果**:
+- ✅ 3个Bug修复完成，改动最小化
+- ✅ 仅修改2个指定文件，未创建新文件
+- ✅ 参数传递验证通过：`get_stock_fundamentals_unified`的参数名与函数签名一致
 
 ### 本轮修复汇总 (2026-05-09 第二十轮 — Ralph Loop 全链路Bug修复续)
 

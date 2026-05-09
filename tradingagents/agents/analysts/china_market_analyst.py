@@ -213,7 +213,7 @@ def create_china_market_analyst(llm, toolkit):
             logger.debug(f"📊 [DEBUG] 非Google模型 ({llm.__class__.__name__})，使用标准处理逻辑")
             
             tool_calls = getattr(result, 'tool_calls', [])
-            tool_call_count = len(tool_calls)
+            tool_call_count = 0
             report = ""
             if len(tool_calls) == 0:
                 report = result.content
@@ -234,6 +234,7 @@ def create_china_market_analyst(llm, toolkit):
                                     tool_result = tool.invoke(tool_args)
                                 except Exception as e:
                                     tool_result = f"工具执行错误: {str(e)}"
+                                tool_call_count += 1
                                 break
                         if tool_result is not None:
                             tool_messages.append(ToolMessage(content=str(tool_result), tool_call_id=tool_id))

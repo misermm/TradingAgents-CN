@@ -126,7 +126,11 @@ class ChinaCapitalFlowProvider:
                     logger.debug(f"北向资金日期转换失败: {e}")
                 north_df = north_df.sort_values(by=date_col, ascending=False)
                 cutoff = datetime.now() - timedelta(days=days)
+                if not isinstance(cutoff, datetime):
+                    cutoff = pd.Timestamp(cutoff).to_pydatetime()
                 try:
+                    valid_mask = north_df[date_col].apply(lambda x: isinstance(x, (datetime, pd.Timestamp)))
+                    north_df = north_df[valid_mask]
                     north_df = north_df[north_df[date_col] >= cutoff]
                 except Exception as e:
                     logger.debug(f"北向资金日期过滤失败: {e}")

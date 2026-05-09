@@ -12,6 +12,9 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+SENTIMENT_POSITIVE_THRESHOLD = 0.05
+SENTIMENT_NEGATIVE_THRESHOLD = -0.05
+
 
 class ChineseFinanceDataAggregator:
 
@@ -320,6 +323,29 @@ class ChineseFinanceDataAggregator:
                 logger.info(f"AKShare新闻获取失败，尝试东方财富直接API获取新闻: {code}")
                 news_items = self._get_finance_news_direct(code)
 
+            if not news_items and ak is not None:
+                try:
+                    market_prefix = 'SH' if code.startswith(('6', '5', '9')) else 'SZ'
+                    prefixed_code = f"{market_prefix}{code}"
+                    fallback_df = ak.stock_news_em(symbol=prefixed_code)
+                    if fallback_df is not None and not fallback_df.empty:
+                        for _, row in fallback_df.head(15).iterrows():
+                            title = str(row.get('新闻标题', '') or row.get('标题', ''))
+                            content = str(row.get('新闻内容', '') or row.get('内容', ''))
+                            source = str(row.get('文章来源', '') or row.get('来源', ''))
+                            pub_time = str(row.get('发布时间', '') or row.get('时间', ''))
+                            url = str(row.get('新闻链接', '') or row.get('链接', ''))
+                            news_items.append({
+                                'title': title,
+                                'content': content[:500],
+                                'source': source,
+                                'publish_time': pub_time,
+                                'url': url
+                            })
+                        logger.info(f"stock_news_em市场前缀回退成功: {prefixed_code}, 获取{len(news_items)}条")
+                except Exception as e3:
+                    logger.warning(f"stock_news_em市场前缀回退也失败 for {code}: {e3}")
+
             if not news_items:
                 return {'sentiment_score': 0, 'confidence': 0, 'news_count': 0}
 
@@ -331,9 +357,9 @@ class ChineseFinanceDataAggregator:
                 sentiment = self._analyze_text_sentiment(
                     item.get('title', '') + ' ' + item.get('content', '')
                 )
-                if sentiment > 0.1:
+                if sentiment > SENTIMENT_POSITIVE_THRESHOLD:
                     positive_count += 1
-                elif sentiment < -0.1:
+                elif sentiment < SENTIMENT_NEGATIVE_THRESHOLD:
                     negative_count += 1
                 else:
                     neutral_count += 1

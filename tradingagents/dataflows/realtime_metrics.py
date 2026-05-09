@@ -241,20 +241,48 @@ def calculate_realtime_pe_pb(
 
         # 5. 从 Tushare pe_ttm 反推 TTM 净利润（使用昨日市值）
 
-        if not pe_ttm_tushare or pe_ttm_tushare <= 0 or not yesterday_mv_yi or yesterday_mv_yi <= 0:
-            logger.warning(f"⚠️ [动态PE计算-失败] 无法反推TTM净利润: pe_ttm={pe_ttm_tushare}, yesterday_mv={yesterday_mv_yi}")
-            logger.warning(f"   💡 提示: 可能是亏损股票（PE为负或空）")
+        if not yesterday_mv_yi or yesterday_mv_yi <= 0:
+            logger.warning(f"⚠️ [动态PE计算-失败] 昨日市值为0或无效: yesterday_mv={yesterday_mv_yi}")
+            logger.warning(f"   💡 提示: 该股票可能已停牌，无法计算实时估值")
             return None
 
-        # 反推 TTM 净利润（亿元）= 昨日市值 / PE_TTM
-        ttm_net_profit_yi = yesterday_mv_yi / pe_ttm_tushare
-        logger.info(f"   ✓ 反推 TTM净利润: {yesterday_mv_yi:.2f}亿元 / {pe_ttm_tushare:.2f}倍 = {ttm_net_profit_yi:.2f}亿元")
+        if not pe_ttm_tushare or pe_ttm_tushare == 0:
+            logger.info(f"   💡 pe_ttm为0，尝试从财务数据直接计算TTM净利润")
+            try:
+                stock_financial_data = _get_collection(db, "stock_financial_data")
+                fin_data = stock_financial_data.find_one({"code": code6}, sort=[("report_period", -1)])
+                if fin_data:
+                    net_profit = fin_data.get("net_profit")
+                    if net_profit and net_profit != 0:
+                        ttm_net_profit_yi = net_profit / 100000000
+                        logger.info(f"   ✓ 从财务数据获取净利润: {ttm_net_profit_yi:.2f}亿元")
+                    else:
+                        logger.warning(f"⚠️ [动态PE计算-失败] 财务数据中净利润无效: {net_profit}")
+                        return None
+                else:
+                    logger.warning(f"⚠️ [动态PE计算-失败] pe_ttm为0且无财务数据，可能为亏损股票")
+                    return None
+            except Exception as e:
+                logger.warning(f"⚠️ [动态PE计算-失败] 从财务数据计算净利润失败: {e}")
+                return None
+        elif pe_ttm_tushare < 0:
+            logger.info(f"   💡 pe_ttm为负值({pe_ttm_tushare})，表示亏损股票，仍可计算")
+            ttm_net_profit_yi = yesterday_mv_yi / pe_ttm_tushare
+        else:
+            ttm_net_profit_yi = yesterday_mv_yi / pe_ttm_tushare
+        if pe_ttm_tushare and pe_ttm_tushare != 0:
+            logger.info(f"   ✓ 反推 TTM净利润: {yesterday_mv_yi:.2f}亿元 / {pe_ttm_tushare:.2f}倍 = {ttm_net_profit_yi:.2f}亿元")
+        else:
+            logger.info(f"   ✓ TTM净利润(来自财务数据): {ttm_net_profit_yi:.2f}亿元")
 
         # 6. 计算实时市值（亿元）= 总股本（万股）× 实时股价（元）/ 10000
         realtime_mv_yi = (realtime_price * total_shares_wan) / 10000
         logger.info(f"   ✓ 实时市值: {realtime_price:.2f}元 × {total_shares_wan:.2f}万股 / 10000 = {realtime_mv_yi:.2f}亿元")
 
         # 7. 计算动态 PE_TTM = 实时市值 / TTM净利润
+        if not ttm_net_profit_yi or ttm_net_profit_yi == 0:
+            logger.warning(f"⚠️ [动态PE计算-失败] TTM净利润为0，无法计算PE")
+            return None
         dynamic_pe_ttm = realtime_mv_yi / ttm_net_profit_yi
         logger.info(f"   ✓ 动态PE_TTM计算: {realtime_mv_yi:.2f}亿元 / {ttm_net_profit_yi:.2f}亿元 = {dynamic_pe_ttm:.2f}倍")
 

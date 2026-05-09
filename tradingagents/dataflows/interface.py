@@ -357,18 +357,17 @@ def get_google_news(
 ) -> str:
     # 判断是否为A股查询
     is_china_stock = False
-    if any(code in query for code in ['SH', 'SZ', 'XSHE', 'XSHG']) or query.isdigit() or (len(query) == 6 and query[:6].isdigit()):
-        is_china_stock = True
-    
-    # 尝试使用StockUtils判断
+    is_hk_stock = False
     try:
-        from tradingagents.utils.stock_utils import StockUtils
-        market_info = StockUtils.get_market_info(query.split()[0])
-        if market_info['is_china']:
+        from tradingagents.utils.stock_utils import get_stock_market_info
+        market_info = get_stock_market_info(query.split()[0])
+        if market_info.get('is_china'):
             is_china_stock = True
+        elif market_info.get('is_hk'):
+            is_hk_stock = True
     except Exception:
-        # 如果StockUtils判断失败，使用上面的简单判断
-        pass
+        if any(code in query for code in ['SH', 'SZ', 'XSHE', 'XSHG']) or (len(query) == 6 and query[:6].isdigit()):
+            is_china_stock = True
     
     # 对A股查询添加中文关键词
     if is_china_stock:
@@ -741,9 +740,11 @@ def get_YFin_data_online(
             f"No data found for symbol '{symbol}' between {start_date} and {end_date}"
         )
 
-    # Remove timezone info from index for cleaner output
-    if data.index.tz is not None:
-        data.index = data.index.tz_localize(None)
+    if hasattr(data.index, 'tz') and data.index.tz is not None:
+        try:
+            data.index = data.index.tz_localize(None)
+        except TypeError:
+            data.index = data.index.tz_convert('UTC').tz_localize(None)
 
     # Round numerical values to 2 decimal places for cleaner display
     numeric_columns = ["Open", "High", "Low", "Close", "Adj Close"]
@@ -949,41 +950,56 @@ def get_fundamentals_finnhub(ticker, curr_date):
         
         # 基本财务指标
         if basic_financials and 'metric' in basic_financials:
-            metrics = basic_financials['metric']
+            metrics = basic_financials.get('metric', {})
             report += "## 关键财务指标\n"
             report += "| 指标 | 数值 |\n"
             report += "|------|------|\n"
             
-            # 估值指标
-            if 'peBasicExclExtraTTM' in metrics:
-                report += f"| 市盈率 (PE) | {metrics['peBasicExclExtraTTM']:.2f} |\n"
-            if 'psAnnual' in metrics:
-                report += f"| 市销率 (PS) | {metrics['psAnnual']:.2f} |\n"
-            if 'pbAnnual' in metrics:
-                report += f"| 市净率 (PB) | {metrics['pbAnnual']:.2f} |\n"
+            def _fmt_metric(val, suffix="", fmt=".2f"):
+                if val is None:
+                    return "N/A"
+                try:
+                    return f"{val:{fmt}}{suffix}"
+                except (TypeError, ValueError):
+                    return str(val)
+
+            pe_val = metrics.get('peBasicExclExtraTTM')
+            if pe_val is not None:
+                report += f"| 市盈率 (PE) | {_fmt_metric(pe_val)} |\n"
+            ps_val = metrics.get('psAnnual')
+            if ps_val is not None:
+                report += f"| 市销率 (PS) | {_fmt_metric(ps_val)} |\n"
+            pb_val = metrics.get('pbAnnual')
+            if pb_val is not None:
+                report += f"| 市净率 (PB) | {_fmt_metric(pb_val)} |\n"
             
-            # 盈利能力指标
-            if 'roeTTM' in metrics:
-                report += f"| 净资产收益率 (ROE) | {metrics['roeTTM']:.2f}% |\n"
-            if 'roaTTM' in metrics:
-                report += f"| 总资产收益率 (ROA) | {metrics['roaTTM']:.2f}% |\n"
-            if 'netProfitMarginTTM' in metrics:
-                report += f"| 净利润率 | {metrics['netProfitMarginTTM']:.2f}% |\n"
+            roe_val = metrics.get('roeTTM')
+            if roe_val is not None:
+                report += f"| 净资产收益率 (ROE) | {_fmt_metric(roe_val, '%')} |\n"
+            roa_val = metrics.get('roaTTM')
+            if roa_val is not None:
+                report += f"| 总资产收益率 (ROA) | {_fmt_metric(roa_val, '%')} |\n"
+            npm_val = metrics.get('netProfitMarginTTM')
+            if npm_val is not None:
+                report += f"| 净利润率 | {_fmt_metric(npm_val, '%')} |\n"
             
-            # 财务健康指标
-            if 'currentRatioAnnual' in metrics:
-                report += f"| 流动比率 | {metrics['currentRatioAnnual']:.2f} |\n"
-            if 'totalDebt/totalEquityAnnual' in metrics:
-                report += f"| 负债权益比 | {metrics['totalDebt/totalEquityAnnual']:.2f} |\n"
+            cr_val = metrics.get('currentRatioAnnual')
+            if cr_val is not None:
+                report += f"| 流动比率 | {_fmt_metric(cr_val)} |\n"
+            de_val = metrics.get('totalDebt/totalEquityAnnual')
+            if de_val is not None:
+                report += f"| 负债权益比 | {_fmt_metric(de_val)} |\n"
             
             report += "\n"
         
         # 收益历史
-        if earnings:
+        if earnings and isinstance(earnings, list):
             report += "## 收益历史\n"
             report += "| 季度 | 实际EPS | 预期EPS | 差异 |\n"
             report += "|------|---------|---------|------|\n"
-            for earning in earnings[:4]:  # 显示最近4个季度
+            for earning in earnings[:4]:
+                if not isinstance(earning, dict):
+                    continue
                 actual = earning.get('actual', 'N/A')
                 estimate = earning.get('estimate', 'N/A')
                 period = earning.get('period', 'N/A')
@@ -1130,14 +1146,31 @@ def _get_fundamentals_alpha_vantage(ticker, curr_date, cache):
 
         result = get_av_fundamentals(ticker, curr_date)
 
-        if result and "Error" not in result and len(result) > 100:
-            # 保存到缓存
-            cache.save_fundamentals_data(ticker, result, data_source="alpha_vantage")
-            logger.info(f"✅ [Alpha Vantage] 基本面数据获取成功: {ticker}")
-            return result
-        else:
-            logger.warning(f"⚠️ [Alpha Vantage] 数据质量不佳")
+        if not result:
+            logger.warning(f"⚠️ [Alpha Vantage] 返回为空")
             return None
+
+        if not isinstance(result, str):
+            logger.warning(f"⚠️ [Alpha Vantage] 返回类型异常: {type(result)}")
+            return None
+
+        if "Error" in result:
+            logger.warning(f"⚠️ [Alpha Vantage] 响应包含错误: {result[:200]}")
+            return None
+
+        if len(result) <= 100:
+            logger.warning(f"⚠️ [Alpha Vantage] 数据过短，可能无效")
+            return None
+
+        error_indicators = ["rate limit", "API call frequency", "invalid API call", "Information Not Available"]
+        for indicator in error_indicators:
+            if indicator.lower() in result.lower():
+                logger.warning(f"⚠️ [Alpha Vantage] 响应包含API错误标识: {indicator}")
+                return None
+
+        cache.save_fundamentals_data(ticker, result, data_source="alpha_vantage")
+        logger.info(f"✅ [Alpha Vantage] 基本面数据获取成功: {ticker}")
+        return result
     except Exception as e:
         logger.warning(f"⚠️ [Alpha Vantage] 获取失败: {e}")
         return None
@@ -1174,22 +1207,22 @@ def _get_fundamentals_yfinance(ticker, curr_date, cache):
             result = f"""# {ticker} 基本面数据 (来源: Yahoo Finance)
 
 ## 公司信息
-- 公司名称: {info.get('longName', 'N/A')}
+- 公司名称: {info.get('longName', info.get('shortName', 'N/A'))}
 - 行业: {info.get('industry', 'N/A')}
 - 板块: {info.get('sector', 'N/A')}
 - 网站: {info.get('website', 'N/A')}
 
 ## 估值指标
-- 市值: ${_fmt_num(info.get('marketCap'))}
+- 市值: ${_fmt_num(info.get('marketCap', None))}
 - PE比率: {info.get('trailingPE', 'N/A')}
 - 前瞻PE: {info.get('forwardPE', 'N/A')}
 - PB比率: {info.get('priceToBook', 'N/A')}
 - PS比率: {info.get('priceToSalesTrailing12Months', 'N/A')}
 
 ## 财务指标
-- 总收入: ${_fmt_num(info.get('totalRevenue'))}
-- 毛利润: ${_fmt_num(info.get('grossProfits'))}
-- EBITDA: ${_fmt_num(info.get('ebitda'))}
+- 总收入: ${_fmt_num(info.get('totalRevenue', None))}
+- 毛利润: ${_fmt_num(info.get('grossProfits', None))}
+- EBITDA: ${_fmt_num(info.get('ebitda', None))}
 - 每股收益(EPS): ${info.get('trailingEps', 'N/A')}
 - 股息率: {info.get('dividendYield', 'N/A')}
 
@@ -1200,7 +1233,7 @@ def _get_fundamentals_yfinance(ticker, curr_date, cache):
 - ROA: {info.get('returnOnAssets', 'N/A')}
 
 ## 股价信息
-- 当前价格: ${info.get('currentPrice', 'N/A')}
+- 当前价格: ${info.get('currentPrice', info.get('regularMarketPrice', 'N/A'))}
 - 52周最高: ${info.get('fiftyTwoWeekHigh', 'N/A')}
 - 52周最低: ${info.get('fiftyTwoWeekLow', 'N/A')}
 - 50日均线: ${info.get('fiftyDayAverage', 'N/A')}
@@ -1288,15 +1321,18 @@ def _get_fundamentals_openai_impl(ticker, curr_date, config, cache):
 
 def get_stock_data_by_market(symbol: str, start_date: str = None, end_date: str = None) -> str:
     try:
-        from tradingagents.utils.stock_utils import StockUtils
+        from tradingagents.utils.stock_utils import get_stock_market_info
 
-        market_info = StockUtils.get_market_info(symbol)
+        market_info = get_stock_market_info(symbol)
 
-        if market_info['is_china']:
+        if market_info.get('is_china'):
             return get_china_stock_data_unified(symbol, start_date, end_date)
-        elif market_info['is_hk']:
+        elif market_info.get('is_hk'):
             return get_hk_stock_data_unified(symbol, start_date, end_date)
+        elif market_info.get('is_us'):
+            return get_us_stock_data(symbol, start_date, end_date)
         else:
+            logger.warning(f"⚠️ 无法识别市场类型: {symbol}，默认使用美股数据源")
             return get_us_stock_data(symbol, start_date, end_date)
 
     except Exception as e:

@@ -109,9 +109,23 @@ def create_trader(llm, memory):
         logger.debug(f"💰 [DEBUG] 交易员回复前500字符: {result.content[:500]}...")
         logger.debug(f"💰 [DEBUG] ===== 交易员节点结束 =====")
 
+        content = result.content
+        missing_fields = []
+        if '目标价' not in content and '目标价位' not in content and 'target' not in content.lower():
+            missing_fields.append('目标价位')
+        if '置信度' not in content and 'confidence' not in content.lower():
+            missing_fields.append('置信度')
+        if '风险评分' not in content and '风险等级' not in content and 'risk' not in content.lower():
+            missing_fields.append('风险评分')
+
+        if missing_fields:
+            warning = f"\n\n⚠️ **注意：LLM输出中缺少以下关键字段: {', '.join(missing_fields)}。请谨慎参考此分析结果。**"
+            logger.warning(f"💰 [WARNING] 交易员输出缺少关键字段: {missing_fields}")
+            content = content + warning
+
         return {
             "messages": [result],
-            "trader_investment_plan": result.content,
+            "trader_investment_plan": content,
             "sender": name,
         }
 

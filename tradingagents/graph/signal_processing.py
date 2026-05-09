@@ -224,6 +224,13 @@ class SignalProcessor:
                     'risk_score': risk_score,
                     'reasoning': decision_data.get('reasoning', '基于综合分析的投资建议')
                 }
+
+                validated_price = self._validate_target_price(target_price, full_signal, action, is_china)
+                if validated_price != target_price:
+                    result['target_price'] = validated_price
+                    if validated_price is None:
+                        result['reasoning'] = result.get('reasoning', '') + '（目标价格因偏离当前价格过大已被过滤）'
+
                 logger.info(f"🔍 [SignalProcessor] 处理结果: {result}",
                            extra={'action': result['action'], 'target_price': result['target_price'],
                                  'confidence': result['confidence'], 'stock_symbol': stock_symbol})
@@ -235,6 +242,59 @@ class SignalProcessor:
         except Exception as e:
             logger.error(f"信号处理错误: {e}", exc_info=True, extra={'stock_symbol': stock_symbol})
             return self._extract_simple_decision(full_signal, is_china=is_china)
+
+    def _validate_target_price(self, target_price, full_signal: str, action: str, is_china: bool):
+        if target_price is None or target_price <= 0:
+            return target_price
+
+        current_price = None
+        for pattern in _CURRENT_PRICE_PATTERNS:
+            match = re.search(pattern, full_signal)
+            if match:
+                try:
+                    current_price = float(match.group(1))
+                    break
+                except (ValueError, IndexError):
+                    continue
+
+        if current_price is None or current_price <= 0:
+            for pattern in _TARGET_PRICE_PATTERNS:
+                matches = re.finditer(pattern, full_signal)
+                all_prices = []
+                for m in matches:
+                    try:
+                        p = float(m.group(1))
+                        if p > 0:
+                            all_prices.append(p)
+                    except (ValueError, IndexError):
+                        continue
+                if len(all_prices) >= 2:
+                    all_prices.sort()
+                    current_price = all_prices[len(all_prices) // 2]
+                    break
+
+        if current_price is None or current_price <= 0:
+            logger.debug(f"🔍 [SignalProcessor] 无法提取当前价格，跳过目标价验证")
+            return target_price
+
+        ratio = target_price / current_price
+
+        if action == '持有':
+            max_ratio, min_ratio = 1.3, 0.7
+        elif action == '买入':
+            max_ratio, min_ratio = 1.5, 0.5
+        else:
+            max_ratio, min_ratio = 1.5, 0.5
+
+        if ratio > max_ratio or ratio < min_ratio:
+            logger.warning(
+                f"🔍 [SignalProcessor] 目标价格{target_price}偏离当前价格{current_price}过大"
+                f"(比率={ratio:.2f}, 合理范围=[{min_ratio}, {max_ratio}])，已过滤"
+            )
+            return None
+
+        logger.debug(f"🔍 [SignalProcessor] 目标价格验证通过: {target_price}, 当前价格: {current_price}, 比率: {ratio:.2f}")
+        return target_price
 
     def _smart_price_estimation(self, text: str, action: str, is_china: bool) -> float:
         """从文本中提取真实目标价，不编造假数据"""
@@ -310,6 +370,8 @@ class SignalProcessor:
             target_price = self._smart_price_estimation(text, action, is_china=is_china)
             if target_price is not None and target_price == 0:
                 target_price = None
+
+        target_price = self._validate_target_price(target_price, text, action, is_china)
 
         return {
             'action': action,

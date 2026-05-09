@@ -64,6 +64,10 @@ class Propagator:
             "china_market_tool_call_count": 0,
             "prefetched_fundamentals_data": "",
             "prefetched_market_data": "",
+            "prefetched_news_data": "",
+            "prefetched_social_media_data": "",
+            "prefetched_quant_data": "",
+            "fundamental_snapshot": {},
         }
 
         AnalystRegistry.ensure_initialized()

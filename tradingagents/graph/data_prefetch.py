@@ -14,10 +14,23 @@ def create_data_prefetch_node(toolkit):
 
         logger.info(f"{log_tag} ===== 开始预获取数据 ===== ticker={ticker}, date={trade_date}")
 
-        market_info = StockUtils.get_market_info(ticker)
-        is_china = market_info['is_china']
-        is_hk = market_info['is_hk']
-        is_us = market_info['is_us']
+        fundamentals_data = ""
+        market_data = ""
+        quant_data = ""
+        snapshot_dict = {}
+        is_china = False
+
+        try:
+            market_info = StockUtils.get_market_info(ticker)
+            is_china = market_info['is_china']
+        except Exception as e:
+            logger.error(f"{log_tag} ❌ 市场信息获取失败: {e}")
+            return {
+                "prefetched_fundamentals_data": f"数据预获取失败: 市场信息获取错误 - {e}",
+                "prefetched_market_data": f"数据预获取失败: 市场信息获取错误 - {e}",
+                "prefetched_quant_data": "",
+                "fundamental_snapshot": {},
+            }
 
         end_date_dt = None
         try:
@@ -28,57 +41,82 @@ def create_data_prefetch_node(toolkit):
             start_date = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
             end_date_dt = datetime.now()
 
-        fundamentals_data = _fetch_with_fallback(
-            toolkit.get_stock_fundamentals_unified,
-            {"ticker": ticker, "start_date": start_date, "end_date": trade_date, "curr_date": trade_date},
-            log_tag, "基本面"
-        )
+        try:
+            fundamentals_data = _fetch_with_fallback(
+                toolkit.get_stock_fundamentals_unified,
+                {"ticker": ticker, "start_date": start_date, "end_date": trade_date, "curr_date": trade_date},
+                log_tag, "基本面"
+            )
+        except Exception as e:
+            fundamentals_data = f"基本面数据获取失败: {e}"
+            logger.error(f"{log_tag} ❌ 基本面数据获取异常: {e}")
 
-        market_data = _fetch_with_fallback(
-            toolkit.get_stock_market_data_unified,
-            {"ticker": ticker, "start_date": start_date, "end_date": trade_date},
-            log_tag, "市场"
-        )
+        try:
+            market_data = _fetch_with_fallback(
+                toolkit.get_stock_market_data_unified,
+                {"ticker": ticker, "start_date": start_date, "end_date": trade_date},
+                log_tag, "市场"
+            )
+        except Exception as e:
+            market_data = f"市场数据获取失败: {e}"
+            logger.error(f"{log_tag} ❌ 市场数据获取异常: {e}")
 
-        data_quality = _check_data_quality(fundamentals_data, market_info)
-
-        if data_quality["score"] < 3:
-            logger.warning(f"{log_tag} ⚠️ 数据质量较低({data_quality['score']}/5)，尝试扩展日期范围重新获取")
-            try:
-                extended_start = (end_date_dt - timedelta(days=30)).strftime("%Y-%m-%d")
-                retry_data = _fetch_with_fallback(
-                    toolkit.get_stock_fundamentals_unified,
-                    {"ticker": ticker, "start_date": extended_start, "end_date": trade_date, "curr_date": trade_date},
-                    log_tag, "基本面(扩展范围)"
-                )
-                if retry_data and len(str(retry_data)) > len(str(fundamentals_data)):
-                    retry_quality = _check_data_quality(retry_data, market_info)
-                    if retry_quality["score"] >= data_quality["score"]:
-                        fundamentals_data = retry_data
-                        data_quality = retry_quality
-                        logger.info(f"{log_tag} ✅ 扩展范围后数据质量提升: {data_quality['score']}/5")
-                    else:
-                        logger.warning(f"{log_tag} ⚠️ 扩展范围后数据质量未提升(重试:{retry_quality['score']}/5 vs 原始:{data_quality['score']}/5)，保留原始数据")
-                else:
-                    logger.warning(f"{log_tag} ⚠️ 扩展范围后数据未变长，保留原始数据")
-            except Exception as e:
-                logger.warning(f"{log_tag} 扩展范围重试失败: {e}")
+        try:
+            data_quality = _check_data_quality(fundamentals_data, market_info)
 
             if data_quality["score"] < 3:
-                logger.warning(f"{log_tag} ⚠️ 数据质量仍然较低({data_quality['score']}/5)，下游分析可能受影响")
+                logger.warning(f"{log_tag} ⚠️ 数据质量较低({data_quality['score']}/5)，尝试扩展日期范围重新获取")
+                try:
+                    extended_start = (end_date_dt - timedelta(days=30)).strftime("%Y-%m-%d")
+                    retry_data = _fetch_with_fallback(
+                        toolkit.get_stock_fundamentals_unified,
+                        {"ticker": ticker, "start_date": extended_start, "end_date": trade_date, "curr_date": trade_date},
+                        log_tag, "基本面(扩展范围)"
+                    )
+                    if retry_data and len(str(retry_data)) > len(str(fundamentals_data)):
+                        retry_quality = _check_data_quality(retry_data, market_info)
+                        if retry_quality["score"] >= data_quality["score"]:
+                            fundamentals_data = retry_data
+                            data_quality = retry_quality
+                            logger.info(f"{log_tag} ✅ 扩展范围后数据质量提升: {data_quality['score']}/5")
+                        else:
+                            logger.warning(f"{log_tag} ⚠️ 扩展范围后数据质量未提升(重试:{retry_quality['score']}/5 vs 原始:{data_quality['score']}/5)，保留原始数据")
+                    else:
+                        logger.warning(f"{log_tag} ⚠️ 扩展范围后数据未变长，保留原始数据")
+                except Exception as e:
+                    logger.warning(f"{log_tag} 扩展范围重试失败: {e}")
 
-        industry_context = _get_industry_context(ticker, market_info, log_tag)
+                if data_quality["score"] < 3:
+                    logger.warning(f"{log_tag} ⚠️ 数据质量仍然较低({data_quality['score']}/5)，下游分析可能受影响")
+        except Exception as e:
+            logger.warning(f"{log_tag} 数据质量检查失败: {e}")
+
+        try:
+            industry_context = _get_industry_context(ticker, market_info, log_tag)
+        except Exception as e:
+            industry_context = ""
+            logger.warning(f"{log_tag} 行业对比数据获取失败: {e}")
 
         capital_flow_data = ""
         announcement_data = ""
-        quant_data = ""
-        snapshot_dict = {}
         if is_china:
-            capital_flow_data = _get_china_capital_flow(ticker, log_tag)
-            announcement_data = _get_china_announcement_signals(ticker, log_tag)
-            quant_data, snapshot_dict = _get_china_quant_data(ticker, log_tag)
+            try:
+                capital_flow_data = _get_china_capital_flow(ticker, log_tag)
+            except Exception as e:
+                capital_flow_data = f"资金面数据获取失败: {e}"
+                logger.warning(f"{log_tag} 资金面数据获取失败: {e}")
+            try:
+                announcement_data = _get_china_announcement_signals(ticker, log_tag)
+            except Exception as e:
+                announcement_data = f"公告信号数据获取失败: {e}"
+                logger.warning(f"{log_tag} 公告信号数据获取失败: {e}")
+            try:
+                quant_data, snapshot_dict = _get_china_quant_data(ticker, log_tag)
+            except Exception as e:
+                quant_data = f"量化数据获取失败: {e}"
+                snapshot_dict = {}
+                logger.warning(f"{log_tag} 量化数据获取失败: {e}")
 
-        logger.info(f"{log_tag} 数据质量: {data_quality}")
         logger.info(f"{log_tag} ===== 预获取完成 =====")
 
         fundamentals_with_industry = str(fundamentals_data) if fundamentals_data else ""

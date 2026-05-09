@@ -1175,6 +1175,32 @@ class AKShareProvider(BaseStockDataProvider):
             "long_term_debt": self._safe_float(row.get("长期借款", None)),
             "bvps": self._safe_float(row.get("每股净资产", None)),
         }
+
+        total_assets = result.get("total_assets")
+        total_liabilities = result.get("total_liabilities")
+        total_equity = result.get("total_equity")
+        current_assets = result.get("current_assets")
+        current_liabilities = result.get("current_liabilities")
+        inventory = result.get("inventory")
+
+        if total_assets and total_assets != 0:
+            result["debt_ratio"] = total_liabilities / total_assets if total_liabilities is not None else None
+        else:
+            result["debt_ratio"] = None
+
+        if total_equity and total_equity != 0:
+            result["debt_to_equity"] = total_liabilities / total_equity if total_liabilities is not None else None
+        else:
+            result["debt_to_equity"] = None
+
+        if current_liabilities and current_liabilities != 0:
+            result["current_ratio"] = current_assets / current_liabilities if current_assets is not None else None
+            quick_assets = (current_assets - inventory) if (current_assets is not None and inventory is not None) else None
+            result["quick_ratio"] = quick_assets / current_liabilities if quick_assets is not None else None
+        else:
+            result["current_ratio"] = None
+            result["quick_ratio"] = None
+
         return result
 
     def _parse_cash_flow_row(self, row: pd.Series) -> Dict[str, Any]:

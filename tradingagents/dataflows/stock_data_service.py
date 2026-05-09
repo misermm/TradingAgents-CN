@@ -5,6 +5,8 @@
 实现MongoDB -> Tushare数据接口的完整降级机制
 """
 
+import re
+
 import pandas as pd
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
@@ -102,83 +104,98 @@ class StockDataService:
         try:
             mongodb_client = self.db_manager.get_mongodb_client()
             if not mongodb_client:
+                logger.error("MongoDB客户端为空，请检查数据库配置")
                 return None
 
-            db = mongodb_client[self.db_manager.mongodb_config["database"]]
+            if not hasattr(self.db_manager, 'mongodb_config') or not self.db_manager.mongodb_config:
+                logger.error("MongoDB配置缺失(mongodb_config)，请检查database_manager初始化")
+                return None
+
+            db_name = self.db_manager.mongodb_config.get("database")
+            if not db_name:
+                logger.error("MongoDB配置中缺少'database'字段，请检查配置项")
+                return None
+
+            db = mongodb_client[db_name]
             collection = db['stock_basic_info']
 
             if stock_code:
-                # 获取单个股票
                 result = collection.find_one({'code': stock_code})
                 return result if result else None
             else:
-                # 获取所有股票
                 cursor = collection.find({})
                 results = list(cursor)
                 return results if results else None
 
+        except KeyError as e:
+            logger.error(f"MongoDB配置字段缺失: {e}，请检查mongodb_config中是否包含database等必要字段")
+            return None
         except Exception as e:
-            logger.error(f"MongoDB查询失败: {e}")
+            logger.error(f"MongoDB查询失败: {type(e).__name__}: {e}")
             return None
     
     def _get_from_enhanced_fetcher(self, stock_code: str = None) -> Optional[Dict[str, Any]]:
         """从增强获取器获取数据"""
         try:
+            fetch_kwargs = {
+                'type_': 'stock',
+                'enable_server_failover': True,
+                'max_retries': 3,
+            }
             if stock_code:
-                # 获取单个股票信息 - 使用增强获取器获取所有股票然后筛选
-                stock_df = enhanced_fetch_stock_list(
-                    type_='stock',
-                    enable_server_failover=True,
-                    max_retries=3
-                )
-                
-                if stock_df is not None and not stock_df.empty:
-                    # 查找指定股票代码
-                    stock_row = stock_df[stock_df['code'] == stock_code]
-                    if not stock_row.empty:
-                        row = stock_row.iloc[0]
-                        return {
-                            'code': row.get('code', stock_code),
-                            'name': row.get('name', ''),
-                            'market': row.get('market', self._get_market_name(stock_code)),
-                            'category': row.get('category', self._get_stock_category(stock_code)),
-                            'source': 'enhanced_fetcher',
-                            'updated_at': datetime.now().isoformat()
-                        }
-                    else:
-                        # 如果没找到，返回基本信息
-                        return {
-                            'code': stock_code,
-                            'name': '',
-                            'market': self._get_market_name(stock_code),
-                            'category': self._get_stock_category(stock_code),
-                            'source': 'enhanced_fetcher',
-                            'updated_at': datetime.now().isoformat()
-                        }
+                fetch_kwargs['status'] = 'L'
+
+            stock_df = enhanced_fetch_stock_list(**fetch_kwargs)
+
+            if stock_df is None or not isinstance(stock_df, pd.DataFrame):
+                logger.warning("增强获取器返回无效数据(非DataFrame)")
+                return None
+
+            if stock_df.empty:
+                logger.warning("增强获取器返回空DataFrame")
+                return None
+
+            required_cols = {'code', 'name'}
+            missing_cols = required_cols - set(stock_df.columns)
+            if missing_cols:
+                logger.warning(f"增强获取器返回数据缺少必要列: {missing_cols}，已有列: {list(stock_df.columns)}")
+
+            if stock_code:
+                stock_row = stock_df[stock_df['code'] == stock_code]
+                if not stock_row.empty:
+                    row = stock_row.iloc[0]
+                    return {
+                        'code': row.get('code', stock_code),
+                        'name': row.get('name', ''),
+                        'market': row.get('market', self._get_market_name(stock_code)),
+                        'category': row.get('category', self._get_stock_category(stock_code)),
+                        'source': 'enhanced_fetcher',
+                        'updated_at': datetime.now().isoformat()
+                    }
+                else:
+                    return {
+                        'code': stock_code,
+                        'name': '',
+                        'market': self._get_market_name(stock_code),
+                        'category': self._get_stock_category(stock_code),
+                        'source': 'enhanced_fetcher',
+                        'updated_at': datetime.now().isoformat()
+                    }
             else:
-                # 获取所有股票列表
-                stock_df = enhanced_fetch_stock_list(
-                    type_='stock',
-                    enable_server_failover=True,
-                    max_retries=3
-                )
-                
-                if stock_df is not None and not stock_df.empty:
-                    # 转换为字典列表
-                    results = []
-                    for _, row in stock_df.iterrows():
-                        results.append({
-                            'code': row.get('code', ''),
-                            'name': row.get('name', ''),
-                            'market': row.get('market', ''),
-                            'category': row.get('category', ''),
-                            'source': 'enhanced_fetcher',
-                            'updated_at': datetime.now().isoformat()
-                        })
-                    return results
+                results = []
+                for _, row in stock_df.iterrows():
+                    results.append({
+                        'code': row.get('code', ''),
+                        'name': row.get('name', ''),
+                        'market': row.get('market', ''),
+                        'category': row.get('category', ''),
+                        'source': 'enhanced_fetcher',
+                        'updated_at': datetime.now().isoformat()
+                    })
+                return results
                     
         except Exception as e:
-            logger.error(f"增强获取器查询失败: {e}")
+            logger.error(f"增强获取器查询失败: {type(e).__name__}: {e}")
             return None
     
     def _cache_to_mongodb(self, data: Any) -> bool:
@@ -261,12 +278,38 @@ class StockDataService:
         else:
             return '其他'
     
+    @staticmethod
+    def _validate_date_format(date_str: str, param_name: str) -> Optional[str]:
+        if not date_str or not isinstance(date_str, str):
+            return f"{param_name}不能为空且必须为字符串"
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_str):
+            return f"{param_name}格式错误: '{date_str}'，要求YYYY-MM-DD格式"
+        try:
+            datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            return f"{param_name}不是有效日期: '{date_str}'"
+        return None
+
     def get_stock_data_with_fallback(self, stock_code: str, start_date: str, end_date: str) -> str:
         """
         获取股票数据（带降级机制）
         这是对现有get_china_stock_data函数的增强
         """
         logger.info(f"📊 获取股票数据: {stock_code} ({start_date} 到 {end_date})")
+
+        start_err = self._validate_date_format(start_date, 'start_date')
+        if start_err:
+            logger.error(f"❌ {start_err}")
+            return f"❌ 日期参数错误: {start_err}"
+
+        end_err = self._validate_date_format(end_date, 'end_date')
+        if end_err:
+            logger.error(f"❌ {end_err}")
+            return f"❌ 日期参数错误: {end_err}"
+
+        if start_date > end_date:
+            logger.error(f"❌ start_date({start_date})不能晚于end_date({end_date})")
+            return f"❌ 日期范围错误: start_date({start_date})不能晚于end_date({end_date})"
         
         # 首先确保股票基础信息可用
         stock_info = self.get_stock_basic_info(stock_code)

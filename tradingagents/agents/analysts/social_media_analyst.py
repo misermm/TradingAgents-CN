@@ -89,6 +89,46 @@ def _get_company_name_for_social_media(ticker: str, market_info: dict) -> str:
         return f"股票{ticker}"
 
 
+def _generate_fallback_sentiment_report(ticker: str, company_name: str, state: dict, current_date: str) -> str:
+    try:
+        market_sent = state.get("market_sentiment", "N/A")
+        news_report = state.get("news_report", "N/A")
+        fundamentals = state.get("fundamentals_report", "N/A")
+
+        report = f"""## 社交媒体情绪分析（回退报告）
+
+⚠️ **注意**: 情绪分析工具暂时不可用，以下为基于已有状态的回退分析。
+
+### 基本信息
+- **股票代码**: {ticker}
+- **公司名称**: {company_name}
+- **分析日期**: {current_date}
+
+### 市场情绪参考
+{market_sent if market_sent != "N/A" else "暂无市场情绪数据"}
+
+### 新闻情绪参考
+{news_report if news_report != "N/A" else "暂无新闻情绪数据"}
+
+### 基本面参考
+{fundamentals if fundamentals != "N/A" else "暂无基本面数据"}
+
+### 综合评估
+由于情绪分析工具不可用，无法提供精确的社交媒体情绪评分。
+建议结合上述可用数据源进行综合判断，或在工具恢复后重新运行分析。
+
+| 指标 | 评估 |
+|------|------|
+| 情绪指数 | N/A（工具不可用） |
+| 数据来源 | 回退（状态数据） |
+| 可信度 | 低 |
+"""
+        return report
+    except Exception as e:
+        logger.error(f"❌ [社交媒体分析师] 生成回退报告失败: {e}")
+        return f"## 社交媒体情绪分析\n\n⚠️ 情绪分析工具不可用且回退报告生成失败，无法提供情绪分析。"
+
+
 def create_social_media_analyst(llm, toolkit):
     @log_analyst_module("social_media")
     def social_media_analyst_node(state):
@@ -109,10 +149,23 @@ def create_social_media_analyst(llm, toolkit):
         instrument_context = build_instrument_context(ticker)
         logger.info(f"[社交媒体分析师] 公司名称: {company_name}")
 
-        # 统一使用 get_stock_sentiment_unified 工具
-        # 该工具内部会自动识别股票类型并调用相应的情绪数据源
-        logger.info(f"[社交媒体分析师] 使用统一情绪分析工具，自动识别股票类型")
-        tools = [toolkit.get_stock_sentiment_unified]
+        sentiment_tool_available = True
+        try:
+            sentiment_tool = toolkit.get_stock_sentiment_unified
+            tools = [sentiment_tool]
+            logger.info(f"[社交媒体分析师] 使用统一情绪分析工具，自动识别股票类型")
+        except (AttributeError, TypeError) as e:
+            sentiment_tool_available = False
+            tools = []
+            logger.warning(f"[社交媒体分析师] 情绪分析工具不可用: {e}，将生成基于状态的回退报告")
+
+        if not sentiment_tool_available:
+            fallback_report = _generate_fallback_sentiment_report(ticker, company_name, state, current_date)
+            return {
+                "messages": [],
+                "sentiment_report": fallback_report,
+                "sentiment_tool_call_count": tool_call_count + 1
+            }
 
         system_message = (
             """您是一位专业的中国市场社交媒体和投资情绪分析师，负责分析中国投资者对特定股票的讨论和情绪变化。
@@ -264,7 +317,13 @@ def create_social_media_analyst(llm, toolkit):
                                 if current_tool_name == tool_name:
                                     try:
                                         tool_result = tool.invoke(tool_args)
+                                        if tool_result is None or (isinstance(tool_result, str) and not tool_result.strip()):
+                                            logger.warning(f"⚠️ [社媒分析师] 工具 {tool_name} 返回空结果")
+                                            tool_result = "情绪数据获取为空，请基于已有信息进行分析。"
+                                        elif isinstance(tool_result, str) and ('错误' in tool_result or 'error' in tool_result.lower()):
+                                            logger.warning(f"⚠️ [社媒分析师] 工具 {tool_name} 返回错误: {tool_result[:200]}")
                                     except Exception as e:
+                                        logger.error(f"❌ [社媒分析师] 工具 {tool_name} 执行异常: {e}")
                                         tool_result = f"工具执行错误: {str(e)}"
                                     break
                             if tool_result is not None:
@@ -276,7 +335,7 @@ def create_social_media_analyst(llm, toolkit):
                         logger.info(f"💭 [社媒分析师] 工具调用后生成报告，长度: {len(report)}")
                     except Exception as e:
                         logger.error(f"💭 [社媒分析师] 工具调用处理失败: {e}")
-                        report = result.content if result.content else "社交媒体分析完成，但报告生成失败。"
+                        report = result.content if result.content else _generate_fallback_sentiment_report(ticker, company_name, state, current_date)
         except Exception as e:
             logger.error(f"❌ [社交媒体分析师] 报告生成过程异常: {e}")
             report = report or f"## 社交媒体情绪分析\n\n⚠️ 分析过程出现异常，无法生成完整报告。"
