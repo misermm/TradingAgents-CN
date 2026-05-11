@@ -1134,29 +1134,55 @@ class ConfigService:
                 else:
                     try:
                         error_detail = response.json()
-                        error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
+                        error_obj = error_detail.get("error", {})
+                        if isinstance(error_obj, dict):
+                            error_msg = error_obj.get("message", f"HTTP {response.status_code}")
+                            error_code = error_obj.get("code", "")
+                            error_type = error_obj.get("type", "")
+                            parts = []
+                            if error_code:
+                                parts.append(f"[{error_code}]")
+                            if error_type and error_type != error_code:
+                                parts.append(f"({error_type})")
+                            parts.append(error_msg)
+                            display_msg = " ".join(parts)
+                        else:
+                            display_msg = str(error_obj) if error_obj else f"HTTP {response.status_code}"
+                        hint = self._build_error_hint(provider_str, llm_config.model_name, response.status_code, display_msg)
+                        if hint:
+                            display_msg = f"{display_msg}（{hint}）"
                         return {
                             "success": False,
-                            "message": f"API测试失败: {error_msg}",
+                            "message": f"API测试失败: {display_msg}",
                             "response_time": response_time,
-                            "details": None
+                            "details": {
+                                "provider": provider_str,
+                                "model": llm_config.model_name,
+                                "http_status": response.status_code,
+                                "error_code": error_code if isinstance(error_obj, dict) else None,
+                                "error_type": error_type if isinstance(error_obj, dict) else None,
+                                "raw_error": error_detail,
+                            }
                         }
                     except Exception:
                         if response.status_code >= 500:
-                            content_type = response.headers.get("Content-Type", "")
                             body_text = response.text[:200] if response.text else ""
-                            if provider_str == "openrouter" and ("text/plain" in content_type or body_text.strip() == "Internal Server Error"):
-                                return {
-                                    "success": False,
-                                    "message": "API测试失败: API Key可能无效或已过期（OpenRouter对无效Key返回500错误），请检查Key是否正确",
-                                    "response_time": response_time,
-                                    "details": None
-                                }
+                            hint = self._build_error_hint(provider_str, llm_config.model_name, response.status_code, body_text)
+                            base_msg = f"服务器错误(HTTP {response.status_code})"
+                            if body_text:
+                                base_msg = f"{base_msg}, 响应: {body_text}"
+                            if hint:
+                                base_msg = f"{base_msg}（{hint}）"
                             return {
                                 "success": False,
-                                "message": f"API测试失败: 服务器内部错误(HTTP {response.status_code})，请稍后重试",
+                                "message": f"API测试失败: {base_msg}",
                                 "response_time": response_time,
-                                "details": None
+                                "details": {
+                                    "provider": provider_str,
+                                    "model": llm_config.model_name,
+                                    "http_status": response.status_code,
+                                    "response_body": body_text,
+                                }
                             }
                         return {
                             "success": False,
@@ -2882,6 +2908,58 @@ class ConfigService:
             logger.error(f"❌ [get_llm_providers] 获取厂家列表失败: {e}", exc_info=True)
             return []
 
+    def _build_error_hint(self, provider: str, model: str, status_code: int, error_text: str) -> str:
+        """
+        根据供应商、模型和错误信息，生成诊断提示
+
+        Args:
+            provider: 供应商名称
+            model: 模型名称
+            status_code: HTTP状态码
+            error_text: 错误响应文本
+
+        Returns:
+            诊断提示字符串，无提示时返回空字符串
+        """
+        hints = []
+        is_free_model = ":free" in model if model else False
+
+        if status_code >= 500:
+            if provider == "openrouter":
+                if is_free_model:
+                    hints.append("免费模型可能暂时不可用或已达调用上限，请稍后重试或更换模型")
+                else:
+                    hints.append("OpenRouter服务端错误，请稍后重试；如持续出现请检查模型名称是否正确")
+            elif provider == "deepseek":
+                hints.append("DeepSeek服务端错误，可能因流量过大导致，请稍后重试")
+            elif provider == "dashscope":
+                hints.append("阿里云百炼服务端错误，请检查模型名称和API配置")
+            elif provider in ("ollama", "lmstudio"):
+                hints.append("本地模型服务未响应，请确认服务已启动且端口正确")
+            else:
+                hints.append("服务端错误，请稍后重试或检查模型名称")
+
+        if status_code == 429:
+            if provider == "openrouter" and is_free_model:
+                hints.append("免费模型调用频率受限，请等待后重试或使用付费模型")
+            else:
+                hints.append("API调用频率超限，请稍后重试")
+
+        error_lower = (error_text or "").lower()
+        if "rate" in error_lower or "limit" in error_lower or "quota" in error_lower:
+            if is_free_model:
+                hints.append("免费模型有调用频率限制，建议等待或使用付费模型")
+            else:
+                hints.append("已达到调用频率限制，请稍后重试")
+
+        if "model" in error_lower and ("not found" in error_lower or "not available" in error_lower):
+            hints.append("模型可能不存在或已下线，请确认模型名称")
+
+        if "insufficient" in error_lower or "balance" in error_lower or "credit" in error_lower:
+            hints.append("账户余额不足，请充值后重试")
+
+        return "；".join(hints)
+
     def _is_valid_api_key(self, api_key: Optional[str]) -> bool:
         """
         判断 API Key 是否有效
@@ -3929,12 +4007,29 @@ class ConfigService:
                         last_error = f"模型 {model} 不可用" + (f": {err}" if err else "")
                         continue
                     elif chat_resp.status_code >= 500:
-                        is_plain_text = "text/plain" in chat_resp.headers.get("Content-Type", "")
                         body_text = chat_resp.text[:200] if chat_resp.text else ""
-                        if is_plain_text or body_text == "Internal Server Error":
-                            last_error = "API Key 可能无效或已过期（服务器返回500错误，通常表示认证失败）"
-                            break
-                        last_error = f"OpenRouter服务器错误: HTTP {chat_resp.status_code}"
+                        try:
+                            err_json = chat_resp.json()
+                            err_msg = err_json.get("error", {})
+                            if isinstance(err_msg, dict):
+                                err_code = err_msg.get("code", "")
+                                err_type = err_msg.get("type", "")
+                                err_text = err_msg.get("message", "")
+                                parts = []
+                                if err_code:
+                                    parts.append(f"[{err_code}]")
+                                if err_type and err_type != err_code:
+                                    parts.append(f"({err_type})")
+                                if err_text:
+                                    parts.append(err_text)
+                                last_error = " ".join(parts) if parts else f"HTTP {chat_resp.status_code}"
+                            else:
+                                last_error = str(err_msg) if err_msg else f"HTTP {chat_resp.status_code}"
+                        except Exception:
+                            if body_text == "Internal Server Error" or not body_text:
+                                last_error = "OpenRouter服务端错误，免费模型可能暂时不可用或已达调用上限，请稍后重试"
+                            else:
+                                last_error = f"OpenRouter服务器错误: {body_text}"
                         continue
                     else:
                         last_error = f"HTTP {chat_resp.status_code}"
@@ -4938,23 +5033,40 @@ class ConfigService:
             else:
                 try:
                     error_detail = response.json()
-                    error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
+                    error_obj = error_detail.get("error", {})
+                    if isinstance(error_obj, dict):
+                        error_msg = error_obj.get("message", f"HTTP {response.status_code}")
+                        error_code = error_obj.get("code", "")
+                        error_type = error_obj.get("type", "")
+                        parts = []
+                        if error_code:
+                            parts.append(f"[{error_code}]")
+                        if error_type and error_type != error_code:
+                            parts.append(f"({error_type})")
+                        parts.append(error_msg if error_msg else f"HTTP {response.status_code}")
+                        display_msg = " ".join(parts)
+                    else:
+                        display_msg = str(error_obj) if error_obj else f"HTTP {response.status_code}"
                     logger.error(f"❌ [{display_name}] API测试失败")
                     logger.error(f"   请求URL: {url}")
                     logger.error(f"   状态码: {response.status_code}")
                     logger.error(f"   错误详情: {error_detail}")
                     return {
                         "success": False,
-                        "message": f"{display_name} API测试失败: {error_msg}"
+                        "message": f"{display_name} API测试失败: {display_msg}"
                     }
                 except Exception:
+                    body_text = response.text[:200] if response.text else ""
                     logger.error(f"❌ [{display_name}] API测试失败")
                     logger.error(f"   请求URL: {url}")
                     logger.error(f"   状态码: {response.status_code}")
-                    logger.error(f"   响应内容: {response.text[:500]}")
+                    logger.error(f"   响应内容: {body_text}")
+                    msg = f"{display_name} API测试失败: HTTP {response.status_code}"
+                    if body_text:
+                        msg += f", 响应: {body_text}"
                     return {
                         "success": False,
-                        "message": f"{display_name} API测试失败: HTTP {response.status_code}"
+                        "message": msg
                     }
 
         except Exception as e:
