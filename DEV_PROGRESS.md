@@ -1,13 +1,33 @@
 ﻿# 开发进度文档
-**更新时间**: 2026-05-12 (第五十四轮 - 审计价格冲突误报范围收敛)
+**更新时间**: 2026-05-12 (第五十六轮 - 价格冲突假阳性收口)
 **当前项目目标**: 全链路数据准确性修复 + A股分析逻辑可信度审计 + 数据缺失与冲突透明化
 
 ---
 
 ## 当前状态概要
 
-**最近完成的改动**: 第五十四轮 - 已修复审计把 `prefetched_fundamentals_data` 原始块误纳入当前价冲突检测，导致 `3.91 vs 4.09` 的误报
-**下一步从哪接着做**: 再生成一次 `000002` 报告并复审，确认 `PRICE_CONFLICT` 仅在核心报告真实冲突时触发；其余收口聚焦 `total_liabilities` 缺失链路
+**最近完成的改动**: 第五十六轮 - 已修复价格冲突审计把 MA/指标数值误判为“当前价冲突”的假阳性
+**下一步从哪接着做**: 重新生成 `000002` 报告并复审，确认 `PRICE_CONFLICT` 不再误报；保留 `LOW_DATA_QUALITY` 仅反映真实跨源冲突
+
+### 本轮实现汇总 (2026-05-12 第五十六轮 — 价格冲突假阳性收口)
+
+1. **冲突判定逻辑收敛**：`tradingagents/graph/report_audit.py` 的 `_detect_price_conflict()` 取消“货币数字兜底全量扫描”分支，仅使用显式当前价锚点（当前价/当前价格/现价/最新价）参与冲突判定。
+2. **误报根因切断**：避免把 `MA60`、`MACD`、百分比等非当前价数值误当冲突价格来源。
+3. **测试补充**：`tests/test_cn_analysis_trust_audit.py` 新增 `test_price_conflict_ignores_non_current_price_numbers_in_market_report`。
+4. **本轮验证结果**：
+   - `test_price_conflict_ignores_non_current_price_numbers_in_market_report`：`passed`
+   - `test_price_conflict_ignores_prefetched_raw_report_blocks`：`passed`
+
+### 本轮实现汇总 (2026-05-12 第五十五轮 — 总负债缺失派生补齐)
+
+1. **缺失字段补齐逻辑**：`tradingagents/dataflows/china_fundamental_snapshot.py` 在 `_apply_derived_fields()` 中新增：
+   - 当 `total_liabilities` 缺失且 `total_assets + debt_ratio` 可用时，自动派生 `total_liabilities`；
+   - 对 `debt_ratio` 兼容小数/百分比两种口径（`0.77` 或 `77`）。
+2. **与现有派生链路兼容**：补齐后仍复用已有 `debt_ratio` 派生与质量统计链路，不改审计层协议。
+3. **测试补充**：`tests/test_cn_financial_field_supplement.py` 新增 `test_derive_total_liabilities_from_total_assets_and_debt_ratio`。
+4. **本轮验证结果**：
+   - `test_derive_total_liabilities_from_total_assets_and_debt_ratio`：`passed`
+   - `test_short_alias_pe_does_not_match_report_period_key`：`passed`
 
 ### 本轮实现汇总 (2026-05-12 第五十四轮 — 审计价格冲突误报范围收敛)
 

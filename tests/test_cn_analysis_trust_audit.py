@@ -785,6 +785,29 @@ def test_price_conflict_ignores_prefetched_raw_report_blocks():
     assert "PRICE_CONFLICT" not in issue_codes
 
 
+def test_price_conflict_ignores_non_current_price_numbers_in_market_report():
+    from tradingagents.graph.report_audit import audit_cn_report
+
+    result = {
+        "reports": {
+            "market_report": (
+                "当前价格：¥3.91。"
+                "MA60: ¥4.38。"
+                "MACD柱状图: 0.32。"
+                "价格位置: 59.2%。"
+            ),
+        },
+        "cn_fact_snapshot": {
+            "current_price": 3.91,
+            "quality": {"grade": "B", "missing_fields": [], "conflicts": []},
+        },
+    }
+
+    audit = audit_cn_report(result)
+    issue_codes = {issue["code"] for issue in audit["issues"]}
+    assert "PRICE_CONFLICT" not in issue_codes
+
+
 @pytest.mark.integration
 def test_lmstudio_near_e2e_cn_audit_output_contains_trust_fields():
     from tradingagents.graph.trading_graph import create_llm_by_provider

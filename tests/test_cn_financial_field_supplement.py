@@ -139,3 +139,25 @@ def test_short_alias_pe_does_not_match_report_period_key():
     )
 
     assert snapshot["fields"]["pe"]["status"] == "missing"
+
+
+def test_derive_total_liabilities_from_total_assets_and_debt_ratio():
+    snapshot = build_china_fundamental_snapshot(
+        "000002",
+        [
+            {
+                "source": "akshare_indicator_lg",
+                "updated_at": "2026-05-12 09:00:00",
+                "report_period": "2025-12-31",
+                "data": {
+                    "total_assets": 1000.0,
+                    "debt_ratio": 77.0,
+                },
+            }
+        ],
+    )
+
+    field = snapshot["fields"]["total_liabilities"]
+    assert field["status"] == "present"
+    assert field["source"].endswith(":derived")
+    assert field["value"] == 770.0

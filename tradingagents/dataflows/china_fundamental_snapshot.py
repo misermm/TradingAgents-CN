@@ -1413,6 +1413,12 @@ def _apply_derived_fields(fields: Dict[str, Dict[str, Any]]) -> None:
 
     total_assets = _numeric_field_value(fields, "total_assets")
     total_liabilities = _numeric_field_value(fields, "total_liabilities")
+    debt_ratio = _numeric_field_value(fields, "debt_ratio")
+    if total_liabilities is None and total_assets is not None and total_assets > 0 and debt_ratio is not None:
+        ratio = debt_ratio / 100.0 if abs(debt_ratio) > 1 else debt_ratio
+        if 0 <= ratio <= 1.5:
+            _set_derived_field(fields, "total_liabilities", total_assets * ratio, ["total_assets", "debt_ratio"])
+            total_liabilities = _numeric_field_value(fields, "total_liabilities")
     if total_assets is not None and total_assets != 0:
         if total_liabilities is not None:
             _set_derived_field(fields, "debt_ratio", total_liabilities / total_assets * 100, ["total_liabilities", "total_assets"])

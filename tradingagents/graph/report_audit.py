@@ -416,7 +416,6 @@ def _complete_missing_fields(raw_missing: Any) -> List[Dict[str, Any]]:
 def _detect_price_conflict(reports: Mapping[str, str], snapshot: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
     snapshot_price = _safe_float(snapshot.get("current_price"), None)
     explicit_prices: List[Tuple[str, float]] = []
-    all_prices: List[Tuple[str, float]] = []
     price_report_keys = {
         "market_report",
         "fundamentals_report",
@@ -430,8 +429,6 @@ def _detect_price_conflict(reports: Mapping[str, str], snapshot: Mapping[str, An
             continue
         for price in _extract_explicit_current_prices(text):
             explicit_prices.append((name, price))
-        for price in _extract_currency_prices(text):
-            all_prices.append((name, price))
 
     conflict_values: List[Dict[str, Any]] = []
     severity = "low"
@@ -443,22 +440,6 @@ def _detect_price_conflict(reports: Mapping[str, str], snapshot: Mapping[str, An
                 ratio = abs(price - snapshot_price) / max(abs(snapshot_price), 1e-9)
                 severity = _price_severity(ratio)
                 break
-
-    if not conflict_values and len(all_prices) >= 2:
-        values = [p for _, p in all_prices if p > 0]
-        if values:
-            min_price = min(values)
-            max_price = max(values)
-            if min_price > 0 and max_price / min_price >= 3:
-                sources = {}
-                for source, price in all_prices:
-                    if price in (min_price, max_price) and price not in sources:
-                        sources[price] = source
-                conflict_values = [
-                    {"source": sources.get(min_price, "reports"), "value": min_price},
-                    {"source": sources.get(max_price, "reports"), "value": max_price},
-                ]
-                severity = "high"
 
     if not conflict_values:
         return None
