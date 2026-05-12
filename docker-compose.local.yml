@@ -1,17 +1,4 @@
 services:
-  new-api:
-    image: ${NEWAPI_IMAGE:-calciumion/new-api:latest}
-    container_name: new-api
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      TZ: "Asia/Shanghai"
-    volumes:
-      - newapi_data:/data
-    networks:
-      - tradingagents-network
-
   mongodb:
     image: mongo:4.4
     container_name: tradingagents-mongodb
@@ -140,9 +127,6 @@ services:
         max-file: "3"
 
 volumes:
-  newapi_data:
-    driver: local
-    name: tradingagents_newapi_data
   mongodb_data:
     driver: local
     name: tradingagents_mongodb_data

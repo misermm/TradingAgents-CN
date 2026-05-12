@@ -1,13 +1,13 @@
 # 开发进度文档
 **更新时间**: 2026-05-12  
-**当前项目目标**: A股分析可信度审计收口（冲突误报清理 + 结果一致性提升 + 本地聚合 API 配置可诊断性）
+**当前项目目标**: A股分析可信度审计收口（冲突误报清理 + 结果一致性提升）
 
 ---
 
 ## 当前开发进度
 
-- New API/One API 等 OpenAI 兼容测试在 Docker 内访问 `localhost` 失败时，会提示改用 `host.docker.internal` 或同网络容器名，避免把 Docker loopback 问题误判成 API Key 问题。
-- `docker-compose.local.yml` 与 `docker-compose.yml` 已新增 `new-api` 服务并接入 `tradingagents-network`；默认服务名即 `new-api`，项目内厂家配置应使用 `http://new-api:3000/v1`。
+- 已移除 new-api 服务（不再需要本地 API 聚合层），相关配置已从 docker-compose 文件和 redeploy.bat 中清理。
+- `PRICE_CONFLICT` 假阳性已继续收口：当前价抽取改为严格锚点（当前价/当前价格/当前股价/现价/最新价），并过滤 `%` 上下文。
 - `PRICE_CONFLICT` 假阳性已继续收口：当前价抽取改为严格锚点（当前价/当前价格/当前股价/现价/最新价），并过滤 `%` 上下文。
 - `cn_fact_snapshot` 新增严格版市场报告现价提取入口，避免“位置百分比/指标描述”污染快照现价。
 - 跨源冲突判定新增字段级归一化：百分比字段统一口径；金额字段加入万元/百万元/亿元尺度对齐比较，降低单位差异带来的假冲突。
@@ -15,20 +15,20 @@
 ## 最近改了什么（新增）
 
 ### 2026-05-12
-5. `docker-compose.local.yml` / `docker-compose.yml`
-   - 新增 `new-api` 服务，默认镜像 `calciumion/new-api:latest`，容器名固定为 `new-api`。
-   - 接入 `tradingagents-network`，并保留宿主机映射 `3000:3000`。
-   - 新增 `newapi_data` 数据卷，避免 New API 容器重建后数据直接丢失。
-6. `.env.docker`
-   - `ONEAPI_BASE_URL` 默认值改为 `http://new-api:3000/v1`，并补充同网络部署说明。
-7. `scripts/redeploy.bat`
-   - dev 模式服务总数从 `4` 调整为 `5`，prod 模式从 `6` 调整为 `7`，避免新增 `new-api` 后重部署进度统计失真。
+1. `docker-compose.local.yml` / `docker-compose.yml`
+   - 移除 `new-api` 服务（不再需要本地 API 聚合层）。
+   - 移除 `newapi_data` 数据卷。
+2. `scripts/redeploy.bat`
+   - dev 模式服务总数从 `5` 调整回 `4`，prod 模式从 `7` 调整回 `6`。
+
+### （之前的新增记录（已回退）
+- ~~`docker-compose.local.yml` / `docker-compose.yml`：新增 `new-api` 服务（已移除）~~
+- ~~`.env.docker`：`ONEAPI_BASE_URL` 默认值改为 `http://new-api:3000/v1`（不再保留原值）~~
+- ~~`scripts/redeploy.bat`：服务总数调整（已回退）~~
 
 ## 下一步从哪接着做
 
-- 执行 `scripts\redeploy.bat --dev` 或等价 `docker compose -f docker-compose.local.yml up -d`，让 `new-api` 进入 `tradingagents-network`。
-- 进入配置页把 `New API` 的 Base URL 改为 `http://new-api:3000/v1` 后重新点“测试”。
-- 若你的实际镜像名不是 `calciumion/new-api:latest`，在启动前设置环境变量 `NEWAPI_IMAGE=<你的镜像名>` 覆盖默认值。
+
 - 冲突判定再收口：仅在“报告期可比”时触发跨源冲突，避免季度/年度或未知期的硬冲突误报。
 
 ---
@@ -112,3 +112,17 @@
 ## 下一步从哪接着做
 1. 继续处理最新报告里的剩余问题，集中修完再统一汇报。
 2. 如再出现中途报错，按 task_id 回溯 `logs/tradingagents.log` 做整链路修复。
+# 2026-05-12（New API 配置持久化加固）
+
+## 当前开发进度
+- 已完成 New API 持久化路径加固，避免重部署后出现“配置像丢失”的不确定性。
+
+## 最近改了什么
+1. `E:\AI\TradingAgents-CN\docker-compose.local.yml`
+   - `new-api` 数据挂载从命名卷改为宿主机目录：`./data/new-api:/data`。
+2. `E:\AI\TradingAgents-CN\docker-compose.yml`
+   - `new-api` 数据挂载同样改为：`./data/new-api:/data`。
+
+## 下一步从哪接着做
+1. 执行 `scripts\redeploy.bat --dev` 重部署。
+2. 进入容器确认 `ls -lh /data/one-api.db`，再在 New API 页面核对渠道/令牌是否保留。
