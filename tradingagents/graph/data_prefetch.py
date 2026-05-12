@@ -127,7 +127,13 @@ def create_data_prefetch_node(toolkit):
         cn_fact_snapshot = {}
         try:
             from tradingagents.graph.cn_fact_snapshot import build_cn_fact_snapshot
-            cn_fact_snapshot = build_cn_fact_snapshot(ticker, market_info, snapshot_dict, trade_date)
+            cn_fact_snapshot = build_cn_fact_snapshot(
+                ticker,
+                market_info,
+                snapshot_dict,
+                trade_date,
+                market_report=str(market_data) if market_data else "",
+            )
         except Exception as e:
             logger.warning(f"{log_tag} A股事实快照生成失败: {e}")
 

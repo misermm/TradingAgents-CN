@@ -1,11 +1,81 @@
 import functools
 import time
 import json
+import re
+from typing import List
 
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.agents.utils.instrument_utils import build_instrument_context
+from tradingagents.utils.news_filter import get_company_name
 logger = get_logger("default")
+
+
+def _contains_expected_ticker(text: str, ticker: str) -> bool:
+    if not text or not ticker:
+        return True
+    return str(ticker).strip().upper() in text.upper()
+
+
+def _contains_expected_identity(text: str, ticker: str, stock_name: str) -> bool:
+    if not text:
+        return True
+    if not _contains_expected_ticker(text, ticker):
+        return False
+    normalized_name = (stock_name or "").strip()
+    if not normalized_name:
+        return True
+    return normalized_name in text
+
+
+def _resolve_expected_stock_name(ticker: str, fallback_name: str = "") -> str:
+    if fallback_name and fallback_name.strip() and fallback_name.strip() != str(ticker).strip():
+        return fallback_name.strip()
+    try:
+        name = get_company_name(str(ticker).strip())
+        if name and not str(name).startswith("股票"):
+            return str(name).strip()
+    except Exception:
+        return (fallback_name or "").strip()
+    return (fallback_name or "").strip()
+
+
+def _extract_prices_from_target_lines(text: str) -> List[float]:
+    if not text:
+        return []
+    target_lines = []
+    for line in text.splitlines():
+        lower = line.lower()
+        if "目标" in line or "价格区间" in line or "target" in lower:
+            target_lines.append(line)
+    prices: List[float] = []
+    for line in target_lines:
+        for m in re.finditer(r"(\d+(?:\.\d+)?)", line):
+            try:
+                prices.append(float(m.group(1)))
+            except Exception:
+                continue
+    return prices
+
+
+def _has_extreme_target_price(text: str, current_price: float) -> bool:
+    if not text or not current_price or current_price <= 0:
+        return False
+    prices = _extract_prices_from_target_lines(text)
+    if not prices:
+        return False
+    return any((p > current_price * 5.0 or p < current_price * 0.2) for p in prices if p > 0)
+
+
+def _build_guardrail_report(ticker: str, current_price: float, reason: str) -> str:
+    price_text = f"{current_price:.4f}" if current_price and current_price > 0 else "N/A"
+    return (
+        "## 数据一致性拦截\n\n"
+        f"当前标的：{ticker}\n"
+        f"当前价：{price_text}\n"
+        f"拦截原因：{reason}\n\n"
+        "结论：本次交易员输出存在标的一致性或目标价异常风险，停止输出方向性交易建议。"
+    )
 
 
 def create_trader(llm, memory):
@@ -54,6 +124,13 @@ def create_trader(llm, memory):
             if memory is not None:
                 logger.warning(f"⚠️ [DEBUG] memory可用，获取历史记忆")
                 past_memories = memory.get_memories(curr_situation, n_matches=2)
+                normalized_ticker = str(company_name).strip().upper()
+                if normalized_ticker:
+                    past_memories = [
+                        rec for rec in past_memories
+                        if normalized_ticker in str(rec.get("recommendation", "")).upper()
+                        or normalized_ticker in str(rec.get("situation", "")).upper()
+                    ]
                 past_memory_str = ""
                 for i, rec in enumerate(past_memories, 1):
                     past_memory_str += rec["recommendation"] + "\n\n"
@@ -122,6 +199,21 @@ def create_trader(llm, memory):
             logger.debug(f"💰 [DEBUG] ===== 交易员节点结束 =====")
 
             content = result.content
+            if is_china:
+                current_price = 0.0
+                try:
+                    current_price = float((state.get("cn_fact_snapshot") or {}).get("current_price") or 0.0)
+                except Exception:
+                    current_price = 0.0
+
+                stock_name = market_info.get("stock_name") if isinstance(market_info, dict) else ""
+                stock_name = _resolve_expected_stock_name(company_name, stock_name)
+                if not _contains_expected_identity(content, company_name, stock_name):
+                    logger.warning("⚠️ [Trader] Output ticker consistency check failed, fallback to diagnostic report.")
+                    content = _build_guardrail_report(company_name, current_price, "输出标的与股票代码/名称不一致，疑似串票")
+                elif _has_extreme_target_price(content, current_price):
+                    logger.warning("⚠️ [Trader] Extreme target price detected, fallback to diagnostic report.")
+                    content = _build_guardrail_report(company_name, current_price, "目标价与当前价偏离过大，疑似错误引用")
             missing_fields = []
             if '目标价' not in content and '目标价位' not in content and 'target' not in content.lower():
                 missing_fields.append('目标价位')

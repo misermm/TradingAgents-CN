@@ -417,8 +417,17 @@ def _detect_price_conflict(reports: Mapping[str, str], snapshot: Mapping[str, An
     snapshot_price = _safe_float(snapshot.get("current_price"), None)
     explicit_prices: List[Tuple[str, float]] = []
     all_prices: List[Tuple[str, float]] = []
+    price_report_keys = {
+        "market_report",
+        "fundamentals_report",
+        "trader_investment_plan",
+        "final_trade_decision",
+        "risk_management_decision",
+    }
 
     for name, text in reports.items():
+        if name not in price_report_keys:
+            continue
         for price in _extract_explicit_current_prices(text):
             explicit_prices.append((name, price))
         for price in _extract_currency_prices(text):
@@ -466,13 +475,18 @@ def _detect_price_conflict(reports: Mapping[str, str], snapshot: Mapping[str, An
 def _extract_explicit_current_prices(text: str) -> List[float]:
     if not text:
         return []
+    normalized = (
+        text.replace("：", ":")
+        .replace("￥", "¥")
+        .replace("元", "")
+    )
     prices: List[float] = []
     patterns = [
-        r"(?:当前价|当前价格|当前股价|现价|最新价|股价)\s*[：:]\s*[¥￥]?\s*(\d+(?:\.\d+)?)",
-        r"(?:当前价|当前价格|当前股价|现价|最新价|股价)[^0-9¥￥]{0,12}[¥￥]?\s*(\d+(?:\.\d+)?)",
+        r"(?:当前价|当前价格|当前股价|现价|最新价|Current Price)\s*[:：]?\s*[¥]?\s*(\d+(?:\.\d+)?)",
+        r"(?:当前价|当前价格|当前股价|现价|最新价|Current Price)[^0-9¥]{0,16}[¥]?\s*(\d+(?:\.\d+)?)",
     ]
     for pattern in patterns:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
+        for match in re.finditer(pattern, normalized, re.IGNORECASE):
             price = _safe_float(match.group(1), None)
             if price is not None:
                 prices.append(price)

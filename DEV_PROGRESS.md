@@ -1,13 +1,76 @@
 ﻿# 开发进度文档
-**更新时间**: 2026-05-12 (第四十八轮 - 后端警告清理与回归确认)
+**更新时间**: 2026-05-12 (第五十四轮 - 审计价格冲突误报范围收敛)
 **当前项目目标**: 全链路数据准确性修复 + A股分析逻辑可信度审计 + 数据缺失与冲突透明化
 
 ---
 
 ## 当前状态概要
 
-**最近完成的改动**: 第四十八轮 - 已完成后端 warning 第一阶段清理：修复测试函数 return-not-none、修复 `analysis.py` 的 `min_items/max_items` 弃用、修复 `stock_models.py` 的 class Config 弃用，并完成回归确认
-**下一步从哪接着做**: 若继续推进，优先处理前端构建 warning（legacy sass API + chunk 体积 + 动态/静态混合导入提示），再决定是否进入提交/发布流程
+**最近完成的改动**: 第五十四轮 - 已修复审计把 `prefetched_fundamentals_data` 原始块误纳入当前价冲突检测，导致 `3.91 vs 4.09` 的误报
+**下一步从哪接着做**: 再生成一次 `000002` 报告并复审，确认 `PRICE_CONFLICT` 仅在核心报告真实冲突时触发；其余收口聚焦 `total_liabilities` 缺失链路
+
+### 本轮实现汇总 (2026-05-12 第五十四轮 — 审计价格冲突误报范围收敛)
+
+1. **价格冲突检测范围收敛**：`tradingagents/graph/report_audit.py` 的 `_detect_price_conflict()` 只对核心对外报告字段做当前价比对（`market_report/fundamentals_report/trader_investment_plan/final_trade_decision/risk_management_decision`）。
+2. **剔除预取原始块干扰**：不再读取 `prefetched_fundamentals_data` 这类原始预取文本作为当前价证据源，避免历史价/注释文本造成误报。
+3. **测试补充**：`tests/test_cn_analysis_trust_audit.py` 新增 `test_price_conflict_ignores_prefetched_raw_report_blocks`。
+4. **本轮验证结果**：
+   - `test_price_conflict_ignores_prefetched_raw_report_blocks`：`passed`
+   - `test_price_extractor_does_not_parse_ma60_as_current_price`：`passed`
+
+### 本轮实现汇总 (2026-05-12 第五十三轮 — 审计价格误提取与PE别名误命中修复)
+
+1. **审计层当前价提取修复**：`tradingagents/graph/report_audit.py` 收紧显式当前价正则，仅接受“当前价/当前价格/当前股价/现价/最新价”等上下文，移除泛化“股价”触发，避免从 `MA60` 误提取 `60.0`。
+2. **文本归一化增强**：当前价提取前统一 `：/￥/元` 变体，减少格式差异影响。
+3. **字段抽取误命中修复**：`tradingagents/dataflows/china_fundamental_snapshot.py` 的别名 fallback 增加短别名保护（长度 `<3` 不做包含匹配），避免 `pe` 命中 `report_period`。
+4. **测试补充**：
+   - `tests/test_cn_analysis_trust_audit.py` 新增 `test_price_extractor_does_not_parse_ma60_as_current_price`
+   - `tests/test_cn_financial_field_supplement.py` 新增 `test_short_alias_pe_does_not_match_report_period_key`
+5. **本轮验证结果**：
+   - 新增审计价格提取用例：`1 passed`
+   - 新增 PE 别名误命中用例：`1 passed`
+
+### 本轮实现汇总 (2026-05-12 第五十二轮 — 交易员串票名称一致性拦截收口)
+
+1. **交易员身份一致性增强**：`tradingagents/agents/trader/trader.py` 从“仅校验 ticker”升级为“ticker + 公司名”双重校验。
+2. **公司名来源补齐**：交易员节点新增 `get_company_name(ticker)` 映射兜底，在 `StockUtils` 未返回公司名时仍可做名称一致性检查。
+3. **串票拦截范围扩大**：即使输出包含正确代码（如 `000002`），但正文主体写成其它公司名（如“中国平安”），也会回退“数据一致性拦截”报告。
+4. **测试新增**：`tests/test_cn_analysis_trust_audit.py` 新增  
+   `test_trader_blocks_when_ticker_present_but_stock_name_mismatch`。
+5. **本轮验证结果**：
+   - `tests/test_cn_analysis_trust_audit.py` 相关 3 条 trader 拦截用例：`3 passed`
+   - `tests/test_cn_financial_field_supplement.py` 关键 2 条快照/字段补齐用例：`2 passed`
+
+### 本轮实现汇总 (2026-05-12 第五十一轮 — 价格对齐与核心字段补齐收口)
+
+1. **现价对齐修复**：`tradingagents/graph/cn_fact_snapshot.py` 新增 `market_report` 现价提取逻辑，A股 `cn_fact_snapshot.current_price` 优先与本轮 `market_report` 对齐，减少同报告内 `current_price` 冲突。
+2. **调用链接入**：`tradingagents/graph/data_prefetch.py` 在构建 `cn_fact_snapshot` 时传入 `market_data` 文本，确保对齐逻辑实际生效。
+3. **字段抽取增强**：`tradingagents/dataflows/china_fundamental_snapshot.py`
+   - 放宽 list flatten 逻辑，不再只取第一条映射，避免遗漏关键财报字段；
+   - `_extract_field()` 增加 line-item 风格兜底（如 `item=营业总收入, value=...`），提升 `revenue`、`total_liabilities` 的命中率。
+4. **测试补充**：`tests/test_cn_financial_field_supplement.py` 新增：
+   - 行项目 payload 可提取 `revenue/total_liabilities`；
+   - `cn_fact_snapshot` 优先使用 `market_report` 当前价。
+5. **本轮验证结果**：
+   - 定向：`4 passed`
+   - 子集回归：`35 passed, 1 deselected`
+   - 警告仅为既有 Deprecation/PendingDeprecation，非本轮引入。
+
+### 本轮实现汇总 (2026-05-12 第五十轮 — 000002 报告串票与目标价异常拦截)
+
+1. **交易员记忆同标的过滤**：`tradingagents/agents/trader/trader.py` 在注入历史记忆前按当前 `company_of_interest`（ticker）过滤，避免跨股票记忆污染到当前分析。
+2. **交易员输出一致性拦截**：新增 ticker 一致性检查，若 A股交易员输出未包含当前 ticker，则回退为“数据一致性拦截”报告，不继续下游方向性建议。
+3. **目标价极端偏离拦截**：新增目标价行提取与偏离判断（相对当前价 >5x 或 <0.2x），命中后回退“数据一致性拦截”，避免出现类似 `000002` 却给出 `45-55` 区间的异常。
+4. **测试补充**：`tests/test_cn_analysis_trust_audit.py` 新增两条 trader 用例，覆盖“串票文本拦截”和“目标价离谱拦截”。
+5. **本轮验证策略**：按你的指示先不做全量验证，后续先跑新增定向用例再推进回归子集。
+
+### 本轮验证汇总 (2026-05-12 第四十九轮 — 前端构建警告收口)
+
+1. **消除动态/静态混合导入 warning**：`frontend/src/stores/auth.ts` 改为静态导入 `app store`、`notification store` 和 `setupTokenRefreshTimer`，移除本地动态 import。
+2. **构建分包优化**：`frontend/vite.config.ts` 增加 `manualChunks`（`vue_vendor`、`element_plus`、`echarts_vendor`）和 `chunkSizeWarningLimit`，降低构建噪声并提升产物可控性。
+3. **Sass warning 收口**：`frontend/vite.config.ts` 为 scss 预处理增加 `api: 'modern-compiler'`，构建时不再出现 legacy JS API 警告。
+4. **构建回归**：运行 `npm run build` 通过；之前的 dynamic/static import 警告和 chunk size 警告已消失。
+5. **剩余 warning**：仅剩 `element-plus` 依赖内部 `@vueuse/core` 的 Rollup 注释提示（上游依赖侧提示，非本项目业务代码直接问题）。
 
 ### 本轮验证汇总 (2026-05-12 第四十八轮 — 后端警告清理与回归确认)
 

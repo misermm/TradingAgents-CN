@@ -678,6 +678,113 @@ def test_master_consensus_stops_when_core_data_gate_blocks():
     assert "持有" not in update["master_consensus_report"]
 
 
+def test_trader_blocks_when_output_misses_current_ticker():
+    from types import SimpleNamespace
+    from tradingagents.agents.trader.trader import create_trader
+
+    class _MockLLM:
+        def invoke(self, *_args, **_kwargs):
+            return SimpleNamespace(content="最终交易建议：持有。目标价位：45-55 元。中国平安估值稳定。")
+
+    node = create_trader(llm=_MockLLM(), memory=None)
+    state = {
+        "messages": [],
+        "company_of_interest": "000002",
+        "investment_plan": "上游计划建议持有。",
+        "market_report": "市场报告",
+        "sentiment_report": "情绪报告",
+        "news_report": "新闻报告",
+        "fundamentals_report": "基本面报告",
+        "cn_fact_snapshot": {"current_price": 4.06, "quality": {"missing_fields": []}},
+    }
+
+    update = node(state)
+
+    assert "数据一致性拦截" in update["trader_investment_plan"]
+    assert "000002" in update["trader_investment_plan"]
+
+
+def test_trader_blocks_when_target_price_is_extreme():
+    from types import SimpleNamespace
+    from tradingagents.agents.trader.trader import create_trader
+
+    class _MockLLM:
+        def invoke(self, *_args, **_kwargs):
+            return SimpleNamespace(content="最终交易建议：持有。标的 000002 万科A。目标价位：45-55 元。")
+
+    node = create_trader(llm=_MockLLM(), memory=None)
+    state = {
+        "messages": [],
+        "company_of_interest": "000002",
+        "investment_plan": "上游计划建议持有。",
+        "market_report": "市场报告",
+        "sentiment_report": "情绪报告",
+        "news_report": "新闻报告",
+        "fundamentals_report": "基本面报告",
+        "cn_fact_snapshot": {"current_price": 4.06, "quality": {"missing_fields": []}},
+    }
+
+    update = node(state)
+
+    assert "数据一致性拦截" in update["trader_investment_plan"]
+    assert "目标价与当前价偏离过大" in update["trader_investment_plan"]
+
+
+def test_trader_blocks_when_ticker_present_but_stock_name_mismatch():
+    from types import SimpleNamespace
+    from tradingagents.agents.trader.trader import create_trader
+
+    class _MockLLM:
+        def invoke(self, *_args, **_kwargs):
+            return SimpleNamespace(content="最终交易建议：持有。标的 000002。中国平安估值稳定，目标价位：4.00-4.20 元。")
+
+    node = create_trader(llm=_MockLLM(), memory=None)
+    state = {
+        "messages": [],
+        "company_of_interest": "000002",
+        "investment_plan": "上游计划建议持有。",
+        "market_report": "市场报告",
+        "sentiment_report": "情绪报告",
+        "news_report": "新闻报告",
+        "fundamentals_report": "基本面报告",
+        "cn_fact_snapshot": {"current_price": 4.06, "quality": {"missing_fields": []}},
+    }
+
+    update = node(state)
+
+    assert "数据一致性拦截" in update["trader_investment_plan"]
+    assert "疑似串票" in update["trader_investment_plan"]
+
+
+def test_price_extractor_does_not_parse_ma60_as_current_price():
+    from tradingagents.graph.report_audit import _extract_explicit_current_prices
+
+    text = "当前股价¥3.91高于MA5、MA10和MA20，但低于MA60。"
+    prices = _extract_explicit_current_prices(text)
+    assert prices
+    assert prices[0] == 3.91
+    assert 60.0 not in prices
+
+
+def test_price_conflict_ignores_prefetched_raw_report_blocks():
+    from tradingagents.graph.report_audit import audit_cn_report
+
+    result = {
+        "reports": {
+            "market_report": "当前价格：¥3.91，短期偏强。",
+            "prefetched_fundamentals_data": "历史摘要：当前价4.09（上一交易日）",
+        },
+        "cn_fact_snapshot": {
+            "current_price": 3.91,
+            "quality": {"grade": "B", "missing_fields": [], "conflicts": []},
+        },
+    }
+
+    audit = audit_cn_report(result)
+    issue_codes = {issue["code"] for issue in audit["issues"]}
+    assert "PRICE_CONFLICT" not in issue_codes
+
+
 @pytest.mark.integration
 def test_lmstudio_near_e2e_cn_audit_output_contains_trust_fields():
     from tradingagents.graph.trading_graph import create_llm_by_provider

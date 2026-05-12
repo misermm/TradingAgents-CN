@@ -236,10 +236,13 @@ def _flatten_mapping(data: Mapping[str, Any]) -> Dict[str, Any]:
         elif isinstance(value, list):
             for item in value:
                 if isinstance(item, Mapping):
-                    flattened.update(_flatten_mapping(item))
-                    break
+                    nested = _flatten_mapping(item)
+                    for nested_key, nested_value in nested.items():
+                        if nested_key not in flattened:
+                            flattened[nested_key] = nested_value
         else:
-            flattened[normalized_key] = value
+            if normalized_key not in flattened:
+                flattened[normalized_key] = value
     return flattened
 
 
@@ -1107,6 +1110,41 @@ def _extract_field(data: Any, aliases: List[str]) -> Optional[Any]:
             value = lowered.get(alias.lower())
             if value is not None:
                 return value
+        # Fallback for line-item style payloads:
+        # [{"item": "营业总收入", "value": ...}] or {"name":"负债合计","amount":...}
+        alias_set = {str(alias).strip().lower() for alias in aliases if str(alias).strip()}
+        for key, value in flattened.items():
+            key_text = str(key).strip().lower()
+            alias_hit = key_text in alias_set
+            if not alias_hit:
+                # Avoid short-alias false positives like alias "pe" matching "report_period".
+                for alias in alias_set:
+                    if len(alias) < 3:
+                        continue
+                    if alias in key_text:
+                        alias_hit = True
+                        break
+            if alias_hit:
+                if value not in (None, "", "N/A"):
+                    return value
+            if isinstance(value, str):
+                value_text = value.strip().lower()
+                if value_text in alias_set:
+                    # Find sibling numeric-like value in the original mapping.
+                    if isinstance(data, Mapping):
+                        for candidate_key in ("value", "amount", "val", "数值", "金额", "本期", "最新值"):
+                            candidate_val = data.get(candidate_key)
+                            if candidate_val not in (None, "", "N/A"):
+                                return candidate_val
+            if isinstance(value, Mapping):
+                nested = _extract_field(value, aliases)
+                if nested is not None:
+                    return nested
+            if isinstance(value, list):
+                for item in value:
+                    nested = _extract_field(item, aliases)
+                    if nested is not None:
+                        return nested
     elif isinstance(data, str):
         return _extract_from_text(data, aliases)
     return None

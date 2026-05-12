@@ -67,8 +67,14 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     sourcemap: false,
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
+        manualChunks: {
+          vue_vendor: ['vue', 'vue-router', 'pinia'],
+          element_plus: ['element-plus'],
+          echarts_vendor: ['echarts']
+        },
         chunkFileNames: 'js/[name]-[hash].js',
         entryFileNames: 'js/[name]-[hash].js',
         assetFileNames: '[ext]/[name]-[hash].[ext]'
@@ -78,6 +84,7 @@ export default defineConfig({
   css: {
     preprocessorOptions: {
       scss: {
+        api: 'modern-compiler',
         additionalData: `@use "@/styles/variables.scss" as *;`
       }
     }

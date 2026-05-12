@@ -1,6 +1,7 @@
 from tradingagents.dataflows.china_fundamental_snapshot import (
     build_china_fundamental_snapshot,
 )
+from tradingagents.graph.cn_fact_snapshot import build_cn_fact_snapshot
 from tradingagents.graph.report_audit import reconcile_cn_decision
 
 
@@ -79,3 +80,62 @@ def test_reconcile_audits_raw_decision_even_when_result_has_no_decision_field():
     assert "TARGET_PRICE_INVALID" in {issue["code"] for issue in decision["audit"]["issues"]}
     assert decision["action"] == "持有"
     assert decision["confidence"] <= 0.45
+
+
+def test_extract_required_fields_from_line_item_list_payload():
+    snapshot = build_china_fundamental_snapshot(
+        "000002",
+        [
+            {
+                "source": "akshare_direct",
+                "updated_at": "2026-05-12 09:00:00",
+                "report_period": "2025-12-31",
+                "data": {
+                    "financial_statement": [
+                        {"item": "营业总收入", "value": "1234567890"},
+                        {"item": "负债合计", "value": "888888888"},
+                    ]
+                },
+            }
+        ],
+    )
+
+    assert snapshot["fields"]["revenue"]["status"] == "present"
+    assert snapshot["fields"]["total_liabilities"]["status"] == "present"
+
+
+def test_cn_fact_snapshot_prefers_market_report_current_price():
+    cn_fact = build_cn_fact_snapshot(
+        ticker="000002",
+        market_info={"is_china": True, "stock_name": "万科A"},
+        fundamental_snapshot={
+            "fields": {
+                "price": {"value": 4.06, "source": "eastmoney"},
+            },
+            "quality": {},
+            "sources_used": ["eastmoney"],
+        },
+        trade_date="2026-05-12",
+        market_report="当前价格：3.91 元，短期偏强。",
+    )
+
+    assert cn_fact["current_price"] == 3.91
+    assert cn_fact["price_source"] == "market_report"
+
+
+def test_short_alias_pe_does_not_match_report_period_key():
+    snapshot = build_china_fundamental_snapshot(
+        "000002",
+        [
+            {
+                "source": "akshare_direct",
+                "updated_at": "2026-05-12 09:00:00",
+                "data": {
+                    "report_period": "2025-03-31",
+                    "income_statement": [{"report_period": "2025-03-31"}],
+                },
+            }
+        ],
+    )
+
+    assert snapshot["fields"]["pe"]["status"] == "missing"

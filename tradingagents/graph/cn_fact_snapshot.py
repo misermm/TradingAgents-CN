@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, Mapping, Optional
 
 from tradingagents.graph.report_audit import FIELD_METADATA, candidate_sources_for_field
@@ -8,6 +9,7 @@ def build_cn_fact_snapshot(
     market_info: Mapping[str, Any],
     fundamental_snapshot: Optional[Mapping[str, Any]] = None,
     trade_date: Optional[str] = None,
+    market_report: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a normalized A-share fact snapshot from the existing free-data snapshot."""
     if not market_info.get("is_china"):
@@ -35,13 +37,18 @@ def build_cn_fact_snapshot(
         })
 
     current_price = _field_value(fields, "price") or _field_value(fields, "current_price")
+    current_price_source = _field_source(fields, "price") or _field_source(fields, "current_price")
+    market_report_price = _extract_market_report_current_price(market_report or "")
+    if market_report_price is not None:
+        current_price = market_report_price
+        current_price_source = "market_report"
     return {
         "symbol": ticker,
         "stock_name": market_info.get("stock_name") or ticker,
         "market": "CN",
         "currency": "CNY",
         "current_price": current_price,
-        "price_source": _field_source(fields, "price") or _field_source(fields, "current_price"),
+        "price_source": current_price_source,
         "price_as_of": trade_date,
         "valuation": {
             "pe": _field_value(fields, "pe") or _field_value(fields, "pe_ttm"),
@@ -58,6 +65,24 @@ def build_cn_fact_snapshot(
         },
         "sources_used": list(fundamental_snapshot.get("sources_used", []) or []),
     }
+
+
+def _extract_market_report_current_price(market_report: str) -> Optional[float]:
+    if not market_report:
+        return None
+    patterns = [
+        r"(?:当前价格|当前价|现价|最新价|股价)\s*[：:]\s*[¥￥]?\s*(\d+(?:\.\d+)?)",
+        r"(?:当前价格|当前价|现价|最新价|股价)[^0-9¥￥]{0,16}[¥￥]?\s*(\d+(?:\.\d+)?)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, market_report, flags=re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            return float(match.group(1))
+        except Exception:
+            continue
+    return None
 
 
 def _field_value(fields: Mapping[str, Any], field_name: str):
