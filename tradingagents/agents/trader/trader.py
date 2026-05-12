@@ -35,6 +35,20 @@ def create_trader(llm, memory):
             logger.debug(f"💰 [DEBUG] 基本面报告长度: {len(fundamentals_report)}")
             logger.debug(f"💰 [DEBUG] 基本面报告前200字符: {fundamentals_report[:200]}...")
 
+            if is_china:
+                try:
+                    from tradingagents.graph.report_audit import run_role_data_gate
+                    gate = run_role_data_gate("trader", state.get("cn_fact_snapshot") or {})
+                    if gate.get("role_blocked"):
+                        logger.warning("⚠️ [交易员] A股交易核心字段缺失，停止正式交易计划并返回诊断报告")
+                        return {
+                            "messages": [],
+                            "trader_investment_plan": gate.get("diagnostic_report", ""),
+                            "sender": name,
+                        }
+                except Exception as e:
+                    logger.warning(f"⚠️ [交易员] 角色数据准入检查失败，继续原交易流程: {e}")
+
             curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
             if memory is not None:

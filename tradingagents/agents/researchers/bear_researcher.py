@@ -4,6 +4,7 @@ import json
 
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.llm_retry import retry_llm_invoke
+from tradingagents.agents.researchers.data_gate import build_blocked_research_debate_update
 logger = get_logger("default")
 
 
@@ -20,6 +21,14 @@ def create_bear_researcher(llm, memory):
             news_report = state.get("news_report", "")
             fundamentals_report = state.get("fundamentals_report", "")
             master_consensus = state.get("master_consensus_report", "") or ""
+
+            blocked_update = build_blocked_research_debate_update(
+                state,
+                history_key="bear_history",
+                speaker_label="Bear Analyst",
+            )
+            if blocked_update:
+                return blocked_update
 
             ticker = state.get('company_of_interest', 'Unknown')
             from tradingagents.utils.stock_utils import StockUtils

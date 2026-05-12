@@ -203,6 +203,102 @@
         </div>
       </el-card>
 
+      <!-- A股可信度审计 -->
+      <el-card v-if="hasAuditInfo" class="audit-card" shadow="never">
+        <template #header>
+          <div class="card-header">
+            <el-icon><DataAnalysis /></el-icon>
+            <span>A股可信度审计</span>
+            <el-tag :type="report?.report_audit?.audit_passed ? 'success' : 'warning'" size="small">
+              {{ report?.report_audit?.audit_passed ? '通过' : '需复核' }}
+            </el-tag>
+          </div>
+        </template>
+
+        <div class="audit-summary">
+          <div class="audit-summary-item">
+            <span class="summary-label">严重度</span>
+            <el-tag :type="getSeverityTagType(report?.report_audit?.severity)" size="small">
+              {{ formatSeverity(report?.report_audit?.severity) }}
+            </el-tag>
+          </div>
+          <div class="audit-summary-item">
+            <span class="summary-label">审计后动作</span>
+            <strong>{{ report?.weighted_decision?.action || report?.report_audit?.recommended_action || '暂无' }}</strong>
+          </div>
+          <div class="audit-summary-item">
+            <span class="summary-label">加权分数</span>
+            <strong>{{ formatWeightedScore(report?.weighted_decision?.weighted_score || report?.report_audit?.weighted_score) }}</strong>
+          </div>
+          <div class="audit-summary-item">
+            <span class="summary-label">事实快照</span>
+            <strong>{{ report?.cn_fact_snapshot?.symbol || report?.stock_symbol }} · {{ report?.cn_fact_snapshot?.currency || 'CNY' }}</strong>
+          </div>
+        </div>
+
+        <div v-if="auditIssues.length" class="audit-section">
+          <h4>
+            <el-icon><WarningFilled /></el-icon>
+            审计问题
+          </h4>
+          <div class="audit-issues">
+            <div v-for="issue in auditIssues" :key="issue.code" class="audit-issue">
+              <el-tag :type="getSeverityTagType(issue.severity)" size="small">{{ formatSeverity(issue.severity) }}</el-tag>
+              <div>
+                <div class="issue-code">{{ issue.code }}</div>
+                <div class="issue-message">{{ issue.message }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="missingDataRows.length" class="audit-section">
+          <h4>
+            <el-icon><List /></el-icon>
+            缺失数据
+          </h4>
+          <el-table :data="missingDataRows" size="small" border>
+            <el-table-column prop="label" label="字段" min-width="110" />
+            <el-table-column label="影响结果" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.affects_result === false ? 'info' : 'danger'" size="small">
+                  {{ row.affects_result === false ? '否' : '是' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="需求模块" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ formatList(row.required_by) }}</template>
+            </el-table-column>
+            <el-table-column label="阻断角色" min-width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ formatList(row.blocks_roles) }}</template>
+            </el-table-column>
+            <el-table-column prop="missing_reason" label="缺失原因" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="impact" label="影响" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="suggested_fix" label="修复入口" min-width="220" show-overflow-tooltip />
+            <el-table-column label="候选免费源" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">{{ formatCandidateSources(row.candidate_free_sources) }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+
+        <div v-if="roleContributions.length" class="audit-section">
+          <h4>
+            <el-icon><TrendCharts /></el-icon>
+            角色加权贡献
+          </h4>
+          <el-table :data="roleContributions" size="small" border>
+            <el-table-column prop="label" label="角色" min-width="130" />
+            <el-table-column prop="action" label="方向" width="90" />
+            <el-table-column label="权重" width="90">
+              <template #default="{ row }">{{ formatPercent(row.weight) }}</template>
+            </el-table-column>
+            <el-table-column label="贡献值" width="100">
+              <template #default="{ row }">{{ formatWeightedScore(row.contribution) }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-card>
+
       <!-- 报告摘要 -->
       <el-card v-if="report.summary" class="summary-card" shadow="never">
         <template #header>
@@ -292,6 +388,33 @@ import { getMarketByStockCode } from '@/utils/market'
 import type { CurrencyAmount } from '@/api/paper'
 
 type ReportModuleContent = string | Record<string, unknown>
+type AuditIssue = {
+  code: string
+  severity?: string
+  message?: string
+}
+type MissingDataRow = {
+  field?: string
+  label?: string
+  required_by?: string[]
+  missing_reason?: string
+  blocks_roles?: string[]
+  impact?: string
+  affects_result?: boolean
+  suggested_fix?: string
+  candidate_free_sources?: Array<{
+    name?: string
+    coverage?: string
+    risk?: string
+  }>
+}
+type RoleContribution = {
+  role?: string
+  label?: string
+  action?: string
+  weight?: number
+  contribution?: number
+}
 
 type ReportDetailData = {
   id: string
@@ -309,6 +432,21 @@ type ReportDetailData = {
   key_points?: string[]
   summary?: string
   reports: Record<string, ReportModuleContent>
+  report_audit?: {
+    audit_passed?: boolean
+    severity?: string
+    issues?: AuditIssue[]
+    missing_data?: MissingDataRow[]
+    recommended_action?: string
+    weighted_score?: number
+    role_contributions?: RoleContribution[]
+  }
+  weighted_decision?: {
+    action?: string
+    weighted_score?: number
+    role_contributions?: RoleContribution[]
+  }
+  cn_fact_snapshot?: Record<string, any>
 }
 
 // 路由和认证
@@ -325,6 +463,19 @@ const report = ref<ReportDetailData | null>(null)
 const activeModule = ref('')
 const llmConfigs = ref<LLMConfig[]>([]) // 存储所有模型配置
 const reportModuleKeys = computed<string[]>(() => report.value ? Object.keys(report.value.reports || {}) : [])
+const hasAuditInfo = computed(() => {
+  const current = report.value
+  return !!(current?.report_audit && Object.keys(current.report_audit).length > 0) ||
+    !!(current?.weighted_decision && Object.keys(current.weighted_decision).length > 0) ||
+    !!(current?.cn_fact_snapshot && Object.keys(current.cn_fact_snapshot).length > 0)
+})
+const auditIssues = computed<AuditIssue[]>(() => report.value?.report_audit?.issues || [])
+const missingDataRows = computed<MissingDataRow[]>(() => report.value?.report_audit?.missing_data || [])
+const roleContributions = computed<RoleContribution[]>(() =>
+  report.value?.weighted_decision?.role_contributions ||
+  report.value?.report_audit?.role_contributions ||
+  []
+)
 
 // 获取模型配置列表
 const fetchLLMConfigs = async () => {
@@ -907,6 +1058,49 @@ const getRiskColor = (riskLevel: string) => {
   return colorMap[riskLevel] || '#E6A23C'
 }
 
+const getSeverityTagType = (severity?: string) => {
+  const normalized = (severity || 'none').toLowerCase()
+  if (normalized === 'high') return 'danger'
+  if (normalized === 'medium') return 'warning'
+  if (normalized === 'low') return 'info'
+  return 'success'
+}
+
+const formatSeverity = (severity?: string) => {
+  const map: Record<string, string> = {
+    high: '高',
+    medium: '中',
+    low: '低',
+    none: '无'
+  }
+  return map[(severity || 'none').toLowerCase()] || severity || '无'
+}
+
+const formatWeightedScore = (value?: number) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '暂无'
+  return value.toFixed(4)
+}
+
+const formatPercent = (value?: number) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return '暂无'
+  return `${Math.round(value * 100)}%`
+}
+
+const formatList = (items?: string[]) => {
+  if (!Array.isArray(items) || items.length === 0) return '暂无'
+  return items.join('、')
+}
+
+const formatCandidateSources = (sources?: MissingDataRow['candidate_free_sources']) => {
+  if (!Array.isArray(sources) || sources.length === 0) return '暂无'
+  return sources
+    .map((source) => {
+      const name = source?.name || '未知来源'
+      return source?.coverage ? `${name}：${source.coverage}` : name
+    })
+    .join('；')
+}
+
 watch(
   () => route.params.id,
   async () => {
@@ -1037,6 +1231,7 @@ watch(
 
     .summary-card,
     .metrics-card,
+    .audit-card,
     .modules-card {
       margin-bottom: 24px;
 
@@ -1045,6 +1240,82 @@ watch(
         align-items: center;
         gap: 8px;
         font-weight: 600;
+      }
+    }
+
+    .audit-card {
+      .card-header {
+        justify-content: flex-start;
+
+        .el-tag {
+          margin-left: 8px;
+        }
+      }
+
+      .audit-summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 20px;
+
+        .audit-summary-item {
+          border: 1px solid var(--el-border-color-light);
+          border-radius: 8px;
+          padding: 12px;
+          background: var(--el-fill-color-lighter);
+
+          .summary-label {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--el-text-color-secondary);
+            font-size: 12px;
+          }
+
+          strong {
+            color: var(--el-text-color-primary);
+            font-size: 14px;
+          }
+        }
+      }
+
+      .audit-section {
+        margin-top: 18px;
+
+        h4 {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin: 0 0 10px;
+          color: var(--el-text-color-primary);
+          font-size: 15px;
+        }
+      }
+
+      .audit-issues {
+        display: grid;
+        gap: 10px;
+
+        .audit-issue {
+          display: grid;
+          grid-template-columns: auto 1fr;
+          gap: 10px;
+          align-items: flex-start;
+          border: 1px solid var(--el-border-color-light);
+          border-radius: 8px;
+          padding: 10px 12px;
+          background: var(--el-fill-color-blank);
+
+          .issue-code {
+            color: var(--el-text-color-primary);
+            font-weight: 600;
+            line-height: 1.4;
+          }
+
+          .issue-message {
+            color: var(--el-text-color-regular);
+            line-height: 1.5;
+          }
+        }
       }
     }
 
@@ -1263,6 +1534,30 @@ watch(
 
   .error-container {
     padding: 48px 24px;
+  }
+
+  @media (max-width: 900px) {
+    .report-content {
+      .audit-card {
+        .audit-summary {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    }
+  }
+
+  @media (max-width: 560px) {
+    .report-content {
+      .audit-card {
+        .audit-summary {
+          grid-template-columns: 1fr;
+        }
+
+        .audit-issues .audit-issue {
+          grid-template-columns: 1fr;
+        }
+      }
+    }
   }
 }
 </style>

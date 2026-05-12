@@ -1,0 +1,60 @@
+{
+  "feature": "A股免费财报字段补全",
+  "source_spec": "docs/superpowers/specs/2026-05-11-cn-free-data-source-candidates.md",
+  "max_iterations": 40,
+  "stories": [
+    {
+      "id": "CN-FIN-SUP-001",
+      "title": "标准化免费财报嵌套字段",
+      "as_a": "A股分析数据维护者",
+      "i_want": "系统能从利润表、资产负债表和现金流量表嵌套行中识别标准字段",
+      "so_that": "revenue、operating_cash_flow、total_liabilities 不会因为字段形态不同而误判缺失",
+      "acceptance_criteria": [
+        "income_statement 中的 营业总收入 可映射为 revenue",
+        "cash_flow 中的 经营活动产生的现金流量净额 可映射为 operating_cash_flow",
+        "balance_sheet 中的 负债合计 可映射为 total_liabilities",
+        "字段保留来源、报告期和更新时间"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-FIN-SUP-002",
+      "title": "不覆盖同报告期高优先级字段",
+      "as_a": "A股分析数据维护者",
+      "i_want": "补全源只在更优候选时参与选择",
+      "so_that": "低优先级免费源不会静默覆盖已存在的高质量字段",
+      "acceptance_criteria": [
+        "同报告期同状态下，高优先级 source 保持选中",
+        "补全候选仍进入候选集合用于冲突检测",
+        "sources_used 只包含实际选中字段来源"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-FIN-SUP-003",
+      "title": "审计接收原始决策参数",
+      "as_a": "报告详情和 API 消费者",
+      "i_want": "最终 reconcile 传入的 raw_decision 也参与审计",
+      "so_that": "真实图执行时即使 state 里没有 decision 字段，也能识别目标价异常",
+      "acceptance_criteria": [
+        "reconcile_cn_decision(result, raw_decision) 会把 raw_decision 注入 audit 输入",
+        "raw_decision 为高置信买入且目标价异常时触发 TARGET_PRICE_INVALID",
+        "最终动作降级为持有且置信度不超过 0.45"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-FIN-SUP-004",
+      "title": "接手文档同步",
+      "as_a": "下一位开发者",
+      "i_want": "DEV_PROGRESS.md 记录当前开发进度、最近改动和下一步",
+      "so_that": "中断后能继续定位剩余工作",
+      "acceptance_criteria": [
+        "DEV_PROGRESS.md 顶部更新时间和轮次更新",
+        "当前状态概要包含字段补全实现结果",
+        "下一步明确从统一验证和真实接口验证接着做"
+      ],
+      "status": "completed"
+    }
+  ]
+}

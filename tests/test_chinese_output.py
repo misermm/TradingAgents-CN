@@ -4,6 +4,7 @@
 """
 
 import os
+import pytest
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
@@ -17,8 +18,13 @@ load_dotenv(project_root / ".env", override=True)
 
 def test_dashscope_chinese():
     """测试阿里百炼模型的中文输出"""
+    if not os.getenv("DASHSCOPE_API_KEY"):
+        pytest.skip("DASHSCOPE_API_KEY 未设置")
     try:
         from tradingagents.llm_adapters import ChatDashScope
+    except ImportError as e:
+        pytest.skip(f"ChatDashScope not available: {e}")
+    try:
         
         print("🧪 测试阿里百炼模型中文输出")
         print("=" * 50)
@@ -55,23 +61,27 @@ def test_dashscope_chinese():
         
         if chinese_ratio > 0.3:
             print("✅ 模型正确输出中文内容")
-            return True
+            assert True
         else:
             print("❌ 模型输出中文比例较低")
-            return False
+            pytest.fail("模型输出中文比例较低")
             
     except Exception as e:
         print(f"❌ 测试失败: {e}")
         import traceback
         print(traceback.format_exc())
-        return False
+        pytest.fail(f"test_dashscope_chinese failed: {e}")
 
 def test_signal_processor_chinese():
     """测试信号处理器的中文输出"""
+    if not os.getenv("DASHSCOPE_API_KEY"):
+        pytest.skip("DASHSCOPE_API_KEY 未设置")
     try:
         from tradingagents.graph.signal_processing import SignalProcessor
         from tradingagents.llm_adapters import ChatDashScope
-        
+    except ImportError as e:
+        pytest.skip(f"Required adapters not available: {e}")
+    try:
         print("\n🧪 测试信号处理器中文输出")
         print("=" * 50)
         
@@ -96,21 +106,27 @@ def test_signal_processor_chinese():
         print(f"决策结果: {decision}")
         
         # 检查决策是否为中文
-        if any(word in decision for word in ['买入', '卖出', '持有']):
-            print("✅ 信号处理器输出中文决策")
-            return True
-        elif any(word in decision.upper() for word in ['BUY', 'SELL', 'HOLD']):
-            print("⚠️ 信号处理器输出英文决策")
-            return False
+        decision_text = ""
+        if isinstance(decision, dict):
+            decision_text = str(decision.get("investment_decision", ""))
         else:
-            print(f"❓ 未识别的决策格式: {decision}")
-            return False
+            decision_text = str(decision)
+
+        if any(word in decision_text for word in ['买入', '卖出', '持有']):
+            print("✅ 信号处理器输出中文决策")
+            assert True
+        elif any(word in decision_text.upper() for word in ['BUY', 'SELL', 'HOLD']):
+            print("⚠️ 信号处理器输出英文决策")
+            pytest.fail("信号处理器输出英文决策")
+        else:
+            print(f"❓ 未识别的决策格式: {decision_text}")
+            pytest.fail(f"未识别的决策格式: {decision_text}")
             
     except Exception as e:
         print(f"❌ 测试失败: {e}")
         import traceback
         print(traceback.format_exc())
-        return False
+        pytest.fail(f"test_signal_processor_chinese failed: {e}")
 
 def main():
     """主测试函数"""

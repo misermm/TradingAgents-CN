@@ -97,3 +97,6 @@ class AgentState(MessagesState):
     prefetched_market_data: Annotated[str, "Pre-fetched market data for reference"]
     prefetched_quant_data: Annotated[str, "Pre-fetched structured quantitative data for quant analyzers"]
     fundamental_snapshot: Annotated[Dict[str, Any], merge_dicts]
+    cn_fact_snapshot: Annotated[Dict[str, Any], merge_dicts]
+    report_audit: Annotated[Dict[str, Any], merge_dicts]
+    weighted_decision: Annotated[Dict[str, Any], merge_dicts]

@@ -30,6 +30,7 @@ def create_data_prefetch_node(toolkit):
                 "prefetched_market_data": f"数据预获取失败: 市场信息获取错误 - {e}",
                 "prefetched_quant_data": "",
                 "fundamental_snapshot": {},
+                "cn_fact_snapshot": {},
             }
 
         end_date_dt = None
@@ -123,6 +124,13 @@ def create_data_prefetch_node(toolkit):
         except Exception as e:
             logger.warning(f"{log_tag} 护城河分析上下文生成失败: {e}")
 
+        cn_fact_snapshot = {}
+        try:
+            from tradingagents.graph.cn_fact_snapshot import build_cn_fact_snapshot
+            cn_fact_snapshot = build_cn_fact_snapshot(ticker, market_info, snapshot_dict, trade_date)
+        except Exception as e:
+            logger.warning(f"{log_tag} A股事实快照生成失败: {e}")
+
         logger.info(f"{log_tag} ===== 预获取完成 =====")
 
         fundamentals_with_industry = str(fundamentals_data) if fundamentals_data else ""
@@ -140,6 +148,7 @@ def create_data_prefetch_node(toolkit):
             "prefetched_market_data": str(market_data) if market_data else "",
             "prefetched_quant_data": quant_data,
             "fundamental_snapshot": snapshot_dict,
+            "cn_fact_snapshot": cn_fact_snapshot,
         }
 
     return data_prefetch_node

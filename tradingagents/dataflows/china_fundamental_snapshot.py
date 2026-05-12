@@ -23,6 +23,7 @@ FREE_SOURCE_PRIORITY = {
     "eastmoney": 100,
     "akshare": 80,
     "akshare_direct": 78,
+    "sina_finance": 76,
     "akshare_indicator_lg": 75,
     "baostock_direct": 72,
     "baostock": 70,
@@ -156,6 +157,24 @@ ASSET_IMPAIRMENT_KEYWORDS = ("\u8d44\u4ea7\u51cf\u503c", "\u4fe1\u7528\u51cf\u50
 EARNINGS_GUIDANCE_KEYWORDS = ("业绩预告", "业绩快报", "预增", "预减", "预盈", "预亏", "首亏", "续亏", "扭亏")
 POSITIVE_EARNINGS_KEYWORDS = ("预增", "预盈", "扭亏", "续盈", "大幅增长", "增长", "盈利")
 NEGATIVE_EARNINGS_KEYWORDS = ("预减", "预亏", "首亏", "续亏", "下滑", "下降", "亏损")
+FINANCIAL_STATEMENT_KEYS = (
+    "latest",
+    "income_statement",
+    "balance_sheet",
+    "cash_flow",
+    "cashflow_statement",
+    "main_indicators",
+    "financial_statement",
+)
+REPORT_PERIOD_KEYS = (
+    "report_period",
+    "REPORT_DATE",
+    "report_date",
+    "报表日期",
+    "公告日期",
+    "END_DATE",
+    "date",
+)
 REGULATORY_SEVERITY_RANK = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 REGULATORY_SEVERITY_PATTERNS = (
     ("critical", ("立案调查", "立案告知书")),
@@ -293,6 +312,44 @@ def _merge_provider_data(*parts: Any) -> Dict[str, Any]:
                 if key not in merged or merged[key] is None or merged[key] == "" or merged[key] == "N/A":
                     merged[key] = value
     return merged
+
+
+def _extract_report_period(data: Any) -> Optional[str]:
+    if not isinstance(data, Mapping):
+        return None
+    for key in REPORT_PERIOD_KEYS:
+        value = data.get(key)
+        if value not in (None, "", "N/A"):
+            return str(value)[:10]
+    return None
+
+
+def _iter_statement_rows(value: Any) -> Iterable[Mapping[str, Any]]:
+    if isinstance(value, Mapping):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, Mapping):
+                yield item
+
+
+def _expand_financial_statement_payloads(source_payloads: List[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
+    expanded: List[Mapping[str, Any]] = list(source_payloads)
+    for payload in source_payloads:
+        data = payload.get("data")
+        if not isinstance(data, Mapping):
+            continue
+        for statement_key in FINANCIAL_STATEMENT_KEYS:
+            value = data.get(statement_key)
+            for row in _iter_statement_rows(value):
+                report_period = payload.get("report_period") or _extract_report_period(row)
+                expanded.append({
+                    "source": payload.get("source", "unknown"),
+                    "data": row,
+                    "updated_at": payload.get("updated_at"),
+                    "report_period": report_period,
+                })
+    return expanded
 
 
 def _announcement_text(item: Mapping[str, Any]) -> str:
@@ -959,7 +1016,7 @@ def collect_china_free_source_payloads(symbol: str) -> List[Dict[str, Any]]:
                 report_period = data.get("report_period")
                 latest = data.get("latest")
                 if isinstance(latest, Mapping):
-                    report_period = report_period or latest.get("report_period") or latest.get("REPORT_DATE")
+                    report_period = report_period or _extract_report_period(latest)
                 payloads.append(
                     {
                         "source": source,
@@ -1586,12 +1643,13 @@ def apply_consistency_fixes(snapshot_data: dict) -> dict:
 
 
 def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[str, Any]]) -> Dict[str, Any]:
+    candidate_payloads = _expand_financial_statement_payloads(source_payloads)
     fields: Dict[str, Dict[str, Any]] = {}
     all_candidates: Dict[str, List[Dict[str, Any]]] = {}
     for field_name, spec in FIELD_SPECS.items():
         best: Optional[Dict[str, Any]] = None
         candidates: List[Dict[str, Any]] = []
-        for payload in source_payloads:
+        for payload in candidate_payloads:
             source = _normalize_source(str(payload.get("source", "unknown")))
             raw_value = _extract_field(payload.get("data", {}), spec["aliases"])
             status = _value_status(raw_value)

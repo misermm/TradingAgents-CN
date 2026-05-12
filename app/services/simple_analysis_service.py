@@ -2045,7 +2045,10 @@ class SimpleAnalysisService:
                 # 🆕 性能指标数据
                 "performance_metrics": state.get("performance_metrics", {}) if isinstance(state, dict) else {},
                 "master_data_quality": state.get("master_data_quality", {}) if isinstance(state, dict) else {},
-                "master_quantitative_results": state.get("master_quantitative_results", {}) if isinstance(state, dict) else {}
+                "master_quantitative_results": state.get("master_quantitative_results", {}) if isinstance(state, dict) else {},
+                "report_audit": decision.get("audit", {}) if isinstance(decision, dict) else {},
+                "weighted_decision": state.get("weighted_decision", {}) if isinstance(state, dict) else {},
+                "cn_fact_snapshot": state.get("cn_fact_snapshot", {}) if isinstance(state, dict) else {}
             }
 
             logger.info(f"✅ [线程池] 分析完成: {task_id} - 耗时{execution_time:.2f}秒")
@@ -2926,7 +2929,10 @@ class SimpleAnalysisService:
                 # 🆕 性能指标数据
                 "performance_metrics": result.get("performance_metrics", {}),
                 "master_data_quality": result.get("master_data_quality", {}),
-                "master_quantitative_results": result.get("master_quantitative_results", {})
+                "master_quantitative_results": result.get("master_quantitative_results", {}),
+                "report_audit": result.get("report_audit", {}),
+                "weighted_decision": result.get("weighted_decision", {}),
+                "cn_fact_snapshot": result.get("cn_fact_snapshot", {})
             }
 
             # 保存到analysis_reports集合（与web目录保持一致）
@@ -2955,7 +2961,10 @@ class SimpleAnalysisService:
                         # 🔥 关键修复：添加格式化后的decision字段！
                         "decision": result.get("decision", {}),
                         "master_data_quality": result.get("master_data_quality", {}),
-                        "master_quantitative_results": result.get("master_quantitative_results", {})
+                        "master_quantitative_results": result.get("master_quantitative_results", {}),
+                        "report_audit": result.get("report_audit", {}),
+                        "weighted_decision": result.get("weighted_decision", {}),
+                        "cn_fact_snapshot": result.get("cn_fact_snapshot", {})
                     }}}
                 )
                 logger.info(f"💾 分析结果已保存 (web风格): {task_id}")

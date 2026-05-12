@@ -3,6 +3,7 @@ from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.agents.masters.base_master import MASTER_ANALYST_CONFIG, QUANTITATIVE_ANALYZERS, _init_quantitative_analyzers
 from tradingagents.agents.masters import MASTER_ANALYST_INFO
+from tradingagents.agents.masters.data_gate import build_blocked_master_consensus_update
 
 logger = get_logger("default")
 
@@ -92,6 +93,10 @@ MASTER_CONSENSUS_PROMPT = """你是一位资深投资顾问，负责综合多位
 def create_master_consensus(llm=None):
     def master_consensus_node(state) -> dict:
         _init_quantitative_analyzers()
+
+        blocked_update = build_blocked_master_consensus_update(state)
+        if blocked_update:
+            return blocked_update
 
         master_reports_dict = state.get("master_reports", {})
         state_quant_results = state.get("master_quantitative_results", {}) or {}

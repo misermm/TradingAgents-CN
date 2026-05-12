@@ -110,6 +110,18 @@ def create_market_analyst(llm, toolkit):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
 
+        try:
+            from tradingagents.graph.report_audit import run_role_data_gate
+            gate = run_role_data_gate("market", state.get("cn_fact_snapshot") or {})
+            if gate.get("role_blocked"):
+                logger.warning("⚠️ [市场分析师] A股行情核心字段缺失，停止正式分析并返回诊断报告")
+                return {
+                    "market_report": gate.get("diagnostic_report", ""),
+                    "market_tool_call_count": tool_call_count,
+                }
+        except Exception as e:
+            logger.warning(f"⚠️ [市场分析师] 角色数据准入检查失败，继续原分析流程: {e}")
+
         logger.debug(f"📈 [DEBUG] 输入参数: ticker={ticker}, date={current_date}")
         logger.debug(f"📈 [DEBUG] 当前状态中的消息数量: {len(state.get('messages', []))}")
         logger.debug(f"📈 [DEBUG] 现有市场报告: {state.get('market_report', 'None')}")

@@ -24,6 +24,7 @@ frontend/.env*
 
 # ==================== 前端 ====================
 frontend/node_modules/
+frontend/.npm-cache/
 frontend/dist/
 frontend/.vite/
 frontend/components.d.ts
@@ -100,6 +101,8 @@ test_mongodb_fix.py
 verify_database_fix.py
 setup_mongodb_user.py
 test_*.py
+!tests/test_cn_analysis_trust_audit.py
+!tests/test_cn_financial_field_supplement.py
 
 # ==================== 临时本地脚本 ====================
 start_local_services.bat

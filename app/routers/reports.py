@@ -344,6 +344,9 @@ async def get_report_detail(
                 "confidence_score": r.get("confidence_score", 0.0),
                 "risk_level": r.get("risk_level", "中等"),
                 "key_points": r.get("key_points", []),
+                "report_audit": r.get("report_audit", {}),
+                "weighted_decision": r.get("weighted_decision", {}),
+                "cn_fact_snapshot": r.get("cn_fact_snapshot", {}),
                 "execution_time": r.get("execution_time", 0),
                 "tokens_used": r.get("tokens_used", 0)
             }
@@ -382,6 +385,9 @@ async def get_report_detail(
                 "confidence_score": doc.get("confidence_score", 0.0),
                 "risk_level": doc.get("risk_level", "中等"),
                 "key_points": doc.get("key_points", []),
+                "report_audit": doc.get("report_audit", {}),
+                "weighted_decision": doc.get("weighted_decision", {}),
+                "cn_fact_snapshot": doc.get("cn_fact_snapshot", {}),
                 "execution_time": doc.get("execution_time", 0),
                 "tokens_used": doc.get("tokens_used", 0)
             }

@@ -32,6 +32,34 @@ def create_risk_manager(llm, memory):
             trader_plan = state["investment_plan"]
             master_consensus = state.get("master_consensus_report", "")
 
+            try:
+                from tradingagents.utils.stock_utils import StockUtils
+                market_info = StockUtils.get_market_info(company_name)
+                if market_info.get("is_china"):
+                    from tradingagents.graph.report_audit import run_role_data_gate
+                    gate = run_role_data_gate("risk_management", state.get("cn_fact_snapshot") or {})
+                    if gate.get("role_blocked"):
+                        logger.warning("⚠️ [风控管理器] A股风控核心字段缺失，停止正式决策并返回诊断报告")
+                        new_risk_debate_state = {
+                            "judge_decision": gate.get("diagnostic_report", ""),
+                            "history": risk_debate_state.get("history", ""),
+                            "risky_history": risk_debate_state.get("risky_history", ""),
+                            "safe_history": risk_debate_state.get("safe_history", ""),
+                            "neutral_history": risk_debate_state.get("neutral_history", ""),
+                            "latest_speaker": "Judge",
+                            "current_risky_response": risk_debate_state.get("current_risky_response", ""),
+                            "current_safe_response": risk_debate_state.get("current_safe_response", ""),
+                            "current_neutral_response": risk_debate_state.get("current_neutral_response", ""),
+                            "count": risk_debate_state.get("count", 0),
+                        }
+                        return {
+                            "risk_debate_state": new_risk_debate_state,
+                            "final_trade_decision": gate.get("diagnostic_report", ""),
+                            "messages": [],
+                        }
+            except Exception as e:
+                logger.warning(f"⚠️ [风控管理器] 角色数据准入检查失败，继续原风控流程: {e}")
+
             curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 
             if master_consensus and master_consensus.strip():

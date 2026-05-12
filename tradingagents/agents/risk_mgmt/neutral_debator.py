@@ -3,6 +3,7 @@ import json
 
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.llm_retry import retry_llm_invoke
+from tradingagents.agents.risk_mgmt.data_gate import build_blocked_risk_debate_update
 logger = get_logger("default")
 
 
@@ -15,6 +16,16 @@ def create_neutral_debator(llm):
 
             current_risky_response = risk_debate_state.get("current_risky_response", "")
             current_safe_response = risk_debate_state.get("current_safe_response", "")
+
+            blocked_update = build_blocked_risk_debate_update(
+                state,
+                latest_speaker="Neutral",
+                current_response_key="current_neutral_response",
+                history_key="neutral_history",
+                speaker_label="Neutral Analyst",
+            )
+            if blocked_update:
+                return blocked_update
 
             market_research_report = state["market_report"]
             sentiment_report = state["sentiment_report"]

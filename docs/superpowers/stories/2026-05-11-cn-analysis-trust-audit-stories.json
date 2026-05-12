@@ -1,0 +1,166 @@
+{
+  "feature": "A股分析可信度审计",
+  "source_spec": "docs/superpowers/specs/2026-05-11-cn-analysis-trust-audit-design.md",
+  "max_iterations": 40,
+  "stories": [
+    {
+      "id": "CN-AUDIT-001",
+      "title": "检测 A 股报告价格冲突",
+      "as_a": "真实交易决策使用者",
+      "i_want": "系统发现同一报告内的当前价或核心价格事实冲突",
+      "so_that": "我不会基于错误价格量级做交易决策",
+      "acceptance_criteria": [
+        "000002 样本报告触发 PRICE_CONFLICT",
+        "任一当前价与 cn_fact_snapshot.current_price 不一致即触发 PRICE_CONFLICT",
+        "偏离幅度只影响 severity，不影响是否标注冲突"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-002",
+      "title": "缺失字段明细和角色阻断",
+      "as_a": "分析报告审核者",
+      "i_want": "缺失字段被完整列出并说明缺失原因和影响",
+      "so_that": "我能知道该修哪个数据源或字段映射",
+      "acceptance_criteria": [
+        "missing_data 包含字段名、中文名、缺失原因、影响、是否影响结果、阻断角色和建议修复入口",
+        "当前角色缺失核心字段且影响结论时 role_blocked=true",
+        "被阻断角色报告不包含买入、持有、卖出、目标价、仓位或置信度"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-003",
+      "title": "角色专业性加权最终决策",
+      "as_a": "真实交易决策使用者",
+      "i_want": "最终动作由多角色按专业性和证据质量加权决定",
+      "so_that": "交易员或单一角色不能静默覆盖整体结论",
+      "acceptance_criteria": [
+        "输出包含 role_contributions",
+        "风险委员会、交易员、大师量化、大师共识、基本面等角色使用不同权重",
+        "高严重度数据闸门触发时，高置信买入会被降级为持有或低置信"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-004",
+      "title": "最终结构化输出补全",
+      "as_a": "前端和 API 消费者",
+      "i_want": "decision/recommendation/key_points/confidence_score/risk_level 一致且可解释",
+      "so_that": "展示层不会出现正文持有但顶层买入的问题",
+      "acceptance_criteria": [
+        "key_points 为空时从审计证据补齐至少 3 条",
+        "target_price 为 null 且数据闸门触发时不允许高置信买入",
+        "recommendation 使用审计后的 action 和 reasoning"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-005",
+      "title": "API 返回和落库审计字段",
+      "as_a": "前端和 API 消费者",
+      "i_want": "报告详情和任务结果包含 report_audit、weighted_decision、cn_fact_snapshot",
+      "so_that": "展示层可以解释最终建议为何被审计修正",
+      "acceptance_criteria": [
+        "AnalysisResult 模型保留 report_audit、weighted_decision、cn_fact_snapshot",
+        "analysis_tasks.result 和 analysis_reports 文档保存审计字段",
+        "任务结果和报告详情 API 返回审计字段"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-006",
+      "title": "前端展示审计结果",
+      "as_a": "真实交易决策使用者",
+      "i_want": "报告详情页展示审计状态、问题、缺失字段和角色加权贡献",
+      "so_that": "我能看懂最终持有/观望结论的原因",
+      "acceptance_criteria": [
+        "报告详情页有独立的 A股可信度审计区域",
+        "审计问题按严重度展示，缺失字段显示中文名、原因、影响和建议修复入口",
+        "角色加权贡献展示角色、方向、权重和贡献值"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-007",
+      "title": "角色数据准入闸门前移",
+      "as_a": "分析报告审核者",
+      "i_want": "核心字段缺失时对应分析师先停止生成投资方向",
+      "so_that": "下游不会基于缺失数据继续放大错误结论",
+      "acceptance_criteria": [
+        "基本面分析师缺失核心字段时直接返回数据缺失诊断",
+        "市场分析师缺失当前价/K线/成交量时直接返回数据缺失诊断",
+        "被闸门阻断的报告不调用 LLM 或数据工具继续生成投资方向"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-008",
+      "title": "本地 LM Studio 端到端验证",
+      "as_a": "开发者",
+      "i_want": "使用本地 LM Studio 模型跑一次可控链路验证",
+      "so_that": "不用外部大模型也能验证审计输出能贯穿最终结果",
+      "acceptance_criteria": [
+        "测试配置使用 http://192.168.3.39:1234 和 qwen3.5-9b-claude-4.6-highiq-instruct",
+        "端到端或近端到端验证输出包含 report_audit 与 weighted_decision",
+        "最大迭代次数记录为 40"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-009",
+      "title": "交易员和风控管理器数据准入闸门前移",
+      "as_a": "分析报告审核者",
+      "i_want": "交易员和风险管理最终裁决在核心字段缺失时停止生成交易方向",
+      "so_that": "下游不会在价格、负债或现金流缺失时继续放大上游激进建议",
+      "acceptance_criteria": [
+        "交易员缺失当前价时直接返回数据缺失诊断",
+        "风控管理器缺失总负债或经营现金流时直接返回数据缺失诊断",
+        "被闸门阻断的交易员和风控管理器不调用 LLM 继续生成买入、卖出、目标价、仓位或置信度"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-010",
+      "title": "风险辩论三方数据准入闸门前移",
+      "as_a": "分析报告审核者",
+      "i_want": "激进、保守和中性风险分析师在核心风控字段缺失时停止继续辩论",
+      "so_that": "风控辩论不会在总负债或经营现金流缺失时继续产生方向性论点",
+      "acceptance_criteria": [
+        "激进风险分析师缺失风控核心字段时返回数据缺失诊断",
+        "保守风险分析师缺失风控核心字段时返回数据缺失诊断",
+        "中性风险分析师缺失风控核心字段时返回数据缺失诊断",
+        "被闸门阻断的风险辩论节点不调用 LLM"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-011",
+      "title": "研究辩论与研究经理数据准入闸门前移",
+      "as_a": "分析报告审核者",
+      "i_want": "多空研究员和研究经理在核心行情或基本面字段缺失时停止生成投资方向",
+      "so_that": "研究辩论和投资计划不会在事实数据不足时继续放大方向性结论",
+      "acceptance_criteria": [
+        "看涨研究员缺失行情或基本面核心字段时返回数据缺失诊断",
+        "看跌研究员缺失行情或基本面核心字段时返回数据缺失诊断",
+        "研究经理缺失行情或基本面核心字段时返回数据缺失诊断并写入 investment_plan",
+        "被闸门阻断的研究链路节点不调用 LLM"
+      ],
+      "status": "completed"
+    },
+    {
+      "id": "CN-AUDIT-012",
+      "title": "投资大师与大师共识数据准入闸门前移",
+      "as_a": "分析报告审核者",
+      "i_want": "投资大师和大师共识在核心财务字段缺失时停止生成方向性结论",
+      "so_that": "长期投资框架不会在财务事实不足时继续给出方向性判断",
+      "acceptance_criteria": [
+        "巴菲特分析缺失经营现金流、总负债或 ROE 等核心字段时返回数据缺失诊断",
+        "彼得林奇分析缺失营业收入、净利润、经营现金流或 PE 时返回数据缺失诊断",
+        "大师共识缺失营业收入、净利润、总负债或 ROE 时返回数据缺失诊断",
+        "被闸门阻断的大师链路节点不调用 LLM 或数据工具"
+      ],
+      "status": "completed"
+    }
+  ]
+}

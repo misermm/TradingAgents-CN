@@ -98,6 +98,9 @@ export interface AnalysisResult {
   execution_time?: number
   master_data_quality?: Record<string, MasterDataQuality>
   master_quantitative_results?: Record<string, MasterQuantitativeResult>
+  report_audit?: Record<string, any>
+  weighted_decision?: Record<string, any>
+  cn_fact_snapshot?: Record<string, any>
 }
 
 // 分析任务

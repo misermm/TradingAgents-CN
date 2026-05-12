@@ -123,6 +123,18 @@ def create_fundamentals_analyst(llm, toolkit):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
 
+        try:
+            from tradingagents.graph.report_audit import run_role_data_gate
+            gate = run_role_data_gate("fundamentals", state.get("cn_fact_snapshot") or {})
+            if gate.get("role_blocked"):
+                logger.warning("⚠️ [基本面分析师] A股核心字段缺失，停止正式分析并返回诊断报告")
+                return {
+                    "fundamentals_report": gate.get("diagnostic_report", ""),
+                    "fundamentals_tool_call_count": tool_call_count,
+                }
+        except Exception as e:
+            logger.warning(f"⚠️ [基本面分析师] 角色数据准入检查失败，继续原分析流程: {e}")
+
         # 🔧 基本面分析数据范围：固定获取10天数据（处理周末/节假日/数据延迟）
         # 参考文档：docs/ANALYST_DATA_CONFIGURATION.md
         # 基本面分析主要依赖财务数据（PE、PB、ROE等），只需要当前股价

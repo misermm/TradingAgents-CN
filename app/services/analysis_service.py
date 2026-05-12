@@ -225,7 +225,14 @@ class AnalysisService:
                 detailed_analysis=decision,
                 execution_time=execution_time,
                 tokens_used=decision.get("tokens_used", 0),
-                model_info=model_info  # 🔥 添加模型信息字段
+                model_info=model_info,  # 🔥 添加模型信息字段
+                report_audit=decision.get("audit", {}),
+                weighted_decision={
+                    "action": decision.get("action"),
+                    "weighted_score": decision.get("weighted_score"),
+                    "role_contributions": decision.get("role_contributions", []),
+                },
+                cn_fact_snapshot=decision.get("cn_fact_snapshot", {})
             )
 
             logger.info(f"✅ [线程池] 分析任务完成: {task.task_id} - 耗时{execution_time:.2f}秒")
@@ -337,7 +344,14 @@ class AnalysisService:
                 detailed_analysis=decision,
                 execution_time=execution_time,
                 tokens_used=decision.get("tokens_used", 0),
-                model_info=model_info
+                model_info=model_info,
+                report_audit=decision.get("audit", {}),
+                weighted_decision={
+                    "action": decision.get("action"),
+                    "weighted_score": decision.get("weighted_score"),
+                    "role_contributions": decision.get("role_contributions", []),
+                },
+                cn_fact_snapshot=decision.get("cn_fact_snapshot", {})
             )
 
             logger.info(f"✅ [线程池] 分析任务完成: {task.task_id} - 耗时{execution_time:.2f}秒")
@@ -718,7 +732,14 @@ class AnalysisService:
                 detailed_analysis=decision,
                 execution_time=execution_time,
                 tokens_used=decision.get("tokens_used", 0),
-                model_info=model_info  # 🔥 添加模型信息字段
+                model_info=model_info,  # 🔥 添加模型信息字段
+                report_audit=decision.get("audit", {}),
+                weighted_decision={
+                    "action": decision.get("action"),
+                    "weighted_score": decision.get("weighted_score"),
+                    "role_contributions": decision.get("role_contributions", []),
+                },
+                cn_fact_snapshot=decision.get("cn_fact_snapshot", {})
             )
 
             if progress_callback:

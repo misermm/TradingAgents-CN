@@ -68,6 +68,9 @@ class Propagator:
             "prefetched_social_media_data": "",
             "prefetched_quant_data": "",
             "fundamental_snapshot": {},
+            "cn_fact_snapshot": {},
+            "report_audit": {},
+            "weighted_decision": {},
         }
 
         AnalystRegistry.ensure_initialized()

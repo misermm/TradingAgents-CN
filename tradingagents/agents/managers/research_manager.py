@@ -4,6 +4,7 @@ import json
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.agents.utils.instrument_utils import build_instrument_context
+from tradingagents.agents.researchers.data_gate import build_blocked_research_manager_update
 logger = get_logger("default")
 
 
@@ -20,6 +21,9 @@ def create_research_manager(llm, memory):
             master_consensus = state.get("master_consensus_report", "")
 
             investment_debate_state = state["investment_debate_state"]
+            blocked_update = build_blocked_research_manager_update(state)
+            if blocked_update:
+                return blocked_update
 
             curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
 

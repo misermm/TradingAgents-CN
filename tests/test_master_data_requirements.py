@@ -37,7 +37,10 @@ def test_buffett_data_insufficient_report_blocks_trading_recommendation():
     )
 
     assert "数据不足" in report
-    assert "不生成买入/持有/卖出倾向" in report
+    assert "不生成方向性投资结论" in report
+    assert "买入" not in report
+    assert "持有" not in report
+    assert "卖出" not in report
     assert "净利润及增长率" in report
 
 

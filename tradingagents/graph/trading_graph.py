@@ -1002,6 +1002,23 @@ class TradingAgentsGraph:
         # 处理决策并添加模型信息
         trade_decision = final_state.get("final_trade_decision", "分析未完成：未生成交易决策")
         decision = self.process_signal(trade_decision, company_name)
+
+        try:
+            from tradingagents.utils.stock_utils import StockUtils
+            if StockUtils.is_china_stock(company_name):
+                from tradingagents.graph.report_audit import reconcile_cn_decision
+                decision = reconcile_cn_decision(final_state, decision)
+                final_state["report_audit"] = decision.get("audit", {})
+                final_state["weighted_decision"] = {
+                    "action": decision.get("action"),
+                    "weighted_score": decision.get("weighted_score"),
+                    "role_contributions": decision.get("role_contributions", []),
+                }
+                decision["cn_fact_snapshot"] = final_state.get("cn_fact_snapshot", {})
+                logger.info(f"✅ [A股审计] 已应用可信度审计与角色加权决策: {decision.get('action')}")
+        except Exception as e:
+            logger.warning(f"⚠️ [A股审计] 决策合成失败，保留原始决策: {e}")
+
         decision['model_info'] = model_info
 
         try:

@@ -13,6 +13,7 @@ from tradingagents.llm_clients import create_llm_client
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.llm_retry import retry_llm_invoke
 from tradingagents.utils.tool_logging import log_analyst_module
+from tradingagents.agents.masters.data_gate import build_blocked_master_update
 
 logger = get_logger("default")
 
@@ -331,13 +332,13 @@ def _build_data_insufficient_report(master_id: str, company_name: str, ticker: s
         f"## {name_cn}投资大师分析\n"
         f"⚠️ 重要声明\n"
         f"尊敬的投资者，我必须首先坦诚地说明：您提供的数据中，关于{company_name}（{ticker}）的关键字段存在明显缺失或估算。\n"
-        f"这不符合我的投资原则，因此我不会基于不完整数据生成买入/持有/卖出倾向。\n\n"
+        f"这不符合我的投资原则，因此我不会基于不完整数据生成方向性投资结论。\n\n"
         f"分析日期：{current_date}\n"
         f"数据完整度：{data_quality.get('present_count', 0)}/{data_quality.get('required_count', 0)}\n\n"
         f"| 必需数据项 | 当前状态 | 说明 |\n"
         f"|---|---|---|\n"
         f"{missing_rows}\n\n"
-        f"结论：数据不足，不生成买入/持有/卖出倾向。"
+        f"结论：数据不足，不生成方向性投资结论。"
     )
 
 
@@ -512,6 +513,14 @@ def create_master_analyst(master_id: str, llm, toolkit, philosophy: str, framewo
         if existing_report and len(existing_report) > 100:
             logger.info(f"{log_tag} 报告已存在，跳过重复分析")
             return {}
+
+        blocked_update = build_blocked_master_update(
+            state,
+            master_id=master_id,
+            tool_call_count=tool_call_count,
+        )
+        if blocked_update:
+            return blocked_update
 
         quant_context = ""
         quant_result: Optional[Dict[str, Any]] = None
