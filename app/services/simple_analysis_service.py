@@ -1198,6 +1198,26 @@ class SimpleAnalysisService:
             progress_tracker
         )
         logger.info(f"✅ [线程池] 分析任务执行完成: {task_id}")
+        if result:
+            # Ensure a stable payload shape for status API callers.
+            result.setdefault("task_id", task_id)
+            result.setdefault("status", "pending")
+            result.setdefault("progress", 0)
+            result.setdefault("message", "")
+            result.setdefault("current_step", result.get("status"))
+            result.setdefault("elapsed_time", 0)
+            result.setdefault("remaining_time", 0)
+            result.setdefault("estimated_total_time", result.get("estimated_duration", 0))
+            result.setdefault("steps", [])
+            result.setdefault("start_time", result.get("created_at"))
+            result.setdefault("last_update", result.get("updated_at") or result.get("start_time"))
+
+            try:
+                progress_value = float(result.get("progress", 0))
+            except (TypeError, ValueError):
+                progress_value = 0.0
+            result["progress"] = max(0, min(100, int(progress_value)))
+
         return result
 
     def _run_analysis_sync(

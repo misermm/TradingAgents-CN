@@ -1,4 +1,18 @@
 services:
+  # New API 聚合服务
+  new-api:
+    image: ${NEWAPI_IMAGE:-calciumion/new-api:latest}
+    container_name: new-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      TZ: "Asia/Shanghai"
+    volumes:
+      - newapi_data:/data
+    networks:
+      - tradingagents-network
+
   # FastAPI 后端服务
   backend:
     build:
@@ -275,6 +289,9 @@ services:
 
 # 数据卷定义
 volumes:
+  newapi_data:
+    driver: local
+    name: tradingagents_newapi_data
   mongodb_data:
     driver: local
     name: tradingagents_mongodb_data
@@ -287,4 +304,3 @@ networks:
   tradingagents-network:
     driver: bridge
     name: tradingagents-network
-

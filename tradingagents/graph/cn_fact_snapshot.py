@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from tradingagents.graph.report_audit import FIELD_METADATA, candidate_sources_for_field
 
@@ -38,7 +38,7 @@ def build_cn_fact_snapshot(
 
     current_price = _field_value(fields, "price") or _field_value(fields, "current_price")
     current_price_source = _field_source(fields, "price") or _field_source(fields, "current_price")
-    market_report_price = _extract_market_report_current_price(market_report or "")
+    market_report_price = _extract_market_report_current_price_strict(market_report or "")
     if market_report_price is not None:
         current_price = market_report_price
         current_price_source = "market_report"
@@ -116,3 +116,26 @@ def _missing_field_detail(field_name: str) -> Dict[str, Any]:
         "suggested_fix": meta.get("suggested_fix") or "检查字段映射；若现有免费源不可得，可评估接入新的免费外部数据源",
         "candidate_free_sources": candidate_sources_for_field(field_name),
     }
+
+
+def _extract_market_report_current_price_strict(market_report: str) -> Optional[float]:
+    if not market_report:
+        return None
+    normalized = market_report.replace("：", ":").replace("¥", "￥").replace("元", "")
+    patterns = [
+        r"(?:当前价|当前价格|当前股价|现价|最新价|Current Price)\s*(?:[:：]|为|是|在)\s*[￥]?\s*(\d+(?:\.\d+)?)",
+        r"(?:当前价|当前价格|当前股价|现价|最新价|Current Price)\s*[￥]?\s*(\d+(?:\.\d+)?)",
+    ]
+    candidates: List[float] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            suffix = normalized[match.end(): match.end() + 2]
+            if "%" in suffix:
+                continue
+            try:
+                candidates.append(float(match.group(1)))
+            except Exception:
+                continue
+    if candidates:
+        return candidates[0]
+    return None

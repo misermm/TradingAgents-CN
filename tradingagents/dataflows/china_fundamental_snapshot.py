@@ -212,6 +212,38 @@ def _values_conflict(v1: Any, v2: Any) -> bool:
     return str(v1) != str(v2)
 
 
+def _normalize_percent_value(value: Any) -> Any:
+    if not isinstance(value, (int, float)):
+        return value
+    if abs(value) > 1:
+        return value / 100.0
+    return value
+
+
+def _scaled_relative_diff(v1: float, v2: float) -> float:
+    denom = max(abs(v1), abs(v2), 1e-9)
+    return abs(v1 - v2) / denom
+
+
+def _values_conflict_by_field(field_name: str, v1: Any, v2: Any) -> bool:
+    if v1 == v2:
+        return False
+    if not (isinstance(v1, (int, float)) and isinstance(v2, (int, float))):
+        return str(v1) != str(v2)
+
+    if field_name in PERCENT_FIELDS:
+        nv1 = _normalize_percent_value(v1)
+        nv2 = _normalize_percent_value(v2)
+        return _scaled_relative_diff(nv1, nv2) > 0.2
+
+    if field_name in {"net_profit", "revenue", "total_assets", "total_liabilities", "operating_cash_flow"}:
+        scales = (1.0, 1e4, 1e6, 1e8)
+        best_diff = min(_scaled_relative_diff(v1 * s1, v2 * s2) for s1 in scales for s2 in scales)
+        return best_diff > 0.2
+
+    return _scaled_relative_diff(v1, v2) > 0.2
+
+
 def _coerce_number(value: Any) -> Any:
     if not isinstance(value, str):
         return value
@@ -1180,6 +1212,17 @@ def _parse_report_period(value: Any) -> tuple[int, int, int]:
     return (0, 0, 0)
 
 
+def _report_period_conflict_comparable(p1: Any, p2: Any) -> bool:
+    """
+    Return whether two candidate periods are comparable for conflict checks.
+    We avoid hard conflicts when one/both sides have unknown period or explicit
+    period tags differ, because many free sources expose mixed annual/quarterly cuts.
+    """
+    if not p1 or not p2:
+        return False
+    return str(p1).strip() == str(p2).strip()
+
+
 def _parse_updated_at(value: Any) -> tuple[int, int]:
     if not value:
         return (0, 0)
@@ -1734,17 +1777,24 @@ def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[
         present_candidates = [c for c in candidates if c["status"] == "present"]
         if len(present_candidates) < 2:
             continue
-        source_values: Dict[str, Any] = {}
+        source_values: Dict[str, Dict[str, Any]] = {}
         for c in present_candidates:
             if c["source"] not in source_values:
-                source_values[c["source"]] = c["value"]
+                source_values[c["source"]] = {
+                    "value": c["value"],
+                    "report_period": c.get("report_period"),
+                }
         if len(source_values) < 2:
             continue
         has_conflict = False
         sources = list(source_values.keys())
         for i in range(len(sources)):
             for j in range(i + 1, len(sources)):
-                if _values_conflict(source_values[sources[i]], source_values[sources[j]]):
+                left = source_values[sources[i]]
+                right = source_values[sources[j]]
+                if not _report_period_conflict_comparable(left.get("report_period"), right.get("report_period")):
+                    continue
+                if _values_conflict_by_field(field_name, left.get("value"), right.get("value")):
                     has_conflict = True
                     break
             if has_conflict:
@@ -1752,7 +1802,9 @@ def build_china_fundamental_snapshot(symbol: str, source_payloads: List[Mapping[
         if has_conflict:
             conflict_fields.append(field_name)
             fields[field_name]["status"] = "conflict"
-            fields[field_name]["conflict_values"] = source_values
+            fields[field_name]["conflict_values"] = {
+                source: data.get("value") for source, data in source_values.items()
+            }
 
     required_fields = [name for name, spec in FIELD_SPECS.items() if spec.get("required")]
     present_required = [name for name in required_fields if fields[name]["status"] == "present"]

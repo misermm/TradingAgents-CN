@@ -161,3 +161,25 @@ def test_derive_total_liabilities_from_total_assets_and_debt_ratio():
     assert field["status"] == "present"
     assert field["source"].endswith(":derived")
     assert field["value"] == 770.0
+
+
+def test_conflict_detection_skips_mismatched_report_periods():
+    snapshot = build_china_fundamental_snapshot(
+        "000002",
+        [
+            {
+                "source": "baostock_direct",
+                "updated_at": "2026-05-12 10:00:00",
+                "report_period": "2026Q1",
+                "data": {"net_profit_yoy": 5.0},
+            },
+            {
+                "source": "akshare_indicator_lg",
+                "updated_at": "2026-05-12 10:00:00",
+                "report_period": "2025-12-31",
+                "data": {"net_profit_yoy": -2036.4279},
+            },
+        ],
+    )
+
+    assert "net_profit_yoy" not in snapshot["quality"]["conflict_fields"]

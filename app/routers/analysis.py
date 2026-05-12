@@ -130,6 +130,15 @@ async def get_task_status_new(
         logger.info(f"📊 [NEW ROUTE] 查询结果: {result is not None}")
 
         if result:
+            # Defensive normalization: avoid 500 when some fields are absent.
+            result.setdefault("task_id", task_id)
+            result.setdefault("status", "pending")
+            result.setdefault("progress", 0)
+            result.setdefault("message", "")
+            result.setdefault("current_step", result.get("status"))
+            result.setdefault("elapsed_time", 0)
+            result.setdefault("remaining_time", 0)
+            result.setdefault("estimated_total_time", 0)
             return {
                 "success": True,
                 "data": result,

@@ -177,6 +177,108 @@ def test_price_conflict_flags_any_deviation():
     assert issue["severity"] in {"low", "medium", "high"}
 
 
+def test_price_conflict_ignores_percentage_and_indicator_context():
+    result = {
+        "cn_fact_snapshot": {
+            "current_price": 3.91,
+            "quality": {"missing_fields": [], "conflicts": []},
+        },
+        "reports": {
+            "market_report": (
+                "当前价格：￥3.91。距离当前价格约12%。"
+                "当前价格位置59.2%。当前股价距离MA60仍有差距。"
+            )
+        },
+    }
+
+    audit = audit_cn_report(result)
+    issue_codes = {issue["code"] for issue in audit["issues"]}
+    assert "PRICE_CONFLICT" not in issue_codes
+
+
+def test_low_data_quality_ignores_unit_equivalent_conflicts():
+    result = {
+        "reports": {
+            "market_report": "褰撳墠浠锋牸锛?.91",
+        },
+        "cn_fact_snapshot": {
+            "current_price": 3.91,
+            "quality": {
+                "grade": "C",
+                "missing_fields": [],
+                "conflicts": [
+                    {
+                        "field": "debt_ratio",
+                        "values": [
+                            {"source": "baostock_direct", "value": 0.771345},
+                            {"source": "akshare_indicator_lg", "value": 77.1345},
+                        ],
+                    }
+                ],
+                "raw_quality": {
+                    "missing_required_fields": [],
+                },
+            },
+        },
+    }
+
+    audit = audit_cn_report(result)
+    issue_codes = {issue["code"] for issue in audit["issues"]}
+    assert "LOW_DATA_QUALITY" not in issue_codes
+
+
+def test_low_data_quality_ignores_outlier_percent_conflict():
+    result = {
+        "cn_fact_snapshot": {
+            "quality": {
+                "grade": "C",
+                "missing_fields": [],
+                "conflicts": [
+                    {
+                        "field": "net_profit_yoy",
+                        "values": [
+                            {"source": "baostock_direct", "value": 0.050442},
+                            {"source": "akshare_indicator_lg", "value": -2036.4279},
+                        ],
+                    }
+                ],
+                "raw_quality": {
+                    "missing_required_fields": [],
+                },
+            },
+        },
+    }
+
+    audit = audit_cn_report(result)
+    assert "LOW_DATA_QUALITY" not in {issue["code"] for issue in audit["issues"]}
+
+
+def test_low_data_quality_ignores_eps_unit_scale_conflict():
+    result = {
+        "cn_fact_snapshot": {
+            "quality": {
+                "grade": "C",
+                "missing_fields": [],
+                "conflicts": [
+                    {
+                        "field": "eps",
+                        "values": [
+                            {"source": "baostock_direct", "value": -7.397919},
+                            {"source": "akshare_indicator_lg", "value": -0.7397919},
+                        ],
+                    }
+                ],
+                "raw_quality": {
+                    "missing_required_fields": [],
+                },
+            },
+        },
+    }
+
+    audit = audit_cn_report(result)
+    assert "LOW_DATA_QUALITY" not in {issue["code"] for issue in audit["issues"]}
+
+
 def test_weighted_role_decision_uses_professional_weights():
     result = {
         "reports": {

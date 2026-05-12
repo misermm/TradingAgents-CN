@@ -21,10 +21,10 @@ goto :parse_args
 
 if "%MODE%"=="dev" (
     set "COMPOSE_FILE=docker-compose.local.yml"
-    set "TOTAL_SERVICES=4"
+    set "TOTAL_SERVICES=5"
 ) else (
     set "COMPOSE_FILE=docker-compose.yml"
-    set "TOTAL_SERVICES=6"
+    set "TOTAL_SERVICES=7"
 )
 
 echo.

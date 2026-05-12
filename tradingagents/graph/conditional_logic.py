@@ -180,15 +180,20 @@ class ConditionalLogic:
     def should_continue_debate(self, state: AgentState) -> str:
         current_count = state["investment_debate_state"]["count"]
         max_count = 2 * self.max_debate_rounds
-        current_speaker = state["investment_debate_state"]["current_response"]
+        current_speaker = state["investment_debate_state"].get("current_response", "") or ""
 
         logger.info(f"🔍 [投资辩论控制] 当前发言次数: {current_count}, 最大次数: {max_count}")
 
         if current_count > max_count:
             return "Research Manager"
 
-        next_speaker = "Bear Researcher" if current_speaker.startswith("Bull") else "Bull Researcher"
-        return next_speaker
+        if current_speaker.startswith("Bull"):
+            return "Bear Researcher"
+        if current_speaker.startswith("Bear"):
+            return "Bull Researcher"
+
+        logger.warning("⚠️ [投资辩论控制] current_response 未包含可识别发言者，回退 Research Manager")
+        return "Research Manager"
 
     def should_continue_risk_analysis(self, state: AgentState) -> str:
         current_count = state["risk_debate_state"]["count"]

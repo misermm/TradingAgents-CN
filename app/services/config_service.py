@@ -1193,17 +1193,25 @@ class ConfigService:
 
         except requests.exceptions.Timeout:
             response_time = time.time() - start_time
+            hint = self._build_docker_loopback_hint(api_base)
+            message = "连接超时，请检查API基础URL是否正确或网络是否可达"
+            if hint:
+                message = f"{message}（{hint}）"
             return {
                 "success": False,
-                "message": "连接超时，请检查API基础URL是否正确或网络是否可达",
+                "message": message,
                 "response_time": response_time,
                 "details": None
             }
         except requests.exceptions.ConnectionError as e:
             response_time = time.time() - start_time
+            hint = self._build_docker_loopback_hint(api_base)
+            message = f"连接失败，请检查API基础URL是否正确: {str(e)}"
+            if hint:
+                message = f"{message}（{hint}）"
             return {
                 "success": False,
-                "message": f"连接失败，请检查API基础URL是否正确: {str(e)}",
+                "message": message,
                 "response_time": response_time,
                 "details": None
             }
@@ -2959,6 +2967,50 @@ class ConfigService:
             hints.append("账户余额不足，请充值后重试")
 
         return "；".join(hints)
+
+    def _build_docker_loopback_hint(self, base_url: str | None) -> str:
+        """
+        Diagnose a common Docker networking mistake.
+
+        When the backend runs inside Docker, localhost points to the backend
+        container itself, not the host machine or another container.
+        """
+        if not base_url:
+            return ""
+
+        running_in_docker = any(
+            os.environ.get(name, "").lower() in ("1", "true", "yes")
+            for name in ("RUNNING_IN_DOCKER", "DOCKER_CONTAINER")
+        )
+        if not running_in_docker:
+            return ""
+
+        from urllib.parse import urlparse, urlunparse
+
+        parsed = urlparse(base_url)
+        hostname = (parsed.hostname or "").lower()
+        if hostname not in ("localhost", "127.0.0.1", "::1"):
+            return ""
+
+        replacement_netloc = "host.docker.internal"
+        if parsed.port:
+            replacement_netloc = f"{replacement_netloc}:{parsed.port}"
+
+        replacement = urlunparse(
+            (
+                parsed.scheme or "http",
+                replacement_netloc,
+                parsed.path or "",
+                "",
+                "",
+                "",
+            )
+        )
+        return (
+            "当前后端运行在Docker容器内，localhost指向后端容器自身；"
+            f"如果New API暴露在宿主机端口，请改为{replacement}；"
+            "如果New API是另一个容器，请把两个容器加入同一Docker network后使用http://容器名:3000/v1"
+        )
 
     def _is_valid_api_key(self, api_key: Optional[str]) -> bool:
         """
@@ -5070,9 +5122,13 @@ class ConfigService:
                     }
 
         except Exception as e:
+            hint = self._build_docker_loopback_hint(base_url)
+            message = f"{display_name} API测试异常: {str(e)}"
+            if hint:
+                message = f"{message}（{hint}）"
             return {
                 "success": False,
-                "message": f"{display_name} API测试异常: {str(e)}"
+                "message": message
             }
 
 

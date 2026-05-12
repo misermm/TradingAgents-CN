@@ -427,7 +427,7 @@ def _detect_price_conflict(reports: Mapping[str, str], snapshot: Mapping[str, An
     for name, text in reports.items():
         if name not in price_report_keys:
             continue
-        for price in _extract_explicit_current_prices(text):
+        for price in _extract_strict_current_prices(text):
             explicit_prices.append((name, price))
 
     conflict_values: List[Dict[str, Any]] = []
@@ -498,29 +498,141 @@ def _role_price_conflicts_with_snapshot(text: str, snapshot: Mapping[str, Any]) 
     snapshot_price = _safe_float(snapshot.get("current_price"), None)
     if snapshot_price is None or not text:
         return False
-    for price in _extract_explicit_current_prices(text):
+    for price in _extract_strict_current_prices(text):
         if abs(price - snapshot_price) > 1e-9:
             return True
     return False
 
 
+def _extract_strict_current_prices(text: str) -> List[float]:
+    """Extract explicit current prices while avoiding percentage/context false positives."""
+    if not text:
+        return []
+    normalized = text.replace("：", ":").replace("¥", "￥").replace("元", "")
+    patterns = [
+        r"(?:当前价|当前价格|当前股价|现价|最新价|Current Price)\s*(?:[:：]|为|是|在)\s*[￥]?\s*(\d+(?:\.\d+)?)",
+        r"(?:当前价|当前价格|当前股价|现价|最新价|Current Price)\s*[￥]?\s*(\d+(?:\.\d+)?)",
+    ]
+    prices: List[float] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, re.IGNORECASE):
+            suffix = normalized[match.end(): match.end() + 2]
+            if "%" in suffix:
+                continue
+            price = _safe_float(match.group(1), None)
+            if price is not None:
+                prices.append(price)
+    return prices
+
+
 def _has_low_data_quality(result: Mapping[str, Any], snapshot: Mapping[str, Any], reports: Mapping[str, str]) -> bool:
     quality = _snapshot_quality(snapshot)
-    if str(quality.get("grade", "")).upper() == "D":
+    if str(quality.get("grade", "")).upper() in {"D", "F"}:
         return True
-    if quality.get("conflicts"):
+    raw_quality = quality.get("raw_quality") if isinstance(quality.get("raw_quality"), Mapping) else {}
+    if (raw_quality or {}).get("missing_required_fields"):
         return True
+    if _effective_quality_conflict_fields(snapshot):
+        return True
+    if quality:
+        return False
     joined = "\n".join(reports.values())
     low_markers = ["数据质量等级: D", "数据质量等级：D", "D级", "PE/ROE", "数据矛盾"]
     return any(marker in joined for marker in low_markers)
 
 
 def _quality_conflict_fields(snapshot: Mapping[str, Any]) -> List[str]:
-    fields = []
-    for conflict in _snapshot_quality(snapshot).get("conflicts", []) or []:
-        if isinstance(conflict, Mapping) and conflict.get("field"):
-            fields.append(str(conflict["field"]))
+    return _effective_quality_conflict_fields(snapshot)
+
+
+def _effective_quality_conflict_fields(snapshot: Mapping[str, Any]) -> List[str]:
+    fields: List[str] = []
+    conflicts = _snapshot_quality(snapshot).get("conflicts", []) or []
+    for conflict in conflicts:
+        if not isinstance(conflict, Mapping):
+            continue
+        field_name = str(conflict.get("field") or "").strip()
+        if not field_name:
+            continue
+        if _is_effective_conflict(field_name, conflict.get("values") or []):
+            fields.append(field_name)
     return fields
+
+
+def _is_effective_conflict(field_name: str, values: Any) -> bool:
+    if not isinstance(values, list):
+        return True
+
+    numeric_values: List[float] = []
+    textual_values: List[str] = []
+    for item in values:
+        if not isinstance(item, Mapping):
+            continue
+        value = item.get("value")
+        parsed = _safe_float(value, None)
+        if parsed is None:
+            if value is not None:
+                textual_values.append(str(value).strip())
+            continue
+        numeric_values.append(parsed)
+
+    if len(numeric_values) >= 2:
+        return _numeric_values_conflict(field_name, numeric_values)
+    if len(textual_values) >= 2:
+        return len(set(textual_values)) > 1
+    return True
+
+
+def _numeric_values_conflict(field_name: str, values: List[float]) -> bool:
+    percent_fields = {"roe", "roa", "roic", "gross_margin", "net_margin", "debt_ratio", "revenue_yoy", "net_profit_yoy"}
+    amount_fields = {"net_profit", "revenue", "total_assets", "total_liabilities", "operating_cash_flow"}
+    eps_fields = {"eps"}
+
+    if field_name in percent_fields:
+        normalized = [v / 100.0 if abs(v) > 1 else v for v in values]
+        if field_name in {"revenue_yoy", "net_profit_yoy"}:
+            plausible = [v for v in normalized if abs(v) <= 10]
+            if len(plausible) >= 2:
+                normalized = plausible
+            elif len(plausible) == 1:
+                return False
+        return _max_relative_gap(normalized) > 0.5
+
+    if field_name in amount_fields:
+        scales = (1.0, 1e4, 1e6, 1e8)
+        anchor = values[0]
+        best_gap = 1.0
+        for candidate in values[1:]:
+            candidate_gap = min(
+                abs(anchor * s1 - candidate * s2) / max(abs(anchor * s1), abs(candidate * s2), 1e-9)
+                for s1 in scales
+                for s2 in scales
+            )
+            best_gap = min(best_gap, candidate_gap)
+        return best_gap > 0.5
+
+    if field_name in eps_fields:
+        scales = (1.0, 0.1, 0.01, 10.0, 100.0)
+        anchor = values[0]
+        best_gap = 1.0
+        for candidate in values[1:]:
+            candidate_gap = min(
+                abs(anchor * s1 - candidate * s2) / max(abs(anchor * s1), abs(candidate * s2), 1e-9)
+                for s1 in scales
+                for s2 in scales
+            )
+            best_gap = min(best_gap, candidate_gap)
+        return best_gap > 0.5
+
+    return _max_relative_gap(values) > 0.5
+
+
+def _max_relative_gap(values: List[float]) -> float:
+    if len(values) < 2:
+        return 0.0
+    vmax = max(values)
+    vmin = min(values)
+    return abs(vmax - vmin) / max(abs(vmax), abs(vmin), 1e-9)
 
 
 def _has_dialogue_artifact(reports: Mapping[str, str]) -> bool:
