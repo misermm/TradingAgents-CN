@@ -131,6 +131,8 @@ def get_provider_and_url_by_model_sync(model_name: str) -> dict:
                 api_key = _get_env_api_key_for_provider(provider)
                 backend_url = _get_default_backend_url(provider)
                 from tradingagents.llm_clients.provider_keys import normalize_provider_key
+                from app.utils.docker_utils import rewrite_localhost_for_docker
+                backend_url = rewrite_localhost_for_docker(backend_url)
                 return {
                     "provider": normalize_provider_key(provider),
                     "backend_url": backend_url,
@@ -189,6 +191,10 @@ def get_provider_and_url_by_model_sync(model_name: str) -> dict:
                         if provider_key == "qwen" and backend_url == "https://dashscope.aliyuncs.com/api/v1":
                             backend_url = default_backend_url(provider_key)
 
+                        # 🐳 Docker环境：自动将localhost重写为host.docker.internal
+                        from app.utils.docker_utils import rewrite_localhost_for_docker
+                        backend_url = rewrite_localhost_for_docker(backend_url)
+
                         return {
                             "provider": provider_key,
                             "backend_url": backend_url,
@@ -230,6 +236,10 @@ def get_provider_and_url_by_model_sync(model_name: str) -> dict:
                 if provider_key == "qwen" and backend_url == "https://dashscope.aliyuncs.com/api/v1":
                     backend_url = default_backend_url(provider_key)
 
+                # 🐳 Docker环境：自动将localhost重写为host.docker.internal
+                from app.utils.docker_utils import rewrite_localhost_for_docker
+                backend_url = rewrite_localhost_for_docker(backend_url)
+
                 return {
                     "provider": provider_key,
                     "backend_url": backend_url,
@@ -246,11 +256,13 @@ def get_provider_and_url_by_model_sync(model_name: str) -> dict:
 
     # 最后回退到硬编码的默认 URL 和环境变量 API Key
     from tradingagents.llm_clients.provider_keys import normalize_provider_key
+    from app.utils.docker_utils import rewrite_localhost_for_docker
 
     provider_key = normalize_provider_key(provider)
+    fallback_url = rewrite_localhost_for_docker(_get_default_backend_url(provider_key))
     return {
         "provider": provider_key,
-        "backend_url": _get_default_backend_url(provider_key),
+        "backend_url": fallback_url,
         "api_key": _get_env_api_key_for_provider(provider_key)
     }
 

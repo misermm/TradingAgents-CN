@@ -1,30 +1,33 @@
 # 开发进度文档
-**更新时间**: 2026-05-12  
-**当前项目目标**: A股分析可信度审计收口（冲突误报清理 + 结果一致性提升）
+**更新时间**: 2026-05-13  
+**当前项目目标**: 修复Docker环境下localhost连接问题 + A股分析可信度审计收口
 
 ---
 
 ## 当前开发进度
 
-- 已移除 new-api 服务（不再需要本地 API 聚合层），相关配置已从 docker-compose 文件和 redeploy.bat 中清理。
+- 已修复Docker环境下One API/New API等厂家API测试失败的问题：后端容器内localhost指向容器自身，无法访问宿主机服务。
 - `PRICE_CONFLICT` 假阳性已继续收口：当前价抽取改为严格锚点（当前价/当前价格/当前股价/现价/最新价），并过滤 `%` 上下文。
-- `PRICE_CONFLICT` 假阳性已继续收口：当前价抽取改为严格锚点（当前价/当前价格/当前股价/现价/最新价），并过滤 `%` 上下文。
-- `cn_fact_snapshot` 新增严格版市场报告现价提取入口，避免“位置百分比/指标描述”污染快照现价。
+- `cn_fact_snapshot` 新增严格版市场报告现价提取入口，避免"位置百分比/指标描述"污染快照现价。
 - 跨源冲突判定新增字段级归一化：百分比字段统一口径；金额字段加入万元/百万元/亿元尺度对齐比较，降低单位差异带来的假冲突。
 
 ## 最近改了什么（新增）
 
-### 2026-05-12
-1. `docker-compose.local.yml` / `docker-compose.yml`
-   - 移除 `new-api` 服务（不再需要本地 API 聚合层）。
-   - 移除 `newapi_data` 数据卷。
-2. `scripts/redeploy.bat`
-   - dev 模式服务总数从 `5` 调整回 `4`，prod 模式从 `7` 调整回 `6`。
-
-### （之前的新增记录（已回退）
-- ~~`docker-compose.local.yml` / `docker-compose.yml`：新增 `new-api` 服务（已移除）~~
-- ~~`.env.docker`：`ONEAPI_BASE_URL` 默认值改为 `http://new-api:3000/v1`（不再保留原值）~~
-- ~~`scripts/redeploy.bat`：服务总数调整（已回退）~~
+### 2026-05-13
+1. **新增 `app/utils/docker_utils.py`**
+   - 共享Docker工具模块，提供 `is_running_in_docker()` 和 `rewrite_localhost_for_docker()` 函数。
+   - `rewrite_localhost_for_docker()`: 在Docker环境下自动将 `localhost`/`127.0.0.1`/`::1` 重写为 `host.docker.internal`。
+   - 自动将 `host.docker.internal` 添加到 `NO_PROXY`/`no_proxy` 环境变量，避免代理干扰内部请求。
+2. **`app/services/config_service.py`**
+   - `_rewrite_localhost_for_docker()` 方法改为委托共享工具函数。
+   - 在以下方法中添加了Docker localhost自动重写：
+     - `test_llm_config()` — 测试LLM配置时重写api_base
+     - `_test_openai_compatible_api()` — 测试OpenAI兼容API时重写base_url
+     - `_test_google_api()` — 测试Google API时重写base_url
+     - `_fetch_models_from_api()` — 获取模型列表时重写base_url
+     - `_fetch_aihubmix_models()` — 获取AiHubMix模型时重写base_url
+3. **`app/services/simple_analysis_service.py`**
+   - 在 `get_provider_and_url_by_model_sync()` 的所有返回路径中添加了Docker localhost自动重写，确保分析执行时也能正确访问宿主机服务。
 
 ## 下一步从哪接着做
 

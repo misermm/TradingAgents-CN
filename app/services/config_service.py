@@ -954,6 +954,9 @@ class ConfigService:
                         "details": None
                     }
 
+            # 🐳 Docker环境：自动将localhost重写为host.docker.internal
+            api_base = self._rewrite_localhost_for_docker(api_base)
+
             # 2. 验证 API Key
             api_key = None
             is_local_provider = provider_str in ("ollama", "lmstudio") or (
@@ -2968,6 +2971,17 @@ class ConfigService:
 
         return "；".join(hints)
 
+    def _rewrite_localhost_for_docker(self, base_url: str | None) -> str | None:
+        """
+        When running inside Docker, rewrite localhost / 127.0.0.1 / ::1 in
+        *base_url* to ``host.docker.internal`` so the request can reach
+        services exposed on the host machine.
+
+        Delegates to the shared utility in ``app.utils.docker_utils``.
+        """
+        from app.utils.docker_utils import rewrite_localhost_for_docker
+        return rewrite_localhost_for_docker(base_url)
+
     def _build_docker_loopback_hint(self, base_url: str | None) -> str:
         """
         Diagnose a common Docker networking mistake.
@@ -3618,6 +3632,9 @@ class ConfigService:
             if not base_url:
                 base_url = "https://generativelanguage.googleapis.com/v1beta"
                 logger.info(f"   ⚠️ base_url 为空，使用默认值: {base_url}")
+
+            # 🐳 Docker环境：自动将localhost重写为host.docker.internal
+            base_url = self._rewrite_localhost_for_docker(base_url)
 
             # 移除末尾的斜杠
             base_url = base_url.rstrip('/')
@@ -4472,6 +4489,9 @@ class ConfigService:
         try:
             import requests
 
+            # 🐳 Docker环境：自动将localhost重写为host.docker.internal
+            base_url = self._rewrite_localhost_for_docker(base_url)
+
             # 🔧 智能版本号处理：只有在没有版本号的情况下才添加 /v1
             # 避免对已有版本号的URL（如智谱AI的 /v4）重复添加 /v1
             import re
@@ -4575,6 +4595,9 @@ class ConfigService:
         """从 AiHubMix 的 Models API 获取模型列表。"""
         try:
             import requests
+
+            # 🐳 Docker环境：自动将localhost重写为host.docker.internal
+            base_url = self._rewrite_localhost_for_docker(base_url)
 
             root_url = re.sub(r"/v\d+$", "", base_url.rstrip("/"))
             url = f"{root_url}/api/v1/models"
@@ -5005,6 +5028,9 @@ class ConfigService:
                     "success": False,
                     "message": f"{display_name} 未配置 API 基础地址 (default_base_url)"
                 }
+
+            # 🐳 Docker环境：自动将localhost重写为host.docker.internal
+            base_url = self._rewrite_localhost_for_docker(base_url)
 
             # 🔧 智能版本号处理：只有在没有版本号的情况下才添加 /v1
             # 避免对已有版本号的URL（如智谱AI的 /v4）重复添加 /v1
